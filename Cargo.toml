@@ -1,0 +1,13 @@
+[workspace]
+resolver = "3"
+members = ["crates/tla-core", "crates/tla-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bfxh/ternary-logic-analyzer"
+
+[workspace.dependencies]
+tla-core = { path = "crates/tla-core", version = "0.1.0" }

@@ -1,0 +1,186 @@
+//! CLI 集成测试：调用编译好的二进制，验证各子命令的实际行为。
+
+use std::process::Command;
+
+/// 二进制路径（由 Cargo 在集成测试时注入）。
+fn tla_bin() -> std::path::PathBuf {
+    // target/debug/tla.exe；CARGO_BIN_EXE_<name> 环境变量更可靠
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_tla") {
+        return std::path::PathBuf::from(p);
+    }
+    let mut dir = std::env::current_exe().expect("current exe");
+    dir.pop(); // deps
+    if dir.ends_with("deps") {
+        dir.pop();
+    }
+    dir.join(format!("tla{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// 运行 CLI，返回 (stdout, stderr, 退出码)。
+fn run(args: &[&str]) -> (String, String, i32) {
+    let out = Command::new(tla_bin())
+        .args(args)
+        .output()
+        .expect("failed to run tla binary");
+    (
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+#[test]
+fn help_lists_all_subcommands() {
+    let (stdout, _, code) = run(&["--help"]);
+    assert_eq!(code, 0);
+    for sub in ["eval", "table", "equiv", "simplify", "circuit", "repl"] {
+        assert!(stdout.contains(sub), "help missing {sub}");
+    }
+}
+
+#[test]
+fn eval_computes_kleene_conjunction() {
+    // Kleene: 1 ∧ X = X
+    let (stdout, _, code) = run(&["eval", "a & b", "-s", "a=1,b=X"]);
+    assert_eq!(code, 0, "stderr should be empty");
+    assert_eq!(stdout.trim(), "X");
+}
+
+#[test]
+fn eval_computes_lukasiewicz_strong_add() {
+    // Łukasiewicz: X ⊕ X = 1
+    let (stdout, _, code) = run(&["-a", "lukasiewicz", "eval", "a ^ b", "-s", "a=X,b=X"]);
+    assert_eq!(code, 0);
+    assert_eq!(stdout.trim(), "1");
+}
+
+#[test]
+fn eval_computes_bochvar_poison() {
+    // Bochvar: 0 ∧ X = X
+    let (stdout, _, code) = run(&["-a", "bochvar", "eval", "a & b", "-s", "a=0,b=X"]);
+    assert_eq!(code, 0);
+    assert_eq!(stdout.trim(), "X");
+}
+
+#[test]
+fn eval_rejects_bad_assignment() {
+    let (_, stderr, code) = run(&["eval", "a", "-s", "a=2"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("未知取值"), "stderr was: {stderr}");
+}
+
+#[test]
+fn eval_reports_parse_error() {
+    let (_, stderr, code) = run(&["eval", "a & @"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("解析失败"), "stderr was: {stderr}");
+}
+
+#[test]
+fn table_has_all_assignment_rows() {
+    // 2 个变量 → 3^2 = 9 行
+    let (stdout, _, code) = run(&["table", "a & b"]);
+    assert_eq!(code, 0);
+    let data_lines = stdout
+        .lines()
+        .filter(|l| l.starts_with('|') && !l.contains("---"))
+        .count();
+    // 表头 1 行 + 9 数据行
+    assert_eq!(data_lines, 10, "stdout was:\n{stdout}");
+}
+
+#[test]
+fn table_json_output_is_valid() {
+    let (stdout, _, code) = run(&["table", "a | b", "-f", "json"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert_eq!(v["variables"], serde_json::json!(["a", "b"]));
+    assert_eq!(v["rows"].as_array().unwrap().len(), 9);
+}
+
+#[test]
+fn table_csv_output_has_header() {
+    let (stdout, _, code) = run(&["table", "a & b", "-f", "csv"]);
+    assert_eq!(code, 0);
+    let mut lines = stdout.lines();
+    assert_eq!(lines.next().unwrap(), "a,b");
+    assert_eq!(lines.next().unwrap(), "f");
+    assert_eq!(lines.count(), 9);
+}
+
+#[test]
+fn table_markdown_output() {
+    let (stdout, _, code) = run(&["table", "a & b", "-f", "markdown"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("| a | b | f |"), "stdout was:\n{stdout}");
+}
+
+#[test]
+fn equiv_detects_equivalence() {
+    let (stdout, _, code) = run(&["equiv", "a & b", "b & a"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("等价"), "stdout was:\n{stdout}");
+}
+
+#[test]
+fn equiv_detects_difference_with_exit_code_two() {
+    let (stdout, _, code) = run(&["equiv", "a & b", "a | b"]);
+    assert_eq!(code, 2, "stdout was:\n{stdout}");
+    assert!(stdout.contains("不等价"), "stdout was:\n{stdout}");
+    assert!(stdout.contains("反例"), "stdout was:\n{stdout}");
+}
+
+#[test]
+fn equiv_json_contains_counterexample() {
+    let (stdout, _, code) = run(&["equiv", "a & b", "a | b", "-f", "json"]);
+    assert_eq!(code, 2);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert_eq!(v["equivalent"], serde_json::json!(false));
+    assert!(v.get("counterexample").is_some());
+}
+
+#[test]
+fn simplify_reports_equivalence() {
+    let (stdout, _, code) = run(&["simplify", "a & 1 | b & 0"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("语义等价：是"), "stdout was:\n{stdout}");
+}
+
+#[test]
+fn simplify_json_contains_original_and_simplified() {
+    let (stdout, _, code) = run(&["simplify", "a & a", "-f", "json"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert!(v["original"].is_string());
+    assert!(v["simplified"].is_string());
+    assert_eq!(v["equivalent"], serde_json::json!(true));
+}
+
+#[test]
+fn circuit_analyzes_netlist() {
+    let netlist =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/and_gate.net");
+    let (stdout, _, code) = run(&["circuit", netlist.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout was:\n{stdout}");
+    assert!(stdout.contains("主输入 2 个"), "stdout was:\n{stdout}");
+    assert!(stdout.contains("输出值域"), "stdout was:\n{stdout}");
+}
+
+#[test]
+fn circuit_rejects_malformed_netlist() {
+    let dir = std::env::temp_dir().join("tla-test-netlist");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("bad.net");
+    std::fs::write(&path, "input a\ngate FOO a b out\n").unwrap();
+    let (_, stderr, code) = run(&["circuit", path.to_str().unwrap()]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("未知门类型"), "stderr was: {stderr}");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn unknown_algebra_is_rejected() {
+    let (_, stderr, code) = run(&["-a", "nonsense", "table", "a"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("未知的三值语义"), "stderr was: {stderr}");
+}

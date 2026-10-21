@@ -1,0 +1,14 @@
+# 示例网表：2 输入与门的输出及其反相
+# 语法：
+#   input  <信号>
+#   output <信号>
+#   gate <AND|OR|XOR|NAND|NOR> <输入1> <输入2> <输出>
+#   not   <输入> <输出>
+
+input  a
+input  b
+output y
+output yn
+
+gate AND a b y
+not  y yn

@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Run tests
+        run: cargo test --workspace --locked
+
+      - name: Package binaries
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/release/tla dist/tla-linux-x86_64
+          tar -czf dist/tla-linux-x86_64.tar.gz -C dist tla-linux-x86_64
+          rm dist/tla-linux-x86_64
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true
