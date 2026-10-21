@@ -225,6 +225,24 @@ impl Encoder {
     }
 }
 
+fn assignment_from_valuation(enc: &Encoder, vars: &[String], bits: &[bool]) -> Assignment {
+    let mut assignment = Assignment::new();
+    for name in vars {
+        let (t_var, x_var) = enc.varids[name];
+        let t = bits[t_var.to_index()];
+        let x = x_var.is_some_and(|v| bits[v.to_index()]);
+        let value = if t {
+            Ternary::True
+        } else if x {
+            Ternary::Unknown
+        } else {
+            Ternary::False
+        };
+        assignment.set(name.clone(), value);
+    }
+    assignment
+}
+
 /// 用 BDD 判定两个表达式在给定语义下是否等价。
 pub fn equivalent_bdd(
     a: &Expr,
@@ -258,21 +276,7 @@ pub fn equivalent_bdd(
         .sat_valuations()
         .next()
         .ok_or(BddError::MissingWitness)?;
-    let bits = valuation.as_vector();
-    let mut assignment = Assignment::new();
-    for name in &vars {
-        let (t_var, x_var) = enc.varids[name];
-        let t = bits[t_var.to_index()];
-        let x = x_var.is_some_and(|v| bits[v.to_index()]);
-        let value = if t {
-            Ternary::True
-        } else if x {
-            Ternary::Unknown
-        } else {
-            Ternary::False
-        };
-        assignment.set(name.clone(), value);
-    }
+    let assignment = assignment_from_valuation(&enc, &vars, valuation.as_vector());
     let index = assignment_index(&assignment, &vars);
     Ok(BddVerdict {
         result: EquivalenceResult {
@@ -283,4 +287,28 @@ pub fn equivalent_bdd(
         },
         nodes: diff.size(),
     })
+}
+
+/// 是否存在合法赋值使表达式为 `True`；返回一个见证。
+pub fn satisfiable_bdd(
+    expr: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+) -> Result<Option<Assignment>, BddError> {
+    let vars = expr.variables();
+    let enc = Encoder::new(alg, &vars, binary_vars)?;
+    let node = enc.encode(expr);
+    let sat = node.t.and(&node.x.not());
+    if sat.is_false() {
+        return Ok(None);
+    }
+    let valuation = sat
+        .sat_valuations()
+        .next()
+        .ok_or(BddError::MissingWitness)?;
+    Ok(Some(assignment_from_valuation(
+        &enc,
+        &vars,
+        valuation.as_vector(),
+    )))
 }
