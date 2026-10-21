@@ -825,7 +825,7 @@ dependencies = [
 
 [[package]]
 name = "trit-bdd"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "biodivine-lib-bdd",
  "thiserror 2.0.21",
@@ -835,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "trit-circuit"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -844,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "trit-cli"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -859,7 +859,7 @@ dependencies = [
 
 [[package]]
 name = "trit-core"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -867,7 +867,7 @@ dependencies = [
 
 [[package]]
 name = "trit-eval"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "indoc",
  "proptest",
@@ -876,7 +876,7 @@ dependencies = [
 
 [[package]]
 name = "trit-policy"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "trit-sat"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "proptest",
  "thiserror 2.0.21",
