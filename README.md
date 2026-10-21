@@ -16,6 +16,7 @@ dual-rail + SAT 等价判定、组合网表 X 传播；二进制与三值的边�
 | `trit-sat` | dual-rail + SAT 等价判定与反例 |
 | `trit-circuit` | 组合网表 X 传播、stuck-at 可测性 |
 | `trit-bdd` | BDD（canonical）等价判定 |
+| `trit-policy` | 三值决策表的构建期验证 |
 | `trit-cli` | `trit` 命令行 |
 
 ## 快速开始
@@ -28,6 +29,7 @@ cargo run --release -p trit-cli -- equiv --symbolic "..." "..."   # 大变量数
 cargo run --release -p trit-cli -- equiv --symbolic --binary-all --stats "..." "..."
 cargo run --release -p trit-cli -- equiv --symbolic --minimize "a & (b | !b)" "0"
 cargo run --release -p trit-cli -- equiv --bdd "a & (b | c)" "(a & b) | (a & c)"
+cargo run --release -p trit-cli -- verify examples/policy.json
 ```
 
 `--algebra` / `-a` 选 `kleene`（默认）、`lukasiewicz`、`bochvar`；不等价退出码为 `2`。
@@ -96,6 +98,43 @@ cargo run --release -p trit-cli -- equiv --bdd "a & (b | c)" "(a & b) | (a & c)"
 
 `trit circuit examples/and_gate.net`：输出含 `X` 的输入组合数、各输出值域、冗余输入与 stuck-at 不可测故障。
 只支持组合逻辑，不做时序/时钟。
+
+## 构建期验证（`trit verify`）
+
+把决策表写成 JSON，断言必须在**所有合法赋值**上恒真；失败时给出充分最小反例，退出码 1。
+
+```json
+{
+  "algebra": "kleene",
+  "binary": ["infeasible", "contended"],
+  "definitions": { "reject": "infeasible | (hopeless & contended)" },
+  "assertions": [
+    { "name": "硬约束", "expr": "infeasible => reject" },
+    { "name": "空槽不拒", "expr": "(!contended & !infeasible) => !reject" }
+  ]
+}
+```
+
+```bash
+$ trit verify examples/policy.json
+OK     hard constraint: infeasible must reject
+OK     free slot must not reject on unknown hopelessness
+2 条断言，0 失败  [sat]
+```
+
+- `binary` 里的变量只在 0/1 上取值；其余变量按三值（含 X）检查——所以断言比二值布尔更强。
+- `--engine bdd` 切 canonical BDD；`--json` 给 CI 用。
+- 可复用 Action（在目标仓里）：
+
+```yaml
+- uses: actions/checkout@v4
+- uses: bfxh/trit/action@main
+  with:
+    policy: policy.json
+    engine: sat
+```
+
+首次运行会从源码构建 `trit`；生产建议 pin 到 tag/SHA。
 
 ## 范围
 

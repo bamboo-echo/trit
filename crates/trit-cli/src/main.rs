@@ -24,6 +24,7 @@ use trit_core::parser::Parser as ExprParser;
 use trit_core::value::Ternary;
 use trit_eval::eval::{Assignment, equivalent, eval, truth_table};
 use trit_eval::simplify::{SimplifyOptions, simplify_with};
+use trit_policy::{Engine, Policy};
 use trit_sat::symbolic::{
     EncodingSize, encoding_size, equivalent_symbolic_with, minimal_counterexample,
 };
@@ -123,6 +124,17 @@ enum Commands {
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
     },
+    /// 验证三值决策表策略文件。
+    Verify {
+        /// 策略 JSON 路径。
+        path: std::path::PathBuf,
+        /// 引擎：sat（默认）或 bdd。
+        #[arg(long, default_value = "sat")]
+        engine: String,
+        /// JSON 输出。
+        #[arg(long)]
+        json: bool,
+    },
     /// 交互式会话：逐行输入表达式，直接看到真值表。
     Repl {
         /// 启动时使用的语义。
@@ -168,6 +180,7 @@ fn main() -> Result<()> {
             expand_implies,
         } => cmd_simplify(&expression, format, expand_implies, &cli.algebra),
         Commands::Circuit { path, format } => cmd_circuit(&path, format, &cli.algebra),
+        Commands::Verify { path, engine, json } => cmd_verify(&path, &engine, json),
         Commands::Repl { algebra } => {
             let alg_name = algebra.unwrap_or(cli.algebra);
             cmd_repl(&alg_name)
@@ -449,6 +462,86 @@ fn cmd_equiv(
     } else {
         std::process::exit(2)
     }
+}
+
+/// `verify` 子命令。
+fn cmd_verify(path: &std::path::Path, engine: &str, json: bool) -> Result<()> {
+    let Some(engine) = Engine::parse(engine) else {
+        bail!("未知引擎 {engine:?}，可选 sat / bdd");
+    };
+    let policy = Policy::load(path)?;
+    let results = policy.verify(engine)?;
+    let failed = results.iter().filter(|r| !r.holds).count();
+    if json {
+        let assertions = results
+            .iter()
+            .map(|r| {
+                let mut obj = serde_json::json!({
+                    "name": r.name,
+                    "holds": r.holds,
+                });
+                if let Some(nodes) = r.nodes {
+                    obj["nodes"] = serde_json::json!(nodes);
+                }
+                if let Some(asg) = &r.counterexample {
+                    let mut pairs = serde_json::Map::new();
+                    for name in asg.variables() {
+                        pairs.insert(
+                            name.clone(),
+                            serde_json::Value::String(
+                                asg.get(&name)
+                                    .unwrap_or(Ternary::Unknown)
+                                    .as_char()
+                                    .to_string(),
+                            ),
+                        );
+                    }
+                    obj["counterexample"] = serde_json::Value::Object(pairs);
+                }
+                obj
+            })
+            .collect::<Vec<_>>();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "engine": engine.as_str(),
+                "assertions": assertions,
+                "failed": failed,
+            }))?
+        );
+    } else {
+        for result in &results {
+            if result.holds {
+                println!("OK     {}", result.name);
+            } else {
+                println!("FAILED {}", result.name);
+                if let Some(asg) = &result.counterexample {
+                    let detail = asg
+                        .variables()
+                        .iter()
+                        .map(|name| {
+                            format!(
+                                "{name}={}",
+                                asg.get(name).unwrap_or(Ternary::Unknown).as_char()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!("       反例：{detail}");
+                }
+            }
+        }
+        println!(
+            "{} 条断言，{} 失败  [{}]",
+            results.len(),
+            failed,
+            engine.as_str()
+        );
+    }
+    if failed > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// `simplify` 子命令。

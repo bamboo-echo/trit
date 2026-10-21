@@ -1,0 +1,20 @@
+[package]
+name = "trit-policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "三值决策表的构建期验证：定义展开 + 全赋值断言检查"
+
+[dependencies]
+trit-core.workspace = true
+trit-eval.workspace = true
+trit-sat.workspace = true
+trit-bdd.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+
+[dev-dependencies]
+serde_json = "1.0.154"
