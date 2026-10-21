@@ -7,6 +7,17 @@ dual-rail + SAT 等价判定、组合网表 X 传播；二进制与三值的边�
 
 定位与边界见 [docs/DESIGN.md](docs/DESIGN.md)。
 
+## 预编译产物
+
+GitHub Releases（`v0.3.1` 起）提供：
+
+| 平台 | 产物 |
+|---|---|
+| Linux x86_64 | `trit-linux-x86_64.tar.gz` |
+| Windows x86_64 | `trit-windows-x86_64.zip` |
+| macOS arm64 | `trit-macos-aarch64.tar.gz` |
+| 校验 | `SHA256SUMS` |
+
 ## 工作区
 
 | crate | 内容 |
