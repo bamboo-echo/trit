@@ -4,7 +4,7 @@ pub mod eval;
 pub mod simplify;
 
 pub use eval::{
-    Assignment, EquivalenceResult, VarMap, decode_assignment, equivalent, eval, eval_bitwise,
-    truth_table,
+    Assignment, EquivalenceResult, VarMap, assignment_index, decode_assignment, equivalent, eval,
+    eval_bitwise, truth_table,
 };
 pub use simplify::{SimplifyOptions, simplify, simplify_with};

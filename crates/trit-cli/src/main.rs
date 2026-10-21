@@ -16,12 +16,13 @@ use std::io::{BufRead, Write};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use trit_bdd::equivalent_bdd;
 use trit_circuit::circuit::{Circuit, Gate, GateKind, Signal};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::parser::Parser as ExprParser;
 use trit_core::value::Ternary;
-use trit_eval::eval::{Assignment, decode_assignment, equivalent, eval, truth_table};
+use trit_eval::eval::{Assignment, equivalent, eval, truth_table};
 use trit_eval::simplify::{SimplifyOptions, simplify_with};
 use trit_sat::symbolic::{
     EncodingSize, encoding_size, equivalent_symbolic_with, minimal_counterexample,
@@ -84,6 +85,9 @@ enum Commands {
         /// 用 SAT 符号化判定（dual-rail），不做 3^n 穷举。
         #[arg(long)]
         symbolic: bool,
+        /// 用 BDD（canonical）判定；与 `--symbolic` 互斥。
+        #[arg(long)]
+        bdd: bool,
         /// 穷举判定的变量数上限；超过则报错并提示 `--symbolic`。
         #[arg(long, default_value_t = 18)]
         max_vars: usize,
@@ -137,6 +141,7 @@ fn main() -> Result<()> {
             right,
             format,
             symbolic,
+            bdd,
             max_vars,
             binary,
             binary_all,
@@ -149,6 +154,7 @@ fn main() -> Result<()> {
             &cli.algebra,
             EquivOptions {
                 symbolic,
+                bdd,
                 max_vars,
                 binary,
                 binary_all,
@@ -229,6 +235,7 @@ fn cmd_table(expression: &str, format: Format, alg_name: &str) -> Result<()> {
 /// `equiv` 子命令。
 struct EquivOptions {
     symbolic: bool,
+    bdd: bool,
     max_vars: usize,
     binary: Option<String>,
     binary_all: bool,
@@ -245,6 +252,7 @@ fn cmd_equiv(
 ) -> Result<()> {
     let EquivOptions {
         symbolic,
+        bdd,
         max_vars,
         binary: binary_list,
         binary_all,
@@ -276,8 +284,11 @@ fn cmd_equiv(
             binary.insert(name.to_string());
         }
     }
-    if !binary.is_empty() && !symbolic {
-        bail!("--binary / --binary-all 只用于 --symbolic");
+    if bdd && symbolic {
+        bail!("--bdd 与 --symbolic 只能选一个");
+    }
+    if !binary.is_empty() && !symbolic && !bdd {
+        bail!("--binary / --binary-all 只用于 --symbolic 或 --bdd");
     }
     if minimize && !symbolic {
         bail!("--minimize 只用于 --symbolic");
@@ -339,22 +350,29 @@ fn cmd_equiv(
     } else {
         None
     };
-    let (result, method) = if symbolic {
+    let (result, method, bdd_nodes) = if bdd {
+        let verdict = equivalent_bdd(&a, &b, alg, &binary)?;
+        (verdict.result, "bdd", Some(verdict.nodes))
+    } else if symbolic {
         let method = if binary.is_empty() {
             "sat"
         } else {
             "sat-binary"
         };
-        (equivalent_symbolic_with(&a, &b, alg, &binary)?, method)
+        (
+            equivalent_symbolic_with(&a, &b, alg, &binary)?,
+            method,
+            None,
+        )
     } else {
         if vars.len() > max_vars {
             bail!(
-                "变量数 {} 超过穷举上限 {}；用 --symbolic 走 SAT 判定",
+                "变量数 {} 超过穷举上限 {}；用 --symbolic 或 --bdd 走符号化判定",
                 vars.len(),
                 max_vars
             );
         }
-        (equivalent(&a, &b, alg), "exhaustive")
+        (equivalent(&a, &b, alg), "exhaustive", None)
     };
     match format {
         Format::Json => {
@@ -370,14 +388,16 @@ fn cmd_equiv(
                     "clauses": size.clauses,
                 });
             }
-            if let Some(ce) = result.counterexample {
-                let asg = decode_assignment(ce, &vars);
+            if let Some(nodes) = bdd_nodes.filter(|_| stats) {
+                obj["bdd_nodes"] = serde_json::json!(nodes);
+            }
+            if let Some(asg) = &result.counterexample_assignment {
                 let mut pairs = serde_json::Map::new();
-                for name in &vars {
+                for name in asg.variables() {
                     pairs.insert(
                         name.clone(),
                         serde_json::Value::String(
-                            asg.get(name)
+                            asg.get(&name)
                                 .unwrap_or(Ternary::Unknown)
                                 .as_char()
                                 .to_string(),
@@ -385,7 +405,9 @@ fn cmd_equiv(
                     );
                 }
                 obj["counterexample"] = serde_json::Value::Object(pairs);
-                obj["counterexample_index"] = serde_json::json!(ce);
+                if let Some(ce) = result.counterexample {
+                    obj["counterexample_index"] = serde_json::json!(ce);
+                }
             }
             println!("{}", serde_json::to_string_pretty(&obj)?);
         }
@@ -396,18 +418,29 @@ fn cmd_equiv(
                     size.variables, size.clauses
                 );
             }
+            if let (Some(nodes), true) = (bdd_nodes, stats) {
+                eprintln!("BDD：nodes={nodes}");
+            }
             if result.equivalent {
                 println!("等价：{left} ≡ {right}  [{alg}]");
-            } else {
-                let ce = result.counterexample.unwrap_or(0);
-                let asg = decode_assignment(ce, &vars);
-                let detail = vars
+            } else if let Some(asg) = &result.counterexample_assignment {
+                let detail = asg
+                    .variables()
                     .iter()
-                    .map(|v| format!("{v}={}", asg.get(v).unwrap_or(Ternary::Unknown).as_char()))
+                    .map(|name| {
+                        format!(
+                            "{name}={}",
+                            asg.get(name).unwrap_or(Ternary::Unknown).as_char()
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 println!("不等价：{left} ≢ {right}  [{alg}]");
-                println!("反例：{detail}（赋值编号 {ce}）");
+                if let Some(index) = result.counterexample {
+                    println!("反例：{detail}（赋值编号 {index}）");
+                } else {
+                    println!("反例：{detail}（变量过多，无编号）");
+                }
             }
         }
     }

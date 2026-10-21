@@ -229,3 +229,27 @@ fn minimize_requires_symbolic() {
     assert_ne!(code, 0);
     assert!(stderr.contains("只用于 --symbolic"), "stderr={stderr}");
 }
+
+#[test]
+fn equiv_bdd_works() {
+    let (stdout, _, code) = run(&["equiv", "--bdd", "a & (b | c)", "(a & b) | (a & c)"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("等价"));
+    let (stdout, _, code) = run(&["equiv", "--bdd", "a", "!a"]);
+    assert_eq!(code, 2);
+    assert!(stdout.contains("反例"));
+}
+
+#[test]
+fn bdd_and_symbolic_conflict() {
+    let (_, stderr, code) = run(&["equiv", "--bdd", "--symbolic", "a", "a"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("只能选一个"), "stderr={stderr}");
+}
+
+#[test]
+fn bdd_stats_prints_nodes() {
+    let (_, stderr, code) = run(&["equiv", "--bdd", "--stats", "a & b", "b & a"]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    assert!(stderr.contains("BDD：nodes="), "stderr={stderr}");
+}

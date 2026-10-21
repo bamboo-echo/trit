@@ -6,6 +6,7 @@ members = [
     "crates/trit-sat",
     "crates/trit-circuit",
     "crates/trit-cli",
+    "crates/trit-bdd",
 ]
 
 [workspace.package]
@@ -20,3 +21,4 @@ trit-core = { path = "crates/trit-core", version = "0.2.0" }
 trit-eval = { path = "crates/trit-eval", version = "0.2.0" }
 trit-sat = { path = "crates/trit-sat", version = "0.2.0" }
 trit-circuit = { path = "crates/trit-circuit", version = "0.2.0" }
+trit-bdd = { path = "crates/trit-bdd", version = "0.2.0" }

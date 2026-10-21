@@ -1,0 +1,14 @@
+[package]
+name = "trit-bdd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "三值等价的 BDD（canonical）判定"
+
+[dependencies]
+trit-core.workspace = true
+trit-eval.workspace = true
+biodivine-lib-bdd = "0.6.3"
+thiserror = "2.0.21"
