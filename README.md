@@ -25,6 +25,7 @@ cargo run --release -p trit-cli -- equiv "a & (b | c)" "(a & b) | (a & c)"
 cargo run --release -p trit-cli -- -a lukasiewicz equiv "X => X" "1"
 cargo run --release -p trit-cli -- equiv --symbolic "..." "..."   # 大变量数走 SAT
 cargo run --release -p trit-cli -- equiv --symbolic --binary-all --stats "..." "..."
+cargo run --release -p trit-cli -- equiv --symbolic --minimize "a & (b | !b)" "0"
 ```
 
 `--algebra` / `-a` 选 `kleene`（默认）、`lukasiewicz`、`bochvar`；不等价退出码为 `2`。
@@ -68,6 +69,10 @@ cargo run --release -p trit-cli -- equiv --symbolic --binary-all --stats "..." "
 100 变量 AND 链实测：**3866 → 598 条子句，0.028 s → 0.0147 s**；`--stats` 打印编码规模。
 
 反例编号与 `decode_assignment` 的约定一致。
+
+**反例最小化**（`--minimize`）：从完整模型出发，逐个试删变量；用“断言两边相等”的对偶编码检查，
+删掉后若仍可相等就必须保留。得到的是**充分**部分反例——未列出的变量在各自域内任取，两边仍不相等；
+不会退化成“只保证存在某个补全”的空反例。
 
 ## 网表
 

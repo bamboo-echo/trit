@@ -2,9 +2,12 @@ use std::collections::HashSet;
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::parser::Parser;
+use trit_core::value::Ternary;
 use trit_eval::eval::{decode_assignment, equivalent, eval};
 
-use trit_sat::symbolic::{encoding_size, equivalent_symbolic, equivalent_symbolic_with};
+use trit_sat::symbolic::{
+    encoding_size, equivalent_symbolic, equivalent_symbolic_with, minimal_counterexample,
+};
 
 fn parse(src: &str) -> Expr {
     Parser::parse(src).expect("测试表达式应可解析")
@@ -170,4 +173,62 @@ fn binary_fast_path_shrinks_the_encoding() {
         fast.variables < generic.variables,
         "二值快速路径应更少变量：generic={generic:?} fast={fast:?}"
     );
+}
+
+#[test]
+fn minimal_counterexample_none_for_equivalent() {
+    let a = parse("a & b");
+    let b = parse("b & a");
+    assert!(
+        minimal_counterexample(&a, &b, Algebra::Kleene, &HashSet::new())
+            .expect("SAT 不应报错")
+            .is_none()
+    );
+}
+
+#[test]
+fn minimal_counterexample_drops_irrelevant_vars() {
+    // b 二值时 b | !b = 1，左式只依赖 a；b 应被最小化掉。
+    let a = parse("a & (b | !b)");
+    let b = parse("0");
+    let binary: HashSet<String> = ["b"].iter().map(|s| s.to_string()).collect();
+    let witness = minimal_counterexample(&a, &b, Algebra::Kleene, &binary)
+        .expect("SAT 不应报错")
+        .expect("应不等价");
+    assert_eq!(witness.get("a"), Some(Ternary::True), "a 必须保留为 1");
+    assert_eq!(witness.get("b"), None, "b 应被最小化掉");
+    assert_eq!(witness.len(), 1);
+}
+
+#[test]
+fn minimal_counterexample_respects_binary_domain() {
+    let a = parse("a & b");
+    let b = parse("a");
+    let binary: HashSet<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+    let witness = minimal_counterexample(&a, &b, Algebra::Kleene, &binary)
+        .expect("SAT 不应报错")
+        .expect("应不等价");
+    assert_eq!(witness.get("a"), Some(Ternary::True));
+    assert_eq!(witness.get("b"), Some(Ternary::False));
+    assert_eq!(witness.len(), 2);
+}
+
+#[test]
+fn minimal_counterexample_is_sufficient() {
+    // 反例固定 a=1；b 二值自由，两种补全都必须区分。
+    let a = parse("a & (b | !b)");
+    let b = parse("0");
+    let binary: HashSet<String> = ["b"].iter().map(|s| s.to_string()).collect();
+    let witness = minimal_counterexample(&a, &b, Algebra::Kleene, &binary)
+        .expect("SAT 不应报错")
+        .expect("应不等价");
+    for bit in [false, true] {
+        let mut asg = witness.clone();
+        asg.set("b", Ternary::from_bool(bit));
+        assert_ne!(
+            eval(&a, &asg, Algebra::Kleene),
+            eval(&b, &asg, Algebra::Kleene),
+            "b={bit} 的补全也必须区分"
+        );
+    }
 }

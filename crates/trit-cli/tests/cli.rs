@@ -206,3 +206,26 @@ fn binary_flag_requires_symbolic() {
     assert_ne!(code, 0);
     assert!(stderr.contains("只用于 --symbolic"), "stderr={stderr}");
 }
+
+#[test]
+fn equiv_minimize_returns_relevant_vars_only() {
+    let (stdout, stderr, code) = run(&[
+        "equiv",
+        "--symbolic",
+        "--minimize",
+        "--binary",
+        "b",
+        "a & (b | !b)",
+        "0",
+    ]);
+    assert_eq!(code, 2, "stderr={stderr}");
+    assert!(stdout.contains("最小反例：a="), "stdout={stdout}");
+    assert!(!stdout.contains("b="), "b 应被最小化掉: {stdout}");
+}
+
+#[test]
+fn minimize_requires_symbolic() {
+    let (_, stderr, code) = run(&["equiv", "--minimize", "a", "!a"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("只用于 --symbolic"), "stderr={stderr}");
+}
