@@ -1,0 +1,79 @@
+use trit_policy::{Engine, Policy, PolicyError};
+
+const ADMISSION: &str = r#"{
+  "algebra": "kleene",
+  "binary": ["infeasible", "contended"],
+  "definitions": { "reject": "infeasible | (hopeless & contended)" },
+  "assertions": [
+    { "name": "硬约束", "expr": "infeasible => reject" },
+    { "name": "空槽不拒", "expr": "(!contended & !infeasible) => !reject" }
+  ]
+}"#;
+
+#[test]
+fn admission_policy_holds_on_both_engines() {
+    let policy = Policy::from_json(ADMISSION).expect("策略应可解析");
+    for engine in [Engine::Sat, Engine::Bdd] {
+        let results = policy.verify(engine).expect("验证不应报错");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.holds), "{engine:?}: {results:?}");
+        assert!(results.iter().all(|r| r.counterexample.is_none()));
+    }
+}
+
+#[test]
+fn bad_assertion_returns_counterexample() {
+    let policy = Policy::from_json(
+        r#"{
+          "binary": ["infeasible", "contended"],
+          "definitions": { "reject": "infeasible | (hopeless & contended)" },
+          "assertions": [{ "name": "无望必拒（错误断言）", "expr": "hopeless => reject" }]
+        }"#,
+    )
+    .expect("策略应可解析");
+    for engine in [Engine::Sat, Engine::Bdd] {
+        let results = policy.verify(engine).expect("验证不应报错");
+        assert_eq!(results.len(), 1);
+        let result = &results[0];
+        assert!(!result.holds, "{engine:?} 应抓到反例：{result:?}");
+        let witness = result.counterexample.as_ref().expect("应有反例");
+        assert!(!witness.is_empty(), "反例不应为空");
+        if engine == Engine::Bdd {
+            assert!(result.nodes.is_some());
+        }
+    }
+}
+
+#[test]
+fn definition_cycle_is_rejected() {
+    let policy = Policy::from_json(
+        r#"{
+          "definitions": { "a": "b", "b": "a" },
+          "assertions": [{ "name": "循环", "expr": "a" }]
+        }"#,
+    )
+    .expect("策略应可解析");
+    let err = policy.verify(Engine::Sat).unwrap_err();
+    assert!(matches!(err, PolicyError::Cycle(_)), "{err:?}");
+}
+
+#[test]
+fn definitions_are_expanded() {
+    let policy = Policy::from_json(
+        r#"{
+          "binary": ["a", "b"],
+          "definitions": { "r": "a & b" },
+          "assertions": [{ "name": "展开", "expr": "r => (a & b)" }]
+        }"#,
+    )
+    .expect("策略应可解析");
+    for engine in [Engine::Sat, Engine::Bdd] {
+        let results = policy.verify(engine).expect("验证不应报错");
+        assert!(results[0].holds, "{engine:?}: {results:?}");
+    }
+}
+
+#[test]
+fn invalid_json_is_an_error() {
+    assert!(matches!(Policy::from_json("{"), Err(PolicyError::Json(_))));
+}

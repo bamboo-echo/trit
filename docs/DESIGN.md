@@ -12,7 +12,7 @@
 | L0 语义 | K3 / Ł3 / B3 | `trit-core::algebra` |
 | L1 表示 | AST/解析器、真值表、双导轨、位切片 | `trit-core` |
 | L2 引擎 | 穷举参考、SAT 等价、BDD 等价、化简、网表分析 | `trit-eval` / `trit-sat` / `trit-bdd` / `trit-circuit` |
-| L3 应用 | 决策表门禁、硬件 X 检查、教学 | `trit-cli` + 外部 CI |
+| L3 应用 | 决策表门禁、硬件 X 检查、教学 | `trit-policy` + `trit-cli` + `action/` |
 | L4 工程 | 交叉验证、变异、基准、文档 | 各 crate 的 tests / examples |
 
 ## 表示不变量
@@ -34,6 +34,13 @@
   200 变量内不再生成 unknown 导轨；100 变量 AND 链子句数 3866 → 598。
 - **网表是独立语义**：组合逻辑、穷举输入；不做时序。
 - 回归纪律：任何新语义先加穷举↔SAT 对拍，再加变异（改一个真值表项必须判红）。
+
+## 决策表验证
+
+- `trit verify` 读取 JSON 策略：`definitions` 先展开（检测循环），每条 `assertions` 在全合法赋值上检查。
+- 三值变量取 `{0,1,X}`，`binary` 变量只取 `{0,1}`；断言恒真用 `expr ≡ 1` 判定。
+- SAT 失败给充分最小反例；BDD 给 canonical 差集与完整赋值；任何失败退出码 1。
+- Action 在调用方仓库里构建 trit 并跑 `verify`，策略路径相对调用方 workspace。
 
 ## 性能边界
 

@@ -1,0 +1,10 @@
+{
+  "algebra": "kleene",
+  "binary": ["infeasible", "contended"],
+  "definitions": {
+    "reject": "infeasible | (hopeless & contended)"
+  },
+  "assertions": [
+    { "name": "deliberately wrong: unknown hopelessness implies reject", "expr": "hopeless => reject" }
+  ]
+}

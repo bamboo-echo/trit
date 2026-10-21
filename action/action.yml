@@ -1,0 +1,21 @@
+name: trit verify
+description: Verify three-valued decision tables with trit
+inputs:
+  policy:
+    description: Policy JSON path, relative to the caller workspace
+    required: false
+    default: policy.json
+  engine:
+    description: sat (default) or bdd
+    required: false
+    default: sat
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+    - shell: bash
+      working-directory: ${{ github.workspace }}
+      run: |
+        cargo run --release --quiet \
+          --manifest-path "${{ github.action_path }}/../Cargo.toml" \
+          -p trit-cli -- verify "${{ inputs.policy }}" --engine "${{ inputs.engine }}"

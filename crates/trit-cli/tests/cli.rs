@@ -253,3 +253,31 @@ fn bdd_stats_prints_nodes() {
     assert_eq!(code, 0, "stderr={stderr}");
     assert!(stderr.contains("BDD：nodes="), "stderr={stderr}");
 }
+
+#[test]
+fn verify_example_policy_passes() {
+    let path = format!("{}/../../examples/policy.json", env!("CARGO_MANIFEST_DIR"));
+    let (stdout, stderr, code) = run(&["verify", &path]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    assert!(stdout.contains("OK"), "stdout={stdout}");
+}
+
+#[test]
+fn verify_bad_policy_fails_with_counterexample() {
+    let path = format!(
+        "{}/tests/fixtures/bad_policy.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let (stdout, stderr, code) = run(&["verify", &path]);
+    assert_eq!(code, 1, "stderr={stderr}");
+    assert!(stdout.contains("FAILED"), "stdout={stdout}");
+    assert!(stdout.contains("反例："), "stdout={stdout}");
+}
+
+#[test]
+fn verify_bdd_engine_works() {
+    let path = format!("{}/../../examples/policy.json", env!("CARGO_MANIFEST_DIR"));
+    let (stdout, stderr, code) = run(&["verify", "--engine", "bdd", &path]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    assert!(stdout.contains("OK"), "stdout={stdout}");
+}
