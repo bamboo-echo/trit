@@ -28,9 +28,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp target/release/tla dist/tla-linux-x86_64
-          tar -czf dist/tla-linux-x86_64.tar.gz -C dist tla-linux-x86_64
-          rm dist/tla-linux-x86_64
+          cp target/release/trit dist/trit-linux-x86_64
+          tar -czf dist/trit-linux-x86_64.tar.gz -C dist trit-linux-x86_64
+          rm dist/trit-linux-x86_64
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
