@@ -184,3 +184,25 @@ fn unknown_algebra_is_rejected() {
     assert_ne!(code, 0);
     assert!(stderr.contains("未知的三值语义"), "stderr was: {stderr}");
 }
+
+#[test]
+fn equiv_binary_fast_path_reports_stats() {
+    let (stdout, stderr, code) = run(&[
+        "equiv",
+        "--symbolic",
+        "--binary-all",
+        "--stats",
+        "a & b",
+        "b & a",
+    ]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    assert!(stdout.contains("等价"));
+    assert!(stderr.contains("clauses="), "stderr={stderr}");
+}
+
+#[test]
+fn binary_flag_requires_symbolic() {
+    let (_, stderr, code) = run(&["equiv", "--binary", "a,b", "a & b", "b & a"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("只用于 --symbolic"), "stderr={stderr}");
+}
