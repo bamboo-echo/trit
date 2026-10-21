@@ -17,7 +17,7 @@ use varisat::{ExtendFormula, Lit, Solver, Var};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::value::Ternary;
-use trit_eval::{Assignment, EquivalenceResult};
+use trit_eval::{Assignment, EquivalenceResult, assignment_index};
 
 /// 符号化判定错误。
 #[derive(Debug, thiserror::Error)]
@@ -451,6 +451,7 @@ pub fn equivalent_symbolic_with(
         return Ok(EquivalenceResult {
             equivalent: true,
             counterexample: None,
+            counterexample_assignment: None,
             variable_count: vars.len(),
         });
     }
@@ -463,24 +464,23 @@ pub fn equivalent_symbolic_with(
         .filter(|lit| lit.is_positive())
         .map(|lit| lit.var())
         .collect();
-    let mut index = 0u64;
-    let mut pow = 1u64;
+    let mut assignment = Assignment::new();
     for name in &vars {
         let node = enc.vars[name];
-        // 与 decode_assignment 一致：False=0、True=1、Unknown=2。
-        let digit = if trues.contains(&node.t) {
-            1u64
+        let value = if trues.contains(&node.t) {
+            Ternary::True
         } else if trues.contains(&node.x) {
-            2u64
+            Ternary::Unknown
         } else {
-            0u64
+            Ternary::False
         };
-        index += digit * pow;
-        pow *= 3;
+        assignment.set(name.clone(), value);
     }
+    let index = assignment_index(&assignment, &vars);
     Ok(EquivalenceResult {
         equivalent: false,
-        counterexample: Some(index),
+        counterexample: index,
+        counterexample_assignment: Some(assignment),
         variable_count: vars.len(),
     })
 }

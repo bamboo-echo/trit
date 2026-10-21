@@ -15,6 +15,7 @@ dual-rail + SAT 等价判定、组合网表 X 传播；二进制与三值的边�
 | `trit-eval` | 求值、真值表、穷举等价、化简 |
 | `trit-sat` | dual-rail + SAT 等价判定与反例 |
 | `trit-circuit` | 组合网表 X 传播、stuck-at 可测性 |
+| `trit-bdd` | BDD（canonical）等价判定 |
 | `trit-cli` | `trit` 命令行 |
 
 ## 快速开始
@@ -26,6 +27,7 @@ cargo run --release -p trit-cli -- -a lukasiewicz equiv "X => X" "1"
 cargo run --release -p trit-cli -- equiv --symbolic "..." "..."   # 大变量数走 SAT
 cargo run --release -p trit-cli -- equiv --symbolic --binary-all --stats "..." "..."
 cargo run --release -p trit-cli -- equiv --symbolic --minimize "a & (b | !b)" "0"
+cargo run --release -p trit-cli -- equiv --bdd "a & (b | c)" "(a & b) | (a & c)"
 ```
 
 `--algebra` / `-a` 选 `kleene`（默认）、`lukasiewicz`、`bochvar`；不等价退出码为 `2`。
@@ -73,6 +75,22 @@ cargo run --release -p trit-cli -- equiv --symbolic --minimize "a & (b | !b)" "0
 **反例最小化**（`--minimize`）：从完整模型出发，逐个试删变量；用“断言两边相等”的对偶编码检查，
 删掉后若仍可相等就必须保留。得到的是**充分**部分反例——未列出的变量在各自域内任取，两边仍不相等；
 不会退化成“只保证存在某个补全”的空反例。
+
+## BDD 引擎（`--bdd`）
+
+第三条等价路径：把双导轨直接建成 BDD，差集 BDD 为 false 即等价。BDD 是 canonical 的，
+二值变量只建一根导轨；`--stats` 打印差集节点数。与 SAT 互斥（`--bdd` / `--symbolic` 二选一）。
+
+同机单次（n 个变量的 AND 链与自身比较）：
+
+| 变量数 | SAT | BDD |
+|---|---|---|
+| 50 | 0.022 s | 0.025 s |
+| 100 | 0.028 s | 0.047 s |
+| `(a & b) \| (c & d)` | 0.016 s | 0.016 s |
+
+结论：这批结构化小公式上 SAT 略快；BDD 的价值在 canonical 表示与可枚举/可组合的图结构，
+不是“无条件更快”。变量顺序、函数结构都会影响 BDD 规模，极端函数会指数爆炸——按基准选引擎。
 
 ## 网表
 

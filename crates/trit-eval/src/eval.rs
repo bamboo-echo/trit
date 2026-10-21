@@ -144,8 +144,10 @@ pub fn truth_table(expr: &Expr, alg: Algebra) -> TruthTable {
 pub struct EquivalenceResult {
     /// 是否等价。
     pub equivalent: bool,
-    /// 第一个反例的赋值编号（`None` 表示等价）。
+    /// 第一个反例的赋值编号（`None` 表示等价或编号超出 u64）。
     pub counterexample: Option<u64>,
+    /// 第一个反例的完整赋值（等价时为 `None`）。
+    pub counterexample_assignment: Option<Assignment>,
     /// 参与比较的变量数。
     pub variable_count: usize,
 }
@@ -169,9 +171,11 @@ pub fn equivalent(a: &Expr, b: &Expr, alg: Algebra) -> EquivalenceResult {
         let take = (total - base).min(64) as u32;
         for bit in 0..take {
             if va.get(bit) != vb.get(bit) {
+                let index = base + bit as u64;
                 return EquivalenceResult {
                     equivalent: false,
-                    counterexample: Some(base + bit as u64),
+                    counterexample: Some(index),
+                    counterexample_assignment: Some(decode_assignment(index, &vars)),
                     variable_count: vars.len(),
                 };
             }
@@ -181,8 +185,27 @@ pub fn equivalent(a: &Expr, b: &Expr, alg: Algebra) -> EquivalenceResult {
     EquivalenceResult {
         equivalent: true,
         counterexample: None,
+        counterexample_assignment: None,
         variable_count: vars.len(),
     }
+}
+
+/// 把赋值编码成编号；变量多到超出 `u64` 时返回 `None`。
+///
+/// 编号约定与 [`decode_assignment`] 一致：False=0、True=1、Unknown=2。
+pub fn assignment_index(assignment: &Assignment, vars: &[String]) -> Option<u64> {
+    let mut index = 0u64;
+    let mut power = 1u64;
+    for name in vars {
+        let digit = match assignment.get(name).unwrap_or(Ternary::Unknown) {
+            Ternary::False => 0u64,
+            Ternary::True => 1u64,
+            Ternary::Unknown => 2u64,
+        };
+        index = index.checked_add(digit.checked_mul(power)?)?;
+        power = power.checked_mul(3)?;
+    }
+    Some(index)
 }
 
 /// 把三进制赋值编号解码为各变量的取值。
