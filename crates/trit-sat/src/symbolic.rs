@@ -599,6 +599,48 @@ fn assumptions(enc: &Encoder, vars: &[String], values: &[Ternary], keep: &[bool]
     lits
 }
 
+/// 是否存在合法赋值使表达式为 `True`；返回一个见证。
+pub fn satisfiable(
+    expr: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+) -> Result<Option<Assignment>, SymbolicError> {
+    let vars = expr.variables();
+    let mut enc = Encoder::new(alg, binary_vars);
+    let node = enc.encode(expr);
+    enc.clause(&[Lit::from_var(node.t, true)]);
+    enc.clause(&[Lit::from_var(node.x, false)]);
+    let sat = enc
+        .solver
+        .solve()
+        .map_err(|e| SymbolicError::Solver(e.to_string()))?;
+    if !sat {
+        return Ok(None);
+    }
+    let model = enc
+        .solver
+        .model()
+        .ok_or_else(|| SymbolicError::Solver("SAT 但没有模型".to_string()))?;
+    let trues: HashSet<Var> = model
+        .iter()
+        .filter(|lit| lit.is_positive())
+        .map(|lit| lit.var())
+        .collect();
+    let mut assignment = Assignment::new();
+    for name in &vars {
+        let node = enc.vars[name];
+        let value = if trues.contains(&node.t) {
+            Ternary::True
+        } else if trues.contains(&node.x) {
+            Ternary::Unknown
+        } else {
+            Ternary::False
+        };
+        assignment.set(name.clone(), value);
+    }
+    Ok(Some(assignment))
+}
+
 /// 只构建编码并返回规模，不求解；用于验证二值快速路径的收益。
 pub fn encoding_size(
     a: &Expr,

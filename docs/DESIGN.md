@@ -38,6 +38,7 @@
 ## 决策表验证
 
 - `trit verify` 读取 JSON 策略：`definitions` 先展开（检测循环），每条 `assertions` 在全合法赋值上检查。
+- `assumptions` 是额外前提：先检查其可满足性，再检查 `assumptions ⇒ assertion` 恒真；前提不会改变变量的域。
 - 三值变量取 `{0,1,X}`，`binary` 变量只取 `{0,1}`；断言恒真用 `expr ≡ 1` 判定。
 - SAT 失败给充分最小反例；BDD 给 canonical 差集与完整赋值；任何失败退出码 1。
 - Action 在调用方仓库里构建 trit 并跑 `verify`，策略路径相对调用方 workspace。

@@ -1,3 +1,4 @@
+use trit_core::value::Ternary;
 use trit_policy::{Engine, Policy, PolicyError};
 
 const ADMISSION: &str = r#"{
@@ -76,4 +77,61 @@ fn definitions_are_expanded() {
 #[test]
 fn invalid_json_is_an_error() {
     assert!(matches!(Policy::from_json("{"), Err(PolicyError::Json(_))));
+}
+
+#[test]
+fn assumptions_restrict_the_domain() {
+    let policy = Policy::from_json(
+        r#"{
+          "binary": ["infeasible", "contended", "hopeless"],
+          "assumptions": ["contended"],
+          "definitions": { "reject": "infeasible | (hopeless & contended)" },
+          "assertions": [{ "name": "with contention", "expr": "hopeless => reject" }]
+        }"#,
+    )
+    .expect("策略应可解析");
+    for engine in [Engine::Sat, Engine::Bdd] {
+        let results = policy.verify(engine).expect("验证不应报错");
+        assert!(results[0].holds, "{engine:?}: {results:?}");
+    }
+}
+
+#[test]
+fn inconsistent_assumptions_are_rejected() {
+    let policy = Policy::from_json(
+        r#"{
+          "binary": ["contended"],
+          "assumptions": ["contended", "!contended"],
+          "assertions": [{ "name": "unreachable", "expr": "0" }]
+        }"#,
+    )
+    .expect("策略应可解析");
+    for engine in [Engine::Sat, Engine::Bdd] {
+        let err = policy.verify(engine).unwrap_err();
+        assert!(
+            matches!(err, PolicyError::InconsistentAssumptions),
+            "{engine:?}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn counterexample_respects_assumptions() {
+    let policy = Policy::from_json(
+        r#"{
+          "binary": ["infeasible", "contended"],
+          "assumptions": ["contended"],
+          "definitions": { "reject": "infeasible | (hopeless & contended)" },
+          "assertions": [{ "name": "wrong", "expr": "infeasible => !reject" }]
+        }"#,
+    )
+    .expect("策略应可解析");
+    let results = policy.verify(Engine::Sat).expect("验证不应报错");
+    assert!(!results[0].holds);
+    let witness = results[0].counterexample.as_ref().expect("应有反例");
+    assert_eq!(
+        witness.get("contended"),
+        Some(Ternary::True),
+        "反例必须满足前提"
+    );
 }

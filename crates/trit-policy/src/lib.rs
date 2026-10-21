@@ -23,13 +23,13 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use trit_bdd::{BddError, equivalent_bdd};
+use trit_bdd::{BddError, equivalent_bdd, satisfiable_bdd};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::parser::Parser;
 use trit_core::value::Ternary;
 use trit_eval::Assignment;
-use trit_sat::{SymbolicError, minimal_counterexample};
+use trit_sat::{SymbolicError, minimal_counterexample, satisfiable};
 
 /// 验证引擎。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +68,9 @@ pub struct Policy {
     /// 已知二值的变量。
     #[serde(default)]
     pub binary: Vec<String>,
+    /// 前提约束：必须可满足；断言只在满足前提的赋值上检查。
+    #[serde(default)]
+    pub assumptions: Vec<String>,
     /// 派生信号：名字 -> 表达式。
     #[serde(default)]
     pub definitions: BTreeMap<String, String>,
@@ -124,6 +127,9 @@ pub enum PolicyError {
     /// 定义循环。
     #[error("定义循环: {0}")]
     Cycle(String),
+    /// 前提不一致。
+    #[error("前提不一致：没有合法赋值能让所有 assumptions 为 True")]
+    InconsistentAssumptions,
     /// SAT 引擎错误。
     #[error("SAT 错误: {0}")]
     Sat(String),
@@ -161,13 +167,30 @@ impl Policy {
             definitions.insert(name.clone(), parse_expr(name, src)?);
         }
         let truth = Expr::Const(Ternary::True);
+        let mut assumptions = Vec::with_capacity(self.assumptions.len());
+        for (i, src) in self.assumptions.iter().enumerate() {
+            let raw = parse_expr(&format!("assumption[{i}]"), src)?;
+            assumptions.push(expand(&raw, &definitions, &mut Vec::new())?);
+        }
+        let premise = assumptions.into_iter().fold(truth.clone(), Expr::and);
+        let satisfiable_premise = match engine {
+            Engine::Sat => satisfiable(&premise, alg, &binary)
+                .map_err(|e: SymbolicError| PolicyError::Sat(e.to_string()))?,
+            Engine::Bdd => satisfiable_bdd(&premise, alg, &binary)
+                .map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?,
+        };
+        if satisfiable_premise.is_none() {
+            return Err(PolicyError::InconsistentAssumptions);
+        }
+
         let mut results = Vec::with_capacity(self.assertions.len());
         for assertion in &self.assertions {
             let raw = parse_expr(&assertion.name, &assertion.expr)?;
             let expr = expand(&raw, &definitions, &mut Vec::new())?;
+            let check = Expr::implies(premise.clone(), expr);
             match engine {
                 Engine::Sat => {
-                    let witness = minimal_counterexample(&expr, &truth, alg, &binary)
+                    let witness = minimal_counterexample(&check, &truth, alg, &binary)
                         .map_err(|e: SymbolicError| PolicyError::Sat(e.to_string()))?;
                     results.push(AssertionResult {
                         name: assertion.name.clone(),
@@ -177,7 +200,7 @@ impl Policy {
                     });
                 }
                 Engine::Bdd => {
-                    let verdict = equivalent_bdd(&expr, &truth, alg, &binary)
+                    let verdict = equivalent_bdd(&check, &truth, alg, &binary)
                         .map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?;
                     results.push(AssertionResult {
                         name: assertion.name.clone(),

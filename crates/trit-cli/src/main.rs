@@ -470,6 +470,7 @@ fn cmd_verify(path: &std::path::Path, engine: &str, json: bool) -> Result<()> {
         bail!("未知引擎 {engine:?}，可选 sat / bdd");
     };
     let policy = Policy::load(path)?;
+    let assumptions = policy.assumptions.len();
     let results = policy.verify(engine)?;
     let failed = results.iter().filter(|r| !r.holds).count();
     if json {
@@ -505,6 +506,7 @@ fn cmd_verify(path: &std::path::Path, engine: &str, json: bool) -> Result<()> {
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "engine": engine.as_str(),
+                "assumptions": assumptions,
                 "assertions": assertions,
                 "failed": failed,
             }))?
@@ -532,10 +534,11 @@ fn cmd_verify(path: &std::path::Path, engine: &str, json: bool) -> Result<()> {
             }
         }
         println!(
-            "{} 条断言，{} 失败  [{}]",
+            "{} 条断言，{} 失败  [{}]（假设 {} 条）",
             results.len(),
             failed,
-            engine.as_str()
+            engine.as_str(),
+            assumptions
         );
     }
     if failed > 0 {

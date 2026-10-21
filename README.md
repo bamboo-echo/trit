@@ -134,6 +134,8 @@ OK     free slot must not reject on unknown hopelessness
 ```
 
 - `binary` 里的变量只在 0/1 上取值；其余变量按三值（含 X）检查——所以断言比二值布尔更强。
+- 可选 `assumptions`：前提必须同时**可满足**，断言只在满足前提的赋值上检查；前提不一致直接判错。
+  注意前提不会把 X 变成 0/1，需要二值语义就写进 `binary`。
 - `--engine bdd` 切 canonical BDD；`--json` 给 CI 用。
 - 可复用 Action（在目标仓里）：
 
