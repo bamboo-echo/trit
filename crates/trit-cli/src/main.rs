@@ -23,7 +23,9 @@ use trit_core::parser::Parser as ExprParser;
 use trit_core::value::Ternary;
 use trit_eval::eval::{Assignment, decode_assignment, equivalent, eval, truth_table};
 use trit_eval::simplify::{SimplifyOptions, simplify_with};
-use trit_sat::symbolic::{EncodingSize, encoding_size, equivalent_symbolic_with};
+use trit_sat::symbolic::{
+    EncodingSize, encoding_size, equivalent_symbolic_with, minimal_counterexample,
+};
 
 use crate::output::Format;
 
@@ -94,6 +96,9 @@ enum Commands {
         /// 打印 SAT 编码规模（仅 `--symbolic`）。
         #[arg(long)]
         stats: bool,
+        /// 输出最小反例：只保留区分两边所必需的变量（仅 `--symbolic`）。
+        #[arg(long)]
+        minimize: bool,
     },
     /// 化简表达式。
     Simplify {
@@ -136,6 +141,7 @@ fn main() -> Result<()> {
             binary,
             binary_all,
             stats,
+            minimize,
         } => cmd_equiv(
             &left,
             &right,
@@ -147,6 +153,7 @@ fn main() -> Result<()> {
                 binary,
                 binary_all,
                 stats,
+                minimize,
             },
         ),
         Commands::Simplify {
@@ -226,6 +233,7 @@ struct EquivOptions {
     binary: Option<String>,
     binary_all: bool,
     stats: bool,
+    minimize: bool,
 }
 
 fn cmd_equiv(
@@ -241,6 +249,7 @@ fn cmd_equiv(
         binary: binary_list,
         binary_all,
         stats,
+        minimize,
     } = opts;
     let alg = resolve_algebra(alg_name)?;
     let a = parse_expr(left)?;
@@ -269,6 +278,61 @@ fn cmd_equiv(
     }
     if !binary.is_empty() && !symbolic {
         bail!("--binary / --binary-all 只用于 --symbolic");
+    }
+    if minimize && !symbolic {
+        bail!("--minimize 只用于 --symbolic");
+    }
+    if minimize {
+        let witness = minimal_counterexample(&a, &b, alg, &binary)?;
+        match format {
+            Format::Json => {
+                let mut obj = serde_json::json!({
+                    "algebra": alg.as_str(),
+                    "method": "sat-min",
+                    "equivalent": witness.is_none(),
+                });
+                if let Some(asg) = &witness {
+                    let mut pairs = serde_json::Map::new();
+                    for name in asg.variables() {
+                        pairs.insert(
+                            name.clone(),
+                            serde_json::Value::String(
+                                asg.get(&name)
+                                    .unwrap_or(Ternary::Unknown)
+                                    .as_char()
+                                    .to_string(),
+                            ),
+                        );
+                    }
+                    obj["counterexample_minimal"] = serde_json::Value::Object(pairs);
+                }
+                println!("{}", serde_json::to_string_pretty(&obj)?);
+            }
+            _ => {
+                if let Some(asg) = &witness {
+                    let detail = asg
+                        .variables()
+                        .iter()
+                        .map(|name| {
+                            format!(
+                                "{name}={}",
+                                asg.get(name).unwrap_or(Ternary::Unknown).as_char()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!("不等价：{left} ≢ {right}  [{alg} / sat-min]");
+                    println!("最小反例：{detail}");
+                } else {
+                    println!("等价：{left} ≡ {right}  [{alg} / sat-min]");
+                }
+            }
+        }
+        return if witness.is_none() {
+            Ok(())
+        } else {
+            std::process::exit(2)
+        };
     }
     let stats_value: Option<EncodingSize> = if symbolic && stats {
         Some(encoding_size(&a, &b, alg, &binary)?)

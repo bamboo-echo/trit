@@ -17,7 +17,7 @@ use varisat::{ExtendFormula, Lit, Solver, Var};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::value::Ternary;
-use trit_eval::EquivalenceResult;
+use trit_eval::{Assignment, EquivalenceResult};
 
 /// 符号化判定错误。
 #[derive(Debug, thiserror::Error)]
@@ -371,6 +371,23 @@ impl Encoder {
         }
     }
 
+    /// 断言 a 与 b 相等（用于最小反例的对偶检查）。
+    fn assert_equal(&mut self, a: Node, b: Node) {
+        let pairs = [
+            (Ternary::False, Ternary::True),
+            (Ternary::False, Ternary::Unknown),
+            (Ternary::True, Ternary::False),
+            (Ternary::True, Ternary::Unknown),
+            (Ternary::Unknown, Ternary::False),
+            (Ternary::Unknown, Ternary::True),
+        ];
+        for (va, vb) in pairs {
+            let mut lits = neq_lits(a, va);
+            lits.extend(neq_lits(b, vb));
+            self.clause(&lits);
+        }
+    }
+
     fn assert_unequal(&mut self, a: Node, b: Node) {
         // 不相等 ⇔ 不能同时 False、不能同时 True、不能同时 Unknown。
         self.clause(&[
@@ -475,6 +492,111 @@ pub fn equivalent_symbolic(
     alg: Algebra,
 ) -> Result<EquivalenceResult, SymbolicError> {
     equivalent_symbolic_with(a, b, alg, &HashSet::new())
+}
+
+/// 最小反例：只保留区分两边所必需的变量。
+///
+/// 返回 `None` 表示等价。返回的是**充分的**部分赋值：未出现的变量在各自域内
+/// 任取，两边仍然不相等。最小化用对偶检查——删掉变量后若“两边相等”不可满足，
+/// 才允许删除，因此不会得到“只保证存在某个补全”的空反例。
+pub fn minimal_counterexample(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+) -> Result<Option<Assignment>, SymbolicError> {
+    let (mut enc, vars) = build(a, b, alg, binary_vars);
+    let sat = enc
+        .solver
+        .solve()
+        .map_err(|e| SymbolicError::Solver(e.to_string()))?;
+    if !sat {
+        return Ok(None);
+    }
+    let model = enc
+        .solver
+        .model()
+        .ok_or_else(|| SymbolicError::Solver("SAT 但没有模型".to_string()))?;
+    let trues: HashSet<Var> = model
+        .iter()
+        .filter(|lit| lit.is_positive())
+        .map(|lit| lit.var())
+        .collect();
+    let values = model_values(&enc, &vars, &trues);
+
+    // 对偶编码：断言 a == b。固定保留变量后若仍可相等，说明该变量必须保留。
+    let mut eq = Encoder::new(alg, binary_vars);
+    let ea = eq.encode(a);
+    let eb = eq.encode(b);
+    eq.assert_equal(ea, eb);
+
+    let mut keep = vec![true; vars.len()];
+    for i in 0..vars.len() {
+        keep[i] = false;
+        let lits = assumptions(&eq, &vars, &values, &keep);
+        eq.solver.assume(&lits);
+        let sat = eq
+            .solver
+            .solve()
+            .map_err(|e| SymbolicError::Solver(e.to_string()))?;
+        if sat {
+            keep[i] = true;
+        }
+    }
+
+    let mut assignment = Assignment::new();
+    for (i, name) in vars.iter().enumerate() {
+        if keep[i] {
+            assignment.set(name.clone(), values[i]);
+        }
+    }
+    Ok(Some(assignment))
+}
+
+/// `node ≠ value` 的两个字面量（析取）。
+fn neq_lits(node: Node, value: Ternary) -> Vec<Lit> {
+    match value {
+        Ternary::False => vec![Lit::from_var(node.t, true), Lit::from_var(node.x, true)],
+        Ternary::True => vec![Lit::from_var(node.t, false), Lit::from_var(node.x, true)],
+        Ternary::Unknown => vec![Lit::from_var(node.t, true), Lit::from_var(node.x, false)],
+    }
+}
+
+fn model_values(enc: &Encoder, vars: &[String], trues: &HashSet<Var>) -> Vec<Ternary> {
+    vars.iter()
+        .map(|name| {
+            let node = enc.vars[name];
+            if trues.contains(&node.t) {
+                Ternary::True
+            } else if trues.contains(&node.x) {
+                Ternary::Unknown
+            } else {
+                Ternary::False
+            }
+        })
+        .collect()
+}
+
+fn assumptions(enc: &Encoder, vars: &[String], values: &[Ternary], keep: &[bool]) -> Vec<Lit> {
+    let mut lits = Vec::new();
+    for (i, name) in vars.iter().enumerate() {
+        if !keep[i] {
+            continue;
+        }
+        let node = enc.vars[name];
+        match values[i] {
+            Ternary::True => lits.push(Lit::from_var(node.t, true)),
+            Ternary::Unknown => {
+                lits.push(Lit::from_var(node.t, false));
+                lits.push(Lit::from_var(node.x, true));
+            }
+            Ternary::False => {
+                lits.push(Lit::from_var(node.t, false));
+                lits.push(Lit::from_var(node.x, false));
+            }
+        }
+    }
+    lits
 }
 
 /// 只构建编码并返回规模，不求解；用于验证二值快速路径的收益。
