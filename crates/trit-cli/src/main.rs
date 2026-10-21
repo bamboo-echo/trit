@@ -11,6 +11,7 @@
 
 mod output;
 
+use std::collections::HashSet;
 use std::io::{BufRead, Write};
 
 use anyhow::{Context, Result, bail};
@@ -22,7 +23,7 @@ use trit_core::parser::Parser as ExprParser;
 use trit_core::value::Ternary;
 use trit_eval::eval::{Assignment, decode_assignment, equivalent, eval, truth_table};
 use trit_eval::simplify::{SimplifyOptions, simplify_with};
-use trit_sat::symbolic::equivalent_symbolic;
+use trit_sat::symbolic::{EncodingSize, encoding_size, equivalent_symbolic_with};
 
 use crate::output::Format;
 
@@ -84,6 +85,15 @@ enum Commands {
         /// 穷举判定的变量数上限；超过则报错并提示 `--symbolic`。
         #[arg(long, default_value_t = 18)]
         max_vars: usize,
+        /// 把列出的变量当作已知二值（逗号分隔）；其子图走经典 CNF。
+        #[arg(long, value_name = "VARS")]
+        binary: Option<String>,
+        /// 把所有变量当作已知二值。
+        #[arg(long)]
+        binary_all: bool,
+        /// 打印 SAT 编码规模（仅 `--symbolic`）。
+        #[arg(long)]
+        stats: bool,
     },
     /// 化简表达式。
     Simplify {
@@ -123,7 +133,22 @@ fn main() -> Result<()> {
             format,
             symbolic,
             max_vars,
-        } => cmd_equiv(&left, &right, format, &cli.algebra, symbolic, max_vars),
+            binary,
+            binary_all,
+            stats,
+        } => cmd_equiv(
+            &left,
+            &right,
+            format,
+            &cli.algebra,
+            EquivOptions {
+                symbolic,
+                max_vars,
+                binary,
+                binary_all,
+                stats,
+            },
+        ),
         Commands::Simplify {
             expression,
             format,
@@ -195,14 +220,28 @@ fn cmd_table(expression: &str, format: Format, alg_name: &str) -> Result<()> {
 }
 
 /// `equiv` 子命令。
+struct EquivOptions {
+    symbolic: bool,
+    max_vars: usize,
+    binary: Option<String>,
+    binary_all: bool,
+    stats: bool,
+}
+
 fn cmd_equiv(
     left: &str,
     right: &str,
     format: Format,
     alg_name: &str,
-    symbolic: bool,
-    max_vars: usize,
+    opts: EquivOptions,
 ) -> Result<()> {
+    let EquivOptions {
+        symbolic,
+        max_vars,
+        binary: binary_list,
+        binary_all,
+        stats,
+    } = opts;
     let alg = resolve_algebra(alg_name)?;
     let a = parse_expr(left)?;
     let b = parse_expr(right)?;
@@ -212,8 +251,37 @@ fn cmd_equiv(
             vars.push(v);
         }
     }
+    let mut binary: HashSet<String> = HashSet::new();
+    if binary_all {
+        binary.extend(vars.iter().cloned());
+    }
+    if let Some(list) = binary_list {
+        for name in list.split(',') {
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            if !vars.iter().any(|v| v == name) {
+                bail!("--binary 变量 {name} 不在表达式里");
+            }
+            binary.insert(name.to_string());
+        }
+    }
+    if !binary.is_empty() && !symbolic {
+        bail!("--binary / --binary-all 只用于 --symbolic");
+    }
+    let stats_value: Option<EncodingSize> = if symbolic && stats {
+        Some(encoding_size(&a, &b, alg, &binary)?)
+    } else {
+        None
+    };
     let (result, method) = if symbolic {
-        (equivalent_symbolic(&a, &b, alg)?, "sat")
+        let method = if binary.is_empty() {
+            "sat"
+        } else {
+            "sat-binary"
+        };
+        (equivalent_symbolic_with(&a, &b, alg, &binary)?, method)
     } else {
         if vars.len() > max_vars {
             bail!(
@@ -232,6 +300,12 @@ fn cmd_equiv(
                 "variable_count": result.variable_count,
                 "method": method,
             });
+            if let Some(size) = &stats_value {
+                obj["encoding"] = serde_json::json!({
+                    "variables": size.variables,
+                    "clauses": size.clauses,
+                });
+            }
             if let Some(ce) = result.counterexample {
                 let asg = decode_assignment(ce, &vars);
                 let mut pairs = serde_json::Map::new();
@@ -252,6 +326,12 @@ fn cmd_equiv(
             println!("{}", serde_json::to_string_pretty(&obj)?);
         }
         _ => {
+            if let Some(size) = &stats_value {
+                eprintln!(
+                    "编码：variables={} clauses={}",
+                    size.variables, size.clauses
+                );
+            }
             if result.equivalent {
                 println!("等价：{left} ≡ {right}  [{alg}]");
             } else {

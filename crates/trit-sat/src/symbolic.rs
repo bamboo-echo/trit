@@ -2,10 +2,13 @@
 //!
 //! 每个三值量用两个布尔变量表示：`t`（取真）与 `x`（取未知），
 //! 并加约束 `¬(t ∧ x)`；`(0,0)=False`、`(1,0)=True`、`(0,1)=Unknown`。
-//! 每个运算符按所选代数的真值表逐行加子句，因此 K3/Ł3/B3 共用同一套编码。
+//!
+//! 默认每个运算符按所选代数的真值表逐行加子句，K3/Ł3/B3 共用一套编码。
+//! 若某些变量被声明为**已知二值**，它们及其所在的纯二值子图改走经典 CNF
+//! （AND 3 条、OR 3 条、NOT 2 条、XOR 4 条），不再付 18 条三值子句的代价；
+//! 在 0/1 上三套代数一致，因此快速路径与代数无关。
 //!
 //! 等价判定 = 断言两个根节点“不相等”，UNSAT 即等价；SAT 时从模型里取反例。
-//! 这把 `equivalent()` 的 3^n 穷举换成 SAT，变量数不再受真值表规模限制。
 
 use std::collections::{HashMap, HashSet};
 
@@ -24,22 +27,47 @@ pub enum SymbolicError {
     Solver(String),
 }
 
+/// 编码规模（变量数 / 子句数），用于验证二值快速路径的收益。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EncodingSize {
+    /// SAT 变量数（含共享的 false 常量）。
+    pub variables: usize,
+    /// 子句数（含常量、门与等价断言）。
+    pub clauses: usize,
+}
+
 type Rails = (Var, Var);
+
+#[derive(Clone, Copy)]
+struct Node {
+    t: Var,
+    x: Var,
+    binary: bool,
+}
 
 struct Encoder {
     solver: Solver<'static>,
     next: usize,
+    clauses: usize,
     alg: Algebra,
-    vars: HashMap<String, Rails>,
+    false_var: Var,
+    vars: HashMap<String, Node>,
+    binary_vars: HashSet<String>,
 }
 
 impl Encoder {
-    fn new(alg: Algebra) -> Self {
+    fn new(alg: Algebra, binary_vars: &HashSet<String>) -> Self {
+        let mut solver = Solver::new();
+        let false_var = Var::from_index(0);
+        solver.add_clause(&[Self::lit(false_var, false)]);
         Self {
-            solver: Solver::new(),
-            next: 0,
+            solver,
+            next: 1,
+            clauses: 1,
             alg,
+            false_var,
             vars: HashMap::new(),
+            binary_vars: binary_vars.clone(),
         }
     }
 
@@ -47,167 +75,357 @@ impl Encoder {
         Lit::from_var(var, positive)
     }
 
-    /// 分配一对导轨并加上 `¬(t ∧ x)`。
-    fn fresh(&mut self) -> Rails {
-        let t = Var::from_index(self.next);
-        let x = Var::from_index(self.next + 1);
-        self.next += 2;
-        self.solver
-            .add_clause(&[Self::lit(t, false), Self::lit(x, false)]);
+    fn clause(&mut self, lits: &[Lit]) {
+        self.solver.add_clause(lits);
+        self.clauses += 1;
+    }
+
+    fn fresh_var(&mut self) -> Var {
+        let var = Var::from_index(self.next);
+        self.next += 1;
+        var
+    }
+
+    /// 一对三值导轨，带 `¬(t ∧ x)`。
+    fn ternary_pair(&mut self) -> Rails {
+        let t = self.fresh_var();
+        let x = self.fresh_var();
+        self.clause(&[Self::lit(t, false), Self::lit(x, false)]);
         (t, x)
     }
 
-    fn fix(&mut self, rails: Rails, value: Ternary) {
-        let (t, x) = rails;
-        let (t_pos, x_pos) = match value {
-            Ternary::False => (false, false),
-            Ternary::True => (true, false),
-            Ternary::Unknown => (false, true),
-        };
-        self.solver.add_clause(&[Self::lit(t, t_pos)]);
-        self.solver.add_clause(&[Self::lit(x, x_pos)]);
+    fn encode(&mut self, expr: &Expr) -> Node {
+        let alg = self.alg;
+        match expr {
+            Expr::Const(value) => {
+                let t = self.fresh_var();
+                match value {
+                    Ternary::False => {
+                        self.clause(&[Self::lit(t, false)]);
+                        Node {
+                            t,
+                            x: self.false_var,
+                            binary: true,
+                        }
+                    }
+                    Ternary::True => {
+                        self.clause(&[Self::lit(t, true)]);
+                        Node {
+                            t,
+                            x: self.false_var,
+                            binary: true,
+                        }
+                    }
+                    Ternary::Unknown => {
+                        let x = self.fresh_var();
+                        self.clause(&[Self::lit(t, false)]);
+                        self.clause(&[Self::lit(x, true)]);
+                        Node {
+                            t,
+                            x,
+                            binary: false,
+                        }
+                    }
+                }
+            }
+            Expr::Var(name) => {
+                if let Some(node) = self.vars.get(name) {
+                    return *node;
+                }
+                let node = if self.binary_vars.contains(name) {
+                    Node {
+                        t: self.fresh_var(),
+                        x: self.false_var,
+                        binary: true,
+                    }
+                } else {
+                    let (t, x) = self.ternary_pair();
+                    Node {
+                        t,
+                        x,
+                        binary: false,
+                    }
+                };
+                self.vars.insert(name.clone(), node);
+                node
+            }
+            Expr::Not(a) => {
+                let a = self.encode(a);
+                if a.binary {
+                    let y = self.fresh_var();
+                    self.clause(&[Self::lit(a.t, true), Self::lit(y, true)]);
+                    self.clause(&[Self::lit(a.t, false), Self::lit(y, false)]);
+                    Node {
+                        t: y,
+                        x: self.false_var,
+                        binary: true,
+                    }
+                } else {
+                    let out = self.ternary_pair();
+                    self.table(&[a], out, |v| alg.not(v[0]));
+                    Node {
+                        t: out.0,
+                        x: out.1,
+                        binary: false,
+                    }
+                }
+            }
+            Expr::And(a, b) => {
+                let a = self.encode(a);
+                let b = self.encode(b);
+                if a.binary && b.binary {
+                    let y = self.binary_and(a.t, b.t);
+                    Node {
+                        t: y,
+                        x: self.false_var,
+                        binary: true,
+                    }
+                } else {
+                    let out = self.ternary_pair();
+                    self.table(&[a, b], out, |v| alg.and(v[0], v[1]));
+                    Node {
+                        t: out.0,
+                        x: out.1,
+                        binary: false,
+                    }
+                }
+            }
+            Expr::Or(a, b) => {
+                let a = self.encode(a);
+                let b = self.encode(b);
+                if a.binary && b.binary {
+                    let y = self.binary_or(a.t, b.t);
+                    Node {
+                        t: y,
+                        x: self.false_var,
+                        binary: true,
+                    }
+                } else {
+                    let out = self.ternary_pair();
+                    self.table(&[a, b], out, |v| alg.or(v[0], v[1]));
+                    Node {
+                        t: out.0,
+                        x: out.1,
+                        binary: false,
+                    }
+                }
+            }
+            Expr::Xor(a, b) => {
+                let a = self.encode(a);
+                let b = self.encode(b);
+                if a.binary && b.binary {
+                    let y = self.binary_xor(a.t, b.t);
+                    Node {
+                        t: y,
+                        x: self.false_var,
+                        binary: true,
+                    }
+                } else {
+                    let out = self.ternary_pair();
+                    self.table(&[a, b], out, |v| alg.strong_add(v[0], v[1]));
+                    Node {
+                        t: out.0,
+                        x: out.1,
+                        binary: false,
+                    }
+                }
+            }
+            Expr::Implies(a, b) => {
+                let a = self.encode(a);
+                let b = self.encode(b);
+                if a.binary && b.binary {
+                    let y = self.binary_implies(a.t, b.t);
+                    Node {
+                        t: y,
+                        x: self.false_var,
+                        binary: true,
+                    }
+                } else {
+                    let out = self.ternary_pair();
+                    self.table(&[a, b], out, |v| alg.implies(v[0], v[1]));
+                    Node {
+                        t: out.0,
+                        x: out.1,
+                        binary: false,
+                    }
+                }
+            }
+            Expr::Equiv(a, b) => {
+                let a = self.encode(a);
+                let b = self.encode(b);
+                if a.binary && b.binary {
+                    let y = self.binary_equiv(a.t, b.t);
+                    Node {
+                        t: y,
+                        x: self.false_var,
+                        binary: true,
+                    }
+                } else {
+                    let out = self.ternary_pair();
+                    self.table(&[a, b], out, |v| alg.equiv(v[0], v[1]));
+                    Node {
+                        t: out.0,
+                        x: out.1,
+                        binary: false,
+                    }
+                }
+            }
+        }
     }
 
-    /// 按真值表逐行加子句：对每个输入组合，若输入匹配则该输出必须匹配。
-    fn table(&mut self, ins: &[Rails], out: Rails, f: impl Fn(&[Ternary]) -> Ternary) {
+    /// 经典 CNF：`y = a ∧ b`。
+    fn binary_and(&mut self, a: Var, b: Var) -> Var {
+        let y = self.fresh_var();
+        self.clause(&[Self::lit(a, false), Self::lit(b, false), Self::lit(y, true)]);
+        self.clause(&[Self::lit(a, true), Self::lit(y, false)]);
+        self.clause(&[Self::lit(b, true), Self::lit(y, false)]);
+        y
+    }
+
+    /// 经典 CNF：`y = a ∨ b`。
+    fn binary_or(&mut self, a: Var, b: Var) -> Var {
+        let y = self.fresh_var();
+        self.clause(&[Self::lit(a, true), Self::lit(b, true), Self::lit(y, false)]);
+        self.clause(&[Self::lit(a, false), Self::lit(y, true)]);
+        self.clause(&[Self::lit(b, false), Self::lit(y, true)]);
+        y
+    }
+
+    /// 经典 CNF：`y = a ⊕ b`。
+    fn binary_xor(&mut self, a: Var, b: Var) -> Var {
+        let y = self.fresh_var();
+        self.clause(&[
+            Self::lit(a, false),
+            Self::lit(b, false),
+            Self::lit(y, false),
+        ]);
+        self.clause(&[Self::lit(a, true), Self::lit(b, true), Self::lit(y, false)]);
+        self.clause(&[Self::lit(a, true), Self::lit(b, false), Self::lit(y, true)]);
+        self.clause(&[Self::lit(a, false), Self::lit(b, true), Self::lit(y, true)]);
+        y
+    }
+
+    /// 经典 CNF：`y = a ⇒ b`。
+    fn binary_implies(&mut self, a: Var, b: Var) -> Var {
+        let y = self.fresh_var();
+        self.clause(&[Self::lit(a, true), Self::lit(y, true)]);
+        self.clause(&[Self::lit(b, false), Self::lit(y, true)]);
+        self.clause(&[Self::lit(a, false), Self::lit(b, true), Self::lit(y, false)]);
+        y
+    }
+
+    /// 经典 CNF：`y = (a ≡ b)`。
+    fn binary_equiv(&mut self, a: Var, b: Var) -> Var {
+        let y = self.fresh_var();
+        self.clause(&[Self::lit(a, false), Self::lit(b, false), Self::lit(y, true)]);
+        self.clause(&[Self::lit(a, true), Self::lit(b, true), Self::lit(y, true)]);
+        self.clause(&[Self::lit(a, true), Self::lit(b, false), Self::lit(y, false)]);
+        self.clause(&[Self::lit(a, false), Self::lit(b, true), Self::lit(y, false)]);
+        y
+    }
+
+    /// 三值门：按真值表逐行加子句。
+    ///
+    /// 输出“恰好等于某值”是两根导轨的合取，必须拆成两条子句；
+    /// 单条子句会放行其他取值。
+    fn table(&mut self, ins: &[Node], out: Rails, f: impl Fn(&[Ternary]) -> Ternary) {
         let combos = 3usize.pow(ins.len() as u32);
         for idx in 0..combos {
             let mut rest = idx;
-            let mut vals = Vec::with_capacity(ins.len());
-            let mut clause = Vec::with_capacity(ins.len() * 2 + 2);
-            for &(t, x) in ins {
-                let v = match rest % 3 {
+            let mut values = Vec::with_capacity(ins.len());
+            let mut base = Vec::with_capacity(ins.len() * 2);
+            for node in ins {
+                let value = match rest % 3 {
                     0 => Ternary::False,
                     1 => Ternary::True,
                     _ => Ternary::Unknown,
                 };
                 rest /= 3;
-                vals.push(v);
-                match v {
+                values.push(value);
+                match value {
                     Ternary::False => {
-                        clause.push(Self::lit(t, true));
-                        clause.push(Self::lit(x, true));
+                        base.push(Self::lit(node.t, true));
+                        base.push(Self::lit(node.x, true));
                     }
                     Ternary::True => {
-                        clause.push(Self::lit(t, false));
-                        clause.push(Self::lit(x, true));
+                        base.push(Self::lit(node.t, false));
+                        base.push(Self::lit(node.x, true));
                     }
                     Ternary::Unknown => {
-                        clause.push(Self::lit(t, true));
-                        clause.push(Self::lit(x, false));
+                        base.push(Self::lit(node.t, true));
+                        base.push(Self::lit(node.x, false));
                     }
                 }
             }
-            // 输出“恰好等于某值”是两根轨道的合取，必须拆成两条子句；
-            // 单条子句只能禁止一个输出取值，会放行别的取值。
-            let (t_pos, x_pos) = match f(&vals) {
+            let (t_pos, x_pos) = match f(&values) {
                 Ternary::False => (false, false),
                 Ternary::True => (true, false),
                 Ternary::Unknown => (false, true),
             };
-            let mut t_clause = clause.clone();
+            let mut t_clause = base.clone();
             t_clause.push(Self::lit(out.0, t_pos));
-            self.solver.add_clause(&t_clause);
-            let mut x_clause = clause;
+            self.clause(&t_clause);
+            let mut x_clause = base;
             x_clause.push(Self::lit(out.1, x_pos));
-            self.solver.add_clause(&x_clause);
+            self.clause(&x_clause);
         }
     }
 
-    fn encode(&mut self, expr: &Expr) -> Rails {
-        let alg = self.alg;
-        match expr {
-            Expr::Const(v) => {
-                let rails = self.fresh();
-                self.fix(rails, *v);
-                rails
-            }
-            Expr::Var(name) => {
-                if let Some(rails) = self.vars.get(name) {
-                    *rails
-                } else {
-                    let rails = self.fresh();
-                    self.vars.insert(name.clone(), rails);
-                    rails
-                }
-            }
-            Expr::Not(a) => {
-                let ra = self.encode(a);
-                let out = self.fresh();
-                self.table(&[ra], out, |v| alg.not(v[0]));
-                out
-            }
-            Expr::And(a, b) => {
-                let ra = self.encode(a);
-                let rb = self.encode(b);
-                let out = self.fresh();
-                self.table(&[ra, rb], out, |v| alg.and(v[0], v[1]));
-                out
-            }
-            Expr::Or(a, b) => {
-                let ra = self.encode(a);
-                let rb = self.encode(b);
-                let out = self.fresh();
-                self.table(&[ra, rb], out, |v| alg.or(v[0], v[1]));
-                out
-            }
-            Expr::Xor(a, b) => {
-                let ra = self.encode(a);
-                let rb = self.encode(b);
-                let out = self.fresh();
-                self.table(&[ra, rb], out, |v| alg.strong_add(v[0], v[1]));
-                out
-            }
-            Expr::Implies(a, b) => {
-                let ra = self.encode(a);
-                let rb = self.encode(b);
-                let out = self.fresh();
-                self.table(&[ra, rb], out, |v| alg.implies(v[0], v[1]));
-                out
-            }
-            Expr::Equiv(a, b) => {
-                let ra = self.encode(a);
-                let rb = self.encode(b);
-                let out = self.fresh();
-                self.table(&[ra, rb], out, |v| alg.equiv(v[0], v[1]));
-                out
-            }
-        }
+    fn assert_unequal(&mut self, a: Node, b: Node) {
+        // 不相等 ⇔ 不能同时 False、不能同时 True、不能同时 Unknown。
+        self.clause(&[
+            Self::lit(a.t, true),
+            Self::lit(a.x, true),
+            Self::lit(b.t, true),
+            Self::lit(b.x, true),
+        ]);
+        self.clause(&[
+            Self::lit(a.t, false),
+            Self::lit(a.x, true),
+            Self::lit(b.t, false),
+            Self::lit(b.x, true),
+        ]);
+        self.clause(&[
+            Self::lit(a.t, true),
+            Self::lit(a.x, false),
+            Self::lit(b.t, true),
+            Self::lit(b.x, false),
+        ]);
     }
 }
 
-/// 用 SAT 判定两个表达式在给定语义下是否等价。
-///
-/// 反例编号与 [`crate::eval::decode_assignment`] 的约定一致
-/// （第 i 个三进制位对应变量 i：0=False、1=True、2=Unknown）。
-pub fn equivalent_symbolic(
-    a: &Expr,
-    b: &Expr,
-    alg: Algebra,
-) -> Result<EquivalenceResult, SymbolicError> {
+fn union_vars(a: &Expr, b: &Expr) -> Vec<String> {
     let mut vars = a.variables();
     for v in b.variables() {
         if !vars.contains(&v) {
             vars.push(v);
         }
     }
-    let mut enc = Encoder::new(alg);
-    for name in &vars {
-        let rails = enc.fresh();
-        enc.vars.insert(name.clone(), rails);
-    }
+    vars
+}
+
+fn build(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+) -> (Encoder, Vec<String>) {
+    let vars = union_vars(a, b);
+    let mut enc = Encoder::new(alg, binary_vars);
     let ra = enc.encode(a);
     let rb = enc.encode(b);
+    enc.assert_unequal(ra, rb);
+    (enc, vars)
+}
 
-    // 两个三值量不相等 ⇔ 不能同时是 F、不能同时是 T、不能同时是 X。
-    let l = |v: Var, p: bool| Encoder::lit(v, p);
-    enc.solver
-        .add_clause(&[l(ra.0, true), l(ra.1, true), l(rb.0, true), l(rb.1, true)]);
-    enc.solver
-        .add_clause(&[l(ra.0, false), l(ra.1, true), l(rb.0, false), l(rb.1, true)]);
-    enc.solver
-        .add_clause(&[l(ra.0, true), l(ra.1, false), l(rb.0, true), l(rb.1, false)]);
-
+/// 用 SAT 判定等价；`binary_vars` 里的变量被固定为已知二值，其子图走经典 CNF。
+pub fn equivalent_symbolic_with(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+) -> Result<EquivalenceResult, SymbolicError> {
+    let (mut enc, vars) = build(a, b, alg, binary_vars);
     let sat = enc
         .solver
         .solve()
@@ -219,7 +437,6 @@ pub fn equivalent_symbolic(
             variable_count: vars.len(),
         });
     }
-
     let model = enc
         .solver
         .model()
@@ -232,10 +449,11 @@ pub fn equivalent_symbolic(
     let mut index = 0u64;
     let mut pow = 1u64;
     for name in &vars {
-        let (t, x) = enc.vars[name];
-        let digit = if trues.contains(&t) {
+        let node = enc.vars[name];
+        // 与 decode_assignment 一致：False=0、True=1、Unknown=2。
+        let digit = if trues.contains(&node.t) {
             1u64
-        } else if trues.contains(&x) {
+        } else if trues.contains(&node.x) {
             2u64
         } else {
             0u64
@@ -247,5 +465,28 @@ pub fn equivalent_symbolic(
         equivalent: false,
         counterexample: Some(index),
         variable_count: vars.len(),
+    })
+}
+
+/// 用 SAT 判定等价（所有变量都按三值处理）。
+pub fn equivalent_symbolic(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+) -> Result<EquivalenceResult, SymbolicError> {
+    equivalent_symbolic_with(a, b, alg, &HashSet::new())
+}
+
+/// 只构建编码并返回规模，不求解；用于验证二值快速路径的收益。
+pub fn encoding_size(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+) -> Result<EncodingSize, SymbolicError> {
+    let (enc, _vars) = build(a, b, alg, binary_vars);
+    Ok(EncodingSize {
+        variables: enc.next,
+        clauses: enc.clauses,
     })
 }

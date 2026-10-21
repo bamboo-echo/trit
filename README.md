@@ -24,6 +24,7 @@ cargo run --release -p trit-cli -- eval "a & b" -s "a=1,b=X"
 cargo run --release -p trit-cli -- equiv "a & (b | c)" "(a & b) | (a & c)"
 cargo run --release -p trit-cli -- -a lukasiewicz equiv "X => X" "1"
 cargo run --release -p trit-cli -- equiv --symbolic "..." "..."   # 大变量数走 SAT
+cargo run --release -p trit-cli -- equiv --symbolic --binary-all --stats "..." "..."
 ```
 
 `--algebra` / `-a` 选 `kleene`（默认）、`lukasiewicz`、`bochvar`；不等价退出码为 `2`。
@@ -62,6 +63,9 @@ cargo run --release -p trit-cli -- equiv --symbolic "..." "..."   # 大变量数
 | 20 | 护栏报错 | 0.017 s |
 | 50 | 不可行 | 0.020 s |
 | 100 | 不可行 | 0.025 s |
+
+纯二值公式可声明 `--binary-all`（或 `--binary a,b`）：二值子图走经典 CNF，不再付 18 条三值子句。
+100 变量 AND 链实测：**3866 → 598 条子句，0.028 s → 0.0147 s**；`--stats` 打印编码规模。
 
 反例编号与 `decode_assignment` 的约定一致。
 
