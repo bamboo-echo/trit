@@ -4,7 +4,7 @@
 
 ## 开发环境
 
-- Rust 1.85 及以上（stable）
+- Rust 1.88 及以上（stable；MSRV 由 dev-dependency `proptest` 决定）
 - `cargo fmt`、`cargo clippy` 组件
 
 ```bash

@@ -3,7 +3,7 @@
 [![CI](https://github.com/bfxh/ternary-logic-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/bfxh/ternary-logic-analyzer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
 
 用 Rust 写的三值逻辑（ternary logic）分析器：求值、完整真值表、逻辑等价判定、代数化简，以及三值门级网表的 `X` 传播与故障可测性分析。
 
