@@ -605,22 +605,21 @@ fn simulate_with_fault(
         values.insert(inp.name().to_string(), v);
     }
     // 主输入上的故障：直接覆盖
-    if let Some((sig, fv)) = fault {
-        if circuit.inputs.iter().any(|i| i.name() == sig.name()) {
-            values.insert(sig.name().to_string(), fv);
-        }
+    if let Some((sig, fv)) = fault
+        && circuit.inputs.iter().any(|i| i.name() == sig.name())
+    {
+        values.insert(sig.name().to_string(), fv);
     }
     // 按拓扑序求值
     for idx in topological_order(circuit) {
         let gate = &circuit.gates[idx];
         // 驱动点故障注入
-        if let Some((sig, fv)) = fault {
-            if gate.output.name() == sig.name()
-                && !circuit.inputs.iter().any(|i| i.name() == sig.name())
-            {
-                values.insert(gate.output.name().to_string(), fv);
-                continue;
-            }
+        if let Some((sig, fv)) = fault
+            && gate.output.name() == sig.name()
+            && !circuit.inputs.iter().any(|i| i.name() == sig.name())
+        {
+            values.insert(gate.output.name().to_string(), fv);
+            continue;
         }
         let ins: Vec<Ternary> = gate
             .inputs

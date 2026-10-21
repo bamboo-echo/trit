@@ -191,10 +191,10 @@ fn rewrite_and(x: Expr, y: Expr, alg: Algebra) -> Expr {
 
 /// 判断 `x` 是否吸收 `y`（即 `y = x ∨ c` 的形式，返回 `x`）。
 fn absorb(x: &Expr, y: &Expr) -> Option<Expr> {
-    if let Expr::Or(p, q) = y {
-        if **p == *x || **q == *x {
-            return Some(x.clone());
-        }
+    if let Expr::Or(p, q) = y
+        && (**p == *x || **q == *x)
+    {
+        return Some(x.clone());
     }
     None
 }
@@ -269,10 +269,10 @@ fn rewrite_implies(x: Expr, y: Expr, alg: Algebra) -> Expr {
         return Expr::Const(alg.implies(*a, *b));
     }
     // 0 ⇒ b = 1（K3 / Ł3）；Bochvar 下 X 毒化
-    if alg != Algebra::Bochvar {
-        if let Expr::Const(Ternary::False) = &x {
-            return Expr::Const(Ternary::True);
-        }
+    if alg != Algebra::Bochvar
+        && let Expr::Const(Ternary::False) = &x
+    {
+        return Expr::Const(Ternary::True);
     }
     Expr::implies(x, y)
 }
