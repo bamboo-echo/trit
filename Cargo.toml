@@ -11,16 +11,16 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/bfxh/trit"
 
 [workspace.dependencies]
-trit-core = { path = "crates/trit-core", version = "0.3.1" }
-trit-eval = { path = "crates/trit-eval", version = "0.3.1" }
-trit-sat = { path = "crates/trit-sat", version = "0.3.1" }
-trit-circuit = { path = "crates/trit-circuit", version = "0.3.1" }
-trit-bdd = { path = "crates/trit-bdd", version = "0.3.1" }
-trit-policy = { path = "crates/trit-policy", version = "0.3.1" }
+trit-core = { path = "crates/trit-core", version = "0.3.2" }
+trit-eval = { path = "crates/trit-eval", version = "0.3.2" }
+trit-sat = { path = "crates/trit-sat", version = "0.3.2" }
+trit-circuit = { path = "crates/trit-circuit", version = "0.3.2" }
+trit-bdd = { path = "crates/trit-bdd", version = "0.3.2" }
+trit-policy = { path = "crates/trit-policy", version = "0.3.2" }

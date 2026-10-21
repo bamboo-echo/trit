@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2] - 2026-10-22
+
+### Added
+
+- `trit verify` 策略支持 `assumptions`：先检查前提可满足，再检查 `assumptions ⇒ assertion` 恒真；
+  前提不一致返回 `InconsistentAssumptions`。
+- `trit_sat::satisfiable` / `trit_bdd::satisfiable_bdd`：返回可满足见证。
+
 ## [0.3.1] - 2026-10-22
 
 ### Changed
