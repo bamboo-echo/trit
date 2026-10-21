@@ -9,31 +9,83 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build and publish
-    runs-on: ubuntu-latest
+  build:
+    name: build (${{ matrix.asset }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: trit-linux-x86_64
+            ext: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: trit-windows-x86_64
+            ext: ".exe"
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: trit-macos-aarch64
+            ext: ""
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build release binary
-        run: cargo build --release --locked
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Run tests
+      - name: Test (host)
         run: cargo test --workspace --locked
 
-      - name: Package binaries
+      - name: Smoke
+        shell: bash
+        run: |
+          "target/${{ matrix.target }}/release/trit${{ matrix.ext }}" --version
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p dist
-          cp target/release/trit dist/trit-linux-x86_64
-          tar -czf dist/trit-linux-x86_64.tar.gz -C dist trit-linux-x86_64
-          rm dist/trit-linux-x86_64
+          cp "target/${{ matrix.target }}/release/trit${{ matrix.ext }}" "dist/${{ matrix.asset }}"
+          tar -czf "dist/${{ matrix.asset }}.tar.gz" -C dist "${{ matrix.asset }}"
+          rm "dist/${{ matrix.asset }}"
 
-      - name: Create GitHub release
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/trit.exe" "dist/${{ matrix.asset }}.exe"
+          Compress-Archive -Path "dist/${{ matrix.asset }}.exe" -DestinationPath "dist/${{ matrix.asset }}.zip"
+          Remove-Item "dist/${{ matrix.asset }}.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*
+
+  release:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+
+      - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          files: dist/*
           generate_release_notes: true

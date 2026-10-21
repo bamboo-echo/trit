@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1] - 2026-10-22
+
+### Changed
+
+- Release 产物扩到三平台：`trit-linux-x86_64.tar.gz`、`trit-windows-x86_64.zip`、
+  `trit-macos-aarch64.tar.gz`；发布改为 build 矩阵 + 单次 publish，避免并发建 release。
+
 ## [0.3.0] - 2026-10-22
 
 ### Added
