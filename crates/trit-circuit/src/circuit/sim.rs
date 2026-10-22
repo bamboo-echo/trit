@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use trit_core::algebra::Algebra;
 use trit_core::value::Ternary;
 
-use super::analyze::validate;
 use super::graph::topological_order;
 use super::types::{Circuit, CircuitError, GateKind, Propagation};
+use super::validate::validate;
 
 /// 给定一条主输入赋值，做一遍三值传播。
 ///

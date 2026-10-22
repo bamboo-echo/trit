@@ -5,12 +5,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use trit_core::algebra::Algebra;
 use trit_core::value::Ternary;
 
-use super::graph::{is_acyclic, topological_order};
+use super::graph::topological_order;
 use super::sim::Simulator;
 use super::types::{
     Circuit, CircuitError, CircuitReport, Fault, FaultReport, GateKind, GateSignalPair,
     UntestableReason,
 };
+use super::validate::validate;
 
 /// 对电路做一次完整分析。
 pub fn analyze(circuit: &Circuit, alg: Algebra) -> Result<CircuitReport, CircuitError> {
@@ -96,62 +97,6 @@ pub fn analyze_faults(circuit: &Circuit, alg: Algebra) -> Result<Vec<Fault>, Cir
     Ok(faults)
 }
 
-pub(crate) fn validate(circuit: &Circuit) -> Result<(), CircuitError> {
-    for gate in &circuit.gates {
-        let actual = if gate.kind == GateKind::Const {
-            0
-        } else {
-            gate.inputs.len()
-        };
-        if actual != gate.kind.arity() {
-            return Err(CircuitError::ArityMismatch {
-                output: gate.output.name().to_string(),
-                kind: gate.kind.as_str().to_string(),
-                expected: gate.kind.arity(),
-                actual,
-            });
-        }
-    }
-    let mut seen_inputs: BTreeSet<&str> = BTreeSet::new();
-    for inp in &circuit.inputs {
-        if !seen_inputs.insert(inp.name()) {
-            return Err(CircuitError::DuplicateInput(inp.name().to_string()));
-        }
-    }
-    let mut drivers: BTreeMap<&str, usize> = circuit.inputs.iter().map(|s| (s.name(), 1)).collect();
-    for gate in &circuit.gates {
-        *drivers.entry(gate.output.name()).or_insert(0) += 1;
-    }
-    if let Some((signal, _)) = drivers.iter().find(|(_, count)| **count > 1) {
-        return Err(CircuitError::MultipleDrivers((*signal).to_string()));
-    }
-    // 检查组合环与未驱动信号
-    let mut driven: BTreeSet<String> = circuit
-        .inputs
-        .iter()
-        .map(|s| s.name().to_string())
-        .collect();
-    for gate in &circuit.gates {
-        driven.insert(gate.output.name().to_string());
-    }
-    for gate in &circuit.gates {
-        for sig in &gate.inputs {
-            if !driven.contains(sig.name()) {
-                return Err(CircuitError::UndrivenSignal(sig.name().to_string()));
-            }
-        }
-    }
-    for out in &circuit.outputs {
-        if !driven.contains(out.name()) {
-            return Err(CircuitError::UndrivenSignal(out.name().to_string()));
-        }
-    }
-    // 拓扑排序检测环
-    if !is_acyclic(circuit) {
-        return Err(CircuitError::CombinationalLoop);
-    }
-    Ok(())
-}
 fn reachable_signals(circuit: &Circuit) -> BTreeSet<String> {
     let mut reachable: BTreeSet<String> = circuit
         .outputs
