@@ -403,3 +403,45 @@ fn vector_width_and_input_size_are_bounded() {
     oversized.push_str(&" ".repeat(super::parse::MAX_VERILOG_BYTES));
     assert!(parse_verilog(&oversized).is_err(), "超大文本必须拒绝");
 }
+
+#[test]
+fn errors_carry_kind_and_line() {
+    let err = parse_verilog(
+        "module m(input a, output y);
+  assign y = ;
+endmodule
+",
+    )
+    .unwrap_err();
+    assert_eq!(err.kind, VerilogErrorKind::Syntax, "{err:?}");
+    assert_eq!(err.line, Some(2), "{err:?}");
+
+    // body 声明在第二行：预算错误应带行号。
+    let err = parse_verilog(
+        "module m(a, y);
+  input [5000:0] a;
+  output y;
+  assign y = a[0];
+endmodule
+",
+    )
+    .unwrap_err();
+    assert_eq!(err.kind, VerilogErrorKind::Limit, "{err:?}");
+    assert_eq!(err.line, Some(2), "{err:?}");
+
+    let err = parse_verilog(
+        "module m(input [0:3] a, output y);
+assign y = a[0];
+endmodule
+",
+    )
+    .unwrap_err();
+    assert_eq!(err.kind, VerilogErrorKind::Unsupported, "{err:?}");
+
+    let mut circuit = Circuit::new("m");
+    circuit.add_output(Signal::new("y"));
+    assert_eq!(
+        to_verilog(&circuit).unwrap_err().kind,
+        VerilogErrorKind::Export
+    );
+}

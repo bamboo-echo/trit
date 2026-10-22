@@ -4,6 +4,9 @@
 
 ### Changed（评审修复第二批，含 API 变更）
 
+- **Verilog 错误结构化**：`VerilogError` 从 `Message(String)` 改为
+  `{ kind, line, message }`，`kind ∈ Syntax / Unsupported / Limit / Export`；
+  body 语句错误带 1 起行号（注释剥离保留换行），导出错误归 `Export`。
 - **拆掉 circuit 模块环**：`validate` 独立到 `circuit/validate.rs`，`sim` 不再依赖 `analyze`；
   `sim → validate → graph`、`analyze → sim/validate/graph` 单向依赖。
 - **ATPG 去上帝模块**：`atpg.rs`（1042 行）拆成 `atpg/{mod,compact}.rs` + `tests.rs`；
