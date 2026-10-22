@@ -442,6 +442,8 @@ CI 另有三道门：`docs`（rustdoc `-D warnings`）、`action`（用 `example
 `MSRV`（1.88，`--locked`）；Release 先过 `guard`：tag 去掉 `v` 后必须等于 `trit-cli` 的版本。
 
 `main` 受保护：只接受 PR + 4 个必需 check（三平台 + MSRV 1.88），线性历史。
+治理模型为 **BDFL**：架构变更、发布与关键路径审查由维护者最终拍板，详见 [GOVERNANCE.md](GOVERNANCE.md)
+与 `.github/CODEOWNERS`。
 
 ## 许可
 

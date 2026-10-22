@@ -1,0 +1,13 @@
+# 关键路径：修改必须由 BDFL 审查（见 GOVERNANCE.md）
+# 是否强制 code owner review 由 BDFL 在仓库分支保护里决定。
+
+* @bfxh
+
+/crates/            @bfxh
+/Cargo.toml         @bfxh
+/Cargo.lock         @bfxh
+/.github/           @bfxh
+/scripts/           @bfxh
+/fuzz/              @bfxh
+/action/            @bfxh
+/GOVERNANCE.md      @bfxh
