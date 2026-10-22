@@ -1,9 +1,9 @@
-use crate::circuit::{Circuit, Gate, GateKind, Signal};
+use crate::circuit::{Bus, Circuit, Gate, GateKind, Signal};
 use trit_core::value::Ternary;
 
 use super::*;
 use crate::circuit::analyze;
-use crate::netlist::parse_netlist;
+use crate::netlist::{from_json, parse_netlist, to_json};
 use trit_core::algebra::Algebra;
 
 #[test]
@@ -444,4 +444,47 @@ endmodule
         to_verilog(&circuit).unwrap_err().kind,
         VerilogErrorKind::Export
     );
+}
+
+#[test]
+fn vector_declarations_are_recorded_as_buses() {
+    let text = "module m(input [3:0] a, output [1:0] y);\n\
+                assign y = {a[1], a[0]};\n\
+                endmodule\n";
+    let circuit = parse_verilog(text).unwrap();
+    assert_eq!(circuit.buses.get("a"), Some(&Bus::new("a", 4)));
+    assert_eq!(circuit.buses.get("y"), Some(&Bus::new("y", 2)));
+    assert_eq!(circuit.buses.len(), 2);
+}
+
+#[test]
+fn bus_metadata_survives_json_round_trip() {
+    let text = "module m(input [3:0] a, output [1:0] y);\n\
+                assign y = {a[1], a[0]};\n\
+                endmodule\n";
+    let circuit = parse_verilog(text).unwrap();
+    let json = to_json(&circuit).unwrap();
+    let back = from_json(&json).unwrap();
+    assert_eq!(back, circuit);
+}
+
+#[test]
+fn export_uses_declared_bus_width_for_partial_wire() {
+    let mut circuit = Circuit::new("m");
+    circuit.add_input(Signal::new("a"));
+    circuit.add_gate(Gate::new(
+        GateKind::Buf,
+        vec![Signal::new("a")],
+        Signal::new("t[3]"),
+    ));
+    circuit.add_gate(Gate::new(
+        GateKind::Buf,
+        vec![Signal::new("t[3]")],
+        Signal::new("y"),
+    ));
+    circuit.add_output(Signal::new("y"));
+    circuit.buses.insert("t".to_string(), Bus::new("t", 8));
+    let text = to_verilog(&circuit).unwrap();
+    assert!(text.contains("wire [7:0] t;"), "{text}");
+    assert!(text.contains("buf g0 (t[3], a)"), "{text}");
 }

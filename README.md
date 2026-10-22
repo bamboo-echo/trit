@@ -104,8 +104,8 @@ cargo run --release -p trit-cli -- verify examples/policy.json
   `Limit`／`BudgetExceeded` 错误；策略展开在分配大子树之前扣节点预算。
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-`python scripts/mutation_check.py` 对 56 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 56/56）；`.github/workflows/mutation.yml` 每周跑一次。
+`python scripts/mutation_check.py` 对 59 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 59/59）；`.github/workflows/mutation.yml` 每周跑一次。
 
 ## fuzz 与基准
 
@@ -372,9 +372,11 @@ JSON 输出含每对的 `testable`/`witness` 与测试向量 `patterns`。
 结构化 Verilog 子集：`trit netlist design.v --from verilog --to text`。支持原语与 `assign`
 的 `~ & | ^` 与 `~^`/`^~`（`assign` 里的 `^` 按 Verilog 语义映射为经典异或），以及
 **多比特端口**：`input [3:0] a;` / `output [1:0] y;`、位选 `a[3]`、拼接 `{a, b}`、
-等宽逐位向量赋值 `assign y = a & b;`。内部按位展开成 `a[3]`… 这类单比特网；
-导出时把连续位重新分组成向量端口。只支持 `[N:0]` 范围的组合逻辑，拒绝时序、`[0:N]`、
-复制语法 `{2{a}}`、位宽不匹配与非连续向量位；`always/reg/initial` 一律拒绝。
+等宽逐位向量赋值 `assign y = a & b;`。内部按位展开成 `a[3]`… 这类单比特网，
+声明宽度保留在 `Circuit.buses`（`Bus { name, width }`）；导出按声明宽度重组，
+JSON 往返保留，也允许只建模向量的部分位。只支持 `[N:0]` 范围的组合逻辑，
+拒绝时序、`[0:N]`、复制语法 `{2{a}}`、位宽不匹配与未声明向量的非连续位；
+`always/reg/initial` 一律拒绝。
 `trit netlist design.v --from verilog --to verilog` 可做向量端口往返。
 格式互转：`trit netlist design.net`（text → JSON），`trit netlist design.json --from json --to text`。
 网表指令：`input` / `output` / `gate <AND|OR|XOR|NAND|NOR> <a> <b> <out>` / `not <a> <out>` /

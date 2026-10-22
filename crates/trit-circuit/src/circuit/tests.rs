@@ -10,7 +10,7 @@ use super::analyze::{analyze, analyze_faults};
 use super::graph::topological_order;
 use super::sim::propagate;
 use super::test_support::simulate_combo;
-use super::types::{Circuit, CircuitError, Gate, GateKind, Signal};
+use super::types::{Bus, Circuit, CircuitError, Gate, GateKind, Signal};
 
 use super::*;
 
@@ -471,6 +471,27 @@ fn duplicate_output_is_rejected() {
     assert_eq!(
         circuit.validate(),
         Err(CircuitError::DuplicateOutput("a".to_string()))
+    );
+}
+
+#[test]
+fn zero_width_bus_is_rejected() {
+    let mut circuit = Circuit::new("bad");
+    circuit.buses.insert("t".to_string(), Bus::new("t", 0));
+    assert!(matches!(
+        circuit.validate(),
+        Err(CircuitError::InvalidBus(_))
+    ));
+}
+
+#[test]
+fn bus_name_conflicting_with_scalar_is_rejected() {
+    let mut circuit = Circuit::new("bad");
+    circuit.add_input(sig("a"));
+    circuit.buses.insert("a".to_string(), Bus::new("a", 2));
+    assert_eq!(
+        circuit.validate(),
+        Err(CircuitError::BusNameConflict("a".to_string()))
     );
 }
 

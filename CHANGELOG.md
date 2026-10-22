@@ -1,5 +1,14 @@
 # Changelog
 
+## [未发布]
+
+### Added（0.9 结构模型）
+
+- **向量元数据**：`Circuit.buses` + `Bus { name, width }` 保留 `[width-1:0]` 声明；
+  Verilog 解析填充，导出优先按声明宽度重组（允许只建模部分位），JSON 往返保留；
+  空映射不序列化，旧 JSON 可直接读取。`CircuitError` 新增 `InvalidBus` / `BusNameConflict`。
+  注：`Circuit` 新增公开字段，外部结构体字面量需补 `..Default::default()`。
+
 ## [0.8.2] - 2026-10-23
 
 硬化补丁：修掉 Circuit 的静默常量默认，补齐结构校验，收紧 CI 与模块边界；无新增功能。
