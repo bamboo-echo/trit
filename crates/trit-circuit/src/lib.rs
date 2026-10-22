@@ -1,6 +1,7 @@
 //! 三值组合网表的 X 传播与 stuck-at 可测性分析。
 
 pub mod atpg;
+pub mod blif;
 pub mod circuit;
 pub mod map;
 pub mod netlist;
@@ -8,6 +9,7 @@ pub mod timing;
 pub mod verilog;
 
 pub use atpg::{AtpgReport, CoverageStat, TestPattern, generate_tests};
+pub use blif::{BlifError, parse_blif, to_blif};
 pub use circuit::{
     Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,
     SimulationRow, UntestableReason, analyze, analyze_faults, propagate,

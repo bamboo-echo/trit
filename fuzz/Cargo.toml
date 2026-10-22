@@ -36,3 +36,10 @@ path = "fuzz_targets/atpg.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "blif"
+path = "fuzz_targets/blif.rs"
+test = false
+doc = false
+bench = false

@@ -644,6 +644,33 @@ fn map_load_delay_prefers_direct_cell() {
 }
 
 #[test]
+fn netlist_parses_and_writes_blif() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let blif = dir.join("and2.blif");
+    let net = dir.join("and2.net");
+    let (stdout, stderr, code) = run(&[
+        "netlist",
+        blif.to_str().unwrap(),
+        "--from",
+        "blif",
+        "--to",
+        "text",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("gate AND"), "{stdout}");
+
+    let (stdout, stderr, code) = run(&["netlist", net.to_str().unwrap(), "--to", "blif"]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains(".inputs a b"), "{stdout}");
+    assert!(stdout.contains(".names a b y"), "{stdout}");
+    assert!(stdout.contains(".end"), "{stdout}");
+
+    let (stdout, stderr, code) = run(&["atpg", blif.to_str().unwrap(), "--from", "blif"]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("覆盖率 100.0%"), "{stdout}");
+}
+
+#[test]
 fn netlist_parses_verilog_assign_xor() {
     let path =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/xor_assign.v");

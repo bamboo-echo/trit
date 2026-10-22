@@ -168,6 +168,14 @@ MUTANTS = [
         "filter": "compaction_merges_witness_patterns",
     },
     {
+        "name": "blif: 把 '-' 当成 0 字面量",
+        "file": "crates/trit-circuit/src/blif.rs",
+        "old": "                        \"-\" => None,",
+        "new": "                        \"-\" => Some(false),",
+        "pkg": "trit-circuit",
+        "filter": "constants_and_dont_care_rows",
+    },
+    {
         "name": "verilog: assign 的 ^ 退化成强加三值 Xor",
         "file": "crates/trit-circuit/src/verilog.rs",
         "old": "                    _ => GateKind::XorClassic,",
