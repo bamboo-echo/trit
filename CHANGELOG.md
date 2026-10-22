@@ -4,6 +4,8 @@
 
 ### Changed（评审修复第二批，含 API 变更）
 
+- **CLI 去上帝模块**：`trit-cli/src/main.rs`（2091 行）拆成 `commands/` 下 15 个命令模块，
+  main 只保留 CLI 定义、分发与共享助手（约 590 行）；命令行为与参数不变。
 - **Verilog 去上帝模块**：`verilog.rs`（1537 行）拆成 `verilog/{mod,expr,parse,export}.rs`
   + `verilog/tests.rs`；`parse_verilog` / `to_verilog` / `VerilogError` 公开路径不变。
 - **设计去重**：ATPG 与桥接故障的精确/贪心集合覆盖抽到私有 `coverage` 模块，
