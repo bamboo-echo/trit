@@ -641,6 +641,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sansheng"
+version = "0.3.2"
+dependencies = [
+ "trit-bdd",
+ "trit-circuit",
+ "trit-core",
+ "trit-eval",
+ "trit-policy",
+ "trit-sat",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"

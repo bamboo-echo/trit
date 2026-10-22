@@ -28,7 +28,23 @@ GitHub Releases（`v0.3.1` 起）提供：
 | `trit-circuit` | 组合网表 X 传播、stuck-at 可测性 |
 | `trit-bdd` | BDD（canonical）等价判定 |
 | `trit-policy` | 三值决策表的构建期验证 |
+| `sansheng` | 三生：统一入口伞包（re-export 以上能力） |
 | `trit-cli` | `trit` 命令行 |
+
+## 三生（sansheng）
+
+crates.io 包名用拼音 `sansheng`（`三生` 不能直接作 crate 名）。伞包统一暴露核心 API：
+
+```toml
+[dependencies]
+sansheng = "0.3"
+```
+
+```rust
+use sansheng::{equivalent_symbolic, Algebra, Parser};
+```
+
+CLI 仍是 `trit`（`cargo install trit-cli` 或下载 Release 二进制）。
 
 ## 快速开始
 

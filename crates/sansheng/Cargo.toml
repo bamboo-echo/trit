@@ -1,0 +1,19 @@
+[package]
+name = "sansheng"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "三生（Sansheng）：三值推理工具箱的伞包（K3/Ł3/B3、SAT、BDD、网表、策略验证）"
+keywords = ["ternary", "logic", "kleene", "sat", "bdd"]
+categories = ["science", "mathematics"]
+readme = "README.md"
+
+[dependencies]
+trit-core.workspace = true
+trit-eval.workspace = true
+trit-sat.workspace = true
+trit-bdd.workspace = true
+trit-circuit.workspace = true
+trit-policy.workspace = true
