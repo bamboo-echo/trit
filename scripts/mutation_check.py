@@ -73,7 +73,7 @@ MUTANTS = [
     },
     {
         "name": "circuit: 拓扑排序退回声明序",
-        "file": "crates/trit-circuit/src/circuit.rs",
+        "file": "crates\\trit-circuit\\src\\circuit\\graph.rs",
         "old": "            if deps.iter().all(|d| resolved.contains(d)) {",
         "new": "            if true {",
         "pkg": "trit-circuit",
@@ -81,7 +81,7 @@ MUTANTS = [
     },
     {
         "name": "circuit: 引脚故障不注入",
-        "file": "crates/trit-circuit/src/circuit.rs",
+        "file": "crates\\trit-circuit\\src\\circuit\\sim.rs",
         "old": "                ins[pin] = value;",
         "new": "                let _ = value;",
         "pkg": "trit-circuit",
@@ -105,7 +105,7 @@ MUTANTS = [
     },
     {
         "name": "circuit: 不可观测误判为被遮蔽",
-        "file": "crates/trit-circuit/src/circuit.rs",
+        "file": "crates\\trit-circuit\\src\\circuit\\analyze.rs",
         "old": "                } else if reachable.contains(gate.output.name()) {",
         "new": "                } else if true {",
         "pkg": "trit-circuit",
@@ -321,7 +321,7 @@ MUTANTS = [
     },
     {
         "name": "circuit: 组合数溢出后饱和",
-        "file": "crates/trit-circuit/src/circuit.rs",
+        "file": "crates\\trit-circuit\\src\\circuit\\types.rs",
         "old": "        checked_pow3(self.input_count())\n",
         "new": "        Ok(checked_pow3(self.input_count()).unwrap_or(u64::MAX))\n",
         "pkg": "trit-circuit",
