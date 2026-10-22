@@ -15,7 +15,35 @@ pub enum TimingError {
     Circuit(#[from] CircuitError),
 }
 
-/// 时序模型：每类门一个延迟；未列出的用 `default_delay`（常量门恒为 0）。
+/// 时序模型错误。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TimingModelError {
+    /// JSON 语法错误。
+    #[error("时序模型 JSON 解析失败：{0}")]
+    Json(String),
+    /// 未知门类型名。
+    #[error("时序模型里有未知门类型：{0:?}")]
+    UnknownCell(String),
+    /// 规范化后重复（例如 `AND` 与 `and`）。
+    #[error("时序模型里有重复门类型（规范化后）：{0:?}")]
+    DuplicateCell(String),
+    /// 引脚弧数量与门元数不符。
+    #[error("门类型 {kind} 需要 {expected} 条引脚弧，实际 {actual} 条")]
+    ArcArity {
+        /// 门类型短名。
+        kind: String,
+        /// 元数。
+        expected: usize,
+        /// 实际弧数。
+        actual: usize,
+    },
+}
+
+/// 时序模型：每类门一个延迟，或按输入引脚给出弧延迟；未列出的用 `default_delay`（常量门恒为 0）。
+///
+/// `arcs` 的键与 `delays` 相同，值是**按输入引脚顺序**（Liberty 里通常记作 `A1`/`A2`）
+/// 到输出引脚 `Y` 的延迟。某门类型出现在 `arcs` 时逐引脚取弧延迟，否则回退到
+/// `delays` / `default_delay`。`load_delay` 仍按输出净扇出追加一次。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct TimingModel {
@@ -23,6 +51,8 @@ pub struct TimingModel {
     pub default_delay: u32,
     /// 门类型（`AND` / `OR` / ...）到延迟的映射。
     pub delays: BTreeMap<String, u32>,
+    /// 门类型到引脚弧延迟（按输入引脚顺序）；长度必须等于门元数。
+    pub arcs: BTreeMap<String, Vec<u32>>,
     /// 每个扇出（门输入引用）追加的延迟；0 表示不看负载。
     pub load_delay: u32,
 }
@@ -32,13 +62,14 @@ impl Default for TimingModel {
         Self {
             default_delay: 1,
             delays: BTreeMap::new(),
+            arcs: BTreeMap::new(),
             load_delay: 0,
         }
     }
 }
 
 impl TimingModel {
-    /// 某类门的延迟；常量门为 0。
+    /// 某类门的基础延迟；常量门为 0。
     pub fn delay_for(&self, kind: GateKind) -> u32 {
         if kind == GateKind::Const {
             return 0;
@@ -49,14 +80,83 @@ impl TimingModel {
             .unwrap_or(self.default_delay)
     }
 
+    /// 输入引脚 `input_index` 到输出的弧延迟；无弧时回退到基础延迟。
+    pub fn arc_delay(&self, kind: GateKind, input_index: usize) -> u32 {
+        if kind == GateKind::Const {
+            return 0;
+        }
+        match self.arcs.get(kind.as_str()) {
+            Some(arcs) => arcs
+                .get(input_index)
+                .copied()
+                .unwrap_or_else(|| self.delay_for(kind)),
+            None => self.delay_for(kind),
+        }
+    }
+
     /// 某类门在给定扇出下的延迟：单元延迟 + `load_delay × fanout`（u64，避免静默饱和）。
+    ///
+    /// 有引脚弧时取**最大**弧延迟，仅用于不区分引脚的粗估；精确到达时间请用
+    /// [`TimingModel::output_arrival`]。
     pub fn gate_delay(&self, kind: GateKind, fanout: usize) -> u64 {
         u64::from(self.delay_for(kind)) + u64::from(self.load_delay) * fanout as u64
     }
 
-    /// 从 JSON 读取（形如 `{"default_delay":1,"delays":{"AND":2}}`）。
-    pub fn from_json(text: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(text)
+    /// 门输出到达时间：`max_i(输入到达_i + 弧延迟_i) + load_delay × fanout`。
+    pub fn output_arrival(&self, kind: GateKind, inputs: &[u32], fanout: usize) -> u64 {
+        if kind == GateKind::Const {
+            return 0;
+        }
+        let start = inputs
+            .iter()
+            .enumerate()
+            .map(|(index, arrival)| u64::from(*arrival) + u64::from(self.arc_delay(kind, index)))
+            .max()
+            .unwrap_or(0);
+        start + u64::from(self.load_delay) * fanout as u64
+    }
+
+    /// 从 JSON 读取（形如 `{"default_delay":1,"delays":{"AND":2},"arcs":{"AND":[1,3]}}`）。
+    ///
+    /// 键会规范化为 [`GateKind::as_str`] 的短名；未知键、规范化后重复、弧数与元数不符都报错。
+    pub fn from_json(text: &str) -> Result<Self, TimingModelError> {
+        let raw: Self = serde_json::from_str(text)
+            .map_err(|error| TimingModelError::Json(error.to_string()))?;
+        raw.normalized()
+    }
+
+    fn normalized(self) -> Result<Self, TimingModelError> {
+        let mut delays = BTreeMap::new();
+        for (name, delay) in self.delays {
+            let kind = GateKind::parse(&name)
+                .ok_or_else(|| TimingModelError::UnknownCell(name.clone()))?;
+            let key = kind.as_str().to_string();
+            if delays.insert(key.clone(), delay).is_some() {
+                return Err(TimingModelError::DuplicateCell(key));
+            }
+        }
+        let mut arcs = BTreeMap::new();
+        for (name, arc_list) in self.arcs {
+            let kind = GateKind::parse(&name)
+                .ok_or_else(|| TimingModelError::UnknownCell(name.clone()))?;
+            if arc_list.len() != kind.arity() {
+                return Err(TimingModelError::ArcArity {
+                    kind: kind.as_str().to_string(),
+                    expected: kind.arity(),
+                    actual: arc_list.len(),
+                });
+            }
+            let key = kind.as_str().to_string();
+            if arcs.insert(key.clone(), arc_list).is_some() {
+                return Err(TimingModelError::DuplicateCell(key));
+            }
+        }
+        Ok(Self {
+            default_delay: self.default_delay,
+            delays,
+            arcs,
+            load_delay: self.load_delay,
+        })
     }
 
     /// 序列化为 JSON。
@@ -124,17 +224,19 @@ pub fn critical_paths(
     for &index in &order {
         let gate = &circuit.gates[index];
         let output = gate.output.name().to_string();
-        let delay = model.gate_delay(gate.kind, fanouts.get(&output).copied().unwrap_or(0));
+        let fanout = fanouts.get(&output).copied().unwrap_or(0);
+        let load = u64::from(model.load_delay) * fanout as u64;
         let mut candidates: Vec<(u32, Vec<String>)> = Vec::new();
         if gate.kind == GateKind::Const {
             candidates.push((0, vec![output.clone()]));
         } else {
-            for input in &gate.inputs {
+            for (input_index, input) in gate.inputs.iter().enumerate() {
                 if let Some(paths) = best.get(input.name()) {
+                    let arc = u64::from(model.arc_delay(gate.kind, input_index));
                     for (path_delay, signals) in paths {
                         let mut path = signals.clone();
                         path.push(output.clone());
-                        let next = u64::from(*path_delay) + delay;
+                        let next = u64::from(*path_delay) + arc + load;
                         let next = u32::try_from(next).map_err(|_| TimingError::Overflow)?;
                         candidates.push((next, path));
                     }
@@ -181,14 +283,13 @@ pub fn analyze_timing(
         .collect();
     for &index in &order {
         let gate = &circuit.gates[index];
-        let start = gate
+        let input_arrivals: Vec<u32> = gate
             .inputs
             .iter()
             .map(|signal| arrival.get(signal.name()).copied().unwrap_or(0))
-            .max()
-            .unwrap_or(0);
+            .collect();
         let fanout = fanouts.get(gate.output.name()).copied().unwrap_or(0);
-        let next = u64::from(start) + model.gate_delay(gate.kind, fanout);
+        let next = model.output_arrival(gate.kind, &input_arrivals, fanout);
         let next = u32::try_from(next).map_err(|_| TimingError::Overflow)?;
         arrival.insert(gate.output.name().to_string(), next);
     }
@@ -208,10 +309,11 @@ pub fn analyze_timing(
         let gate = &circuit.gates[index];
         let output_required = required.get(gate.output.name()).copied().unwrap_or(clock);
         let fanout = fanouts.get(gate.output.name()).copied().unwrap_or(0);
-        let delay = model.gate_delay(gate.kind, fanout);
-        let delay = u32::try_from(delay).unwrap_or(u32::MAX);
-        let input_required = output_required.saturating_sub(delay);
-        for input in &gate.inputs {
+        let load = u64::from(model.load_delay) * fanout as u64;
+        for (input_index, input) in gate.inputs.iter().enumerate() {
+            let delay = u64::from(model.arc_delay(gate.kind, input_index)) + load;
+            let delay = u32::try_from(delay).unwrap_or(u32::MAX);
+            let input_required = output_required.saturating_sub(delay);
             let entry = required
                 .entry(input.name().to_string())
                 .or_insert(input_required);
@@ -307,6 +409,56 @@ output y
         let again = TimingModel::from_json(&json).unwrap();
         assert_eq!(again.delay_for(GateKind::And), 2);
         assert_eq!(again.delay_for(GateKind::Xor), 1);
+    }
+
+    #[test]
+    fn pin_arcs_change_arrival_and_critical_path() {
+        let circuit =
+            parse_netlist("input a\ninput b\nbuf b b2\ngate AND a b2 y\noutput y\n").unwrap();
+        let mut model = TimingModel::default();
+        model.delays.insert("AND".to_string(), 2);
+        model.delays.insert("BUF".to_string(), 5);
+        // 无弧：max(0, 5) + 2 = 7
+        assert_eq!(
+            analyze_timing(&circuit, model.clone(), None)
+                .unwrap()
+                .critical_path,
+            7
+        );
+        // A1 弧 1、A2 弧 4：max(0+1, 5+4) = 9
+        model.arcs.insert("AND".to_string(), vec![1, 4]);
+        let report = analyze_timing(&circuit, model.clone(), None).unwrap();
+        assert_eq!(report.critical_path, 9);
+        let paths = critical_paths(&circuit, model, 1).unwrap();
+        assert_eq!(paths[0].delay, 9);
+        assert_eq!(paths[0].signals, vec!["b", "b2", "y"]);
+    }
+
+    #[test]
+    fn arc_model_json_validates_and_normalizes() {
+        let model = TimingModel::from_json(r#"{"arcs":{"and":[1,3]},"delays":{"or":2}}"#).unwrap();
+        assert_eq!(model.arc_delay(GateKind::And, 0), 1);
+        assert_eq!(model.arc_delay(GateKind::And, 1), 3);
+        assert_eq!(model.delay_for(GateKind::Or), 2);
+        assert_eq!(model.arc_delay(GateKind::Or, 1), 2, "无弧时回退基础延迟");
+        assert_eq!(
+            TimingModel::from_json(r#"{"arcs":{"AND":[1]}}"#).unwrap_err(),
+            TimingModelError::ArcArity {
+                kind: "AND".to_string(),
+                expected: 2,
+                actual: 1
+            }
+        );
+        assert!(matches!(
+            TimingModel::from_json(r#"{"arcs":{"NOPE":[1]}}"#).unwrap_err(),
+            TimingModelError::UnknownCell(_)
+        ));
+        assert!(matches!(
+            TimingModel::from_json(r#"{"delays":{"AND":1,"and":2}}"#).unwrap_err(),
+            TimingModelError::DuplicateCell(_)
+        ));
+        let again = TimingModel::from_json(&model.to_json().unwrap()).unwrap();
+        assert_eq!(again, model);
     }
 
     #[test]

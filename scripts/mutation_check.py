@@ -210,16 +210,16 @@ MUTANTS = [
     {
         "name": "timing: 负载延迟不参与到达时间",
         "file": "crates/trit-circuit/src/timing.rs",
-        "old": "        u64::from(self.delay_for(kind)) + u64::from(self.load_delay) * fanout as u64",
-        "new": "        u64::from(self.delay_for(kind))",
+        "old": "        start + u64::from(self.load_delay) * fanout as u64",
+        "new": "        start",
         "pkg": "trit-circuit",
         "filter": "load_delay_accumulates_with_fanout"
     },
     {
-        "name": "map: 直接单元到达时间漏加延迟",
+        "name": "map: 直接单元到达时间漏加单元延迟",
         "file": "crates/trit-circuit/src/map.rs",
-        "old": "            let total = u64::from(start) + u64::from(delay) + u64::from(load_delay) * fanout;",
-        "new": "            let total = u64::from(start) + u64::from(load_delay) * fanout;",
+        "old": "            let total = start + u64::from(load_delay) * fanout;",
+        "new": "            let total = u64::from(load_delay) * fanout;",
         "pkg": "trit-circuit",
         "filter": "timing_driven_picks_lower_arrival_implementation"
     },
@@ -326,6 +326,38 @@ MUTANTS = [
         "new": "        Ok(checked_pow3(self.input_count()).unwrap_or(u64::MAX))\n",
         "pkg": "trit-circuit",
         "filter": "analyze_rejects_too_many_inputs_before_enumeration"
+    },
+    {
+        "name": "timing: 到达时间忽略引脚弧",
+        "file": "crates/trit-circuit/src/timing.rs",
+        "old": "            .map(|(index, arrival)| u64::from(*arrival) + u64::from(self.arc_delay(kind, index)))\n",
+        "new": "            .map(|(_index, arrival)| u64::from(*arrival))\n",
+        "pkg": "trit-circuit",
+        "filter": "pin_arcs_change_arrival_and_critical_path"
+    },
+    {
+        "name": "timing: 关键路径忽略引脚弧",
+        "file": "crates/trit-circuit/src/timing.rs",
+        "old": "                    let arc = u64::from(model.arc_delay(gate.kind, input_index));\n",
+        "new": "                    let arc = 0u64;\n",
+        "pkg": "trit-circuit",
+        "filter": "pin_arcs_change_arrival_and_critical_path"
+    },
+    {
+        "name": "map: 直接单元忽略引脚弧",
+        "file": "crates/trit-circuit/src/map.rs",
+        "old": "                let at = u64::from(arrival.get(signal.name()).copied().unwrap_or(0))\n                    + u64::from(library.arc_delay(gate.kind, input_index).unwrap_or(0));\n",
+        "new": "                let at = u64::from(arrival.get(signal.name()).copied().unwrap_or(0));\n",
+        "pkg": "trit-circuit",
+        "filter": "pin_arcs_flip_implementation_choice"
+    },
+    {
+        "name": "map: 弧数校验放宽",
+        "file": "crates/trit-circuit/src/map.rs",
+        "old": "                && arcs.len() != kind.arity()\n",
+        "new": "                && arcs.len() > kind.arity()\n",
+        "pkg": "trit-circuit",
+        "filter": "cell_library_accepts_arc_form_and_validates"
     },
     {
         "name": "atpg: X 合并忽略唯一覆盖（保留全部故障）",

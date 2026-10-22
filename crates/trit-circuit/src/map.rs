@@ -32,6 +32,16 @@ pub enum MapError {
     /// 单元库 JSON 语法错误。
     #[error("单元库 JSON 解析失败：{0}")]
     Json(String),
+    /// 引脚弧数量与门元数不符。
+    #[error("单元 {kind} 需要 {expected} 条引脚弧，实际 {actual} 条")]
+    ArcArity {
+        /// 门类型短名。
+        kind: String,
+        /// 元数。
+        expected: usize,
+        /// 实际弧数。
+        actual: usize,
+    },
     /// 时序累计超出 `u32`。
     #[error("映射时的时序累计超出 u32 范围")]
     Overflow,
@@ -40,12 +50,53 @@ pub enum MapError {
     Circuit(#[from] CircuitError),
 }
 
+/// 单元时序：所有输入同一延迟，或按输入引脚的弧延迟。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum CellTiming {
+    /// 所有输入同一延迟。
+    Delay(u32),
+    /// 按输入引脚顺序（Liberty 的 `A1`/`A2` → `Y`）的弧延迟。
+    ///
+    /// `delay` 是基础/回退值；省略时取弧延迟的最大值，仅用于不区分引脚的粗估。
+    Arcs {
+        /// 基础延迟。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delay: Option<u32>,
+        /// 弧延迟（长度必须等于门元数）。
+        arcs: Vec<u32>,
+    },
+}
+
+impl CellTiming {
+    /// 基础延迟（供不区分引脚的调用方使用）。
+    pub fn base_delay(&self) -> u32 {
+        match self {
+            Self::Delay(delay) => *delay,
+            Self::Arcs { delay, arcs } => {
+                delay.unwrap_or_else(|| arcs.iter().copied().max().unwrap_or(0))
+            }
+        }
+    }
+
+    /// 第 `input_index` 个输入引脚到输出的延迟。
+    pub fn arc_delay(&self, input_index: usize) -> u32 {
+        match self {
+            Self::Delay(delay) => *delay,
+            Self::Arcs { delay, arcs } => arcs.get(input_index).copied().unwrap_or_else(|| {
+                delay.unwrap_or_else(|| arcs.iter().copied().max().unwrap_or(0))
+            }),
+        }
+    }
+}
+
 /// 单元库：可用门类型到延迟（单位周期）的映射。
 ///
-/// JSON 是扁平对象，键为门类型短名（[`GateKind::as_str`]）：
+/// JSON 键为门类型短名（[`GateKind::as_str`]），值可以是数字，也可以是
+/// `{"delay": 基础延迟, "arcs": [A1, A2, ...]}` 的引脚弧写法：
 ///
 /// ```json
-/// { "NAND": 1, "AND": 2, "NOT": 1, "XOR2": 4 }
+/// { "NAND": 1, "AND": {"delay": 3, "arcs": [1, 4]}, "NOT": {"arcs": [2]} }
 /// ```
 ///
 /// 没列出的门类型视为**该库里没有这个单元**；三值强加 `XOR` 只有在库里显式声明时才能映射。
@@ -53,8 +104,8 @@ pub enum MapError {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct CellLibrary {
-    /// 门类型短名到延迟的映射。
-    pub cells: BTreeMap<String, u32>,
+    /// 门类型短名到单元时序的映射。
+    pub cells: BTreeMap<String, CellTiming>,
 }
 
 impl Default for CellLibrary {
@@ -74,17 +125,27 @@ impl CellLibrary {
     pub fn new(cells: impl IntoIterator<Item = (GateKind, u32)>) -> Self {
         let cells = cells
             .into_iter()
-            .map(|(kind, delay)| (kind.as_str().to_string(), delay))
+            .map(|(kind, delay)| (kind.as_str().to_string(), CellTiming::Delay(delay)))
             .collect();
         Self { cells }
     }
 
-    /// 该门类型在库里的延迟；`CONST` 恒为 0，不在库里返回 `None`。
+    /// 该门类型的基础延迟；`CONST` 恒为 0，不在库里返回 `None`。
     pub fn delay(&self, kind: GateKind) -> Option<u32> {
         if kind == GateKind::Const {
             return Some(0);
         }
-        self.cells.get(kind.as_str()).copied()
+        self.cells.get(kind.as_str()).map(CellTiming::base_delay)
+    }
+
+    /// 第 `input_index` 个输入引脚到输出的弧延迟；不在库里返回 `None`。
+    pub fn arc_delay(&self, kind: GateKind, input_index: usize) -> Option<u32> {
+        if kind == GateKind::Const {
+            return Some(0);
+        }
+        self.cells
+            .get(kind.as_str())
+            .map(|timing| timing.arc_delay(input_index))
     }
 
     /// 库里是否有该门类型。
@@ -92,17 +153,26 @@ impl CellLibrary {
         self.delay(kind).is_some()
     }
 
-    /// 从 JSON 读取，把键规范化为 [`GateKind::as_str`] 的短名。
+    /// 从 JSON 读取，把键规范化为 [`GateKind::as_str`] 的短名并校验弧数。
     pub fn from_json(text: &str) -> Result<Self, MapError> {
         let library: Self =
             serde_json::from_str(text).map_err(|error| MapError::Json(error.to_string()))?;
         let mut canonical = BTreeMap::new();
-        for (name, delay) in library.cells {
+        for (name, timing) in library.cells {
             let Some(kind) = GateKind::parse(&name) else {
                 return Err(MapError::UnknownCell(name));
             };
+            if let CellTiming::Arcs { arcs, .. } = &timing
+                && arcs.len() != kind.arity()
+            {
+                return Err(MapError::ArcArity {
+                    kind: kind.as_str().to_string(),
+                    expected: kind.arity(),
+                    actual: arcs.len(),
+                });
+            }
             let key = kind.as_str().to_string();
-            if canonical.insert(key.clone(), delay).is_some() {
+            if canonical.insert(key.clone(), timing).is_some() {
                 return Err(MapError::DuplicateCell(key));
             }
         }
@@ -192,12 +262,6 @@ pub fn to_cells_with_load(
         let output = gate.output.name().to_string();
         let a = gate.inputs.first().map(Signal::name).unwrap_or("");
         let b = gate.inputs.get(1).map(Signal::name).unwrap_or(a);
-        let start = gate
-            .inputs
-            .iter()
-            .map(|signal| arrival.get(signal.name()).copied().unwrap_or(0))
-            .max()
-            .unwrap_or(0);
 
         if gate.kind == GateKind::Const {
             let value = gate.const_value.unwrap_or(Ternary::False);
@@ -207,9 +271,15 @@ pub fn to_cells_with_load(
         }
 
         let mut candidates: Vec<Implementation> = Vec::new();
-        if let Some(delay) = library.delay(gate.kind) {
+        if library.has(gate.kind) {
             let fanout = fanouts.get(&output).copied().unwrap_or(0) as u64;
-            let total = u64::from(start) + u64::from(delay) + u64::from(load_delay) * fanout;
+            let mut start = 0u64;
+            for (input_index, signal) in gate.inputs.iter().enumerate() {
+                let at = u64::from(arrival.get(signal.name()).copied().unwrap_or(0))
+                    + u64::from(library.arc_delay(gate.kind, input_index).unwrap_or(0));
+                start = start.max(at);
+            }
+            let total = start + u64::from(load_delay) * fanout;
             let arrival = u32::try_from(total).map_err(|_| MapError::Overflow)?;
             candidates.push(Implementation {
                 arrival,
@@ -219,10 +289,13 @@ pub fn to_cells_with_load(
             });
         }
         if library.has(GateKind::Nand) {
-            let nand_delay = library.delay(GateKind::Nand).unwrap_or(0);
+            let nand_arcs = (
+                library.arc_delay(GateKind::Nand, 0).unwrap_or(0),
+                library.arc_delay(GateKind::Nand, 1).unwrap_or(0),
+            );
             if let Some(ops) = nand_expand(gate.kind, a, b, &output, &mut fresh) {
                 let fanout = fanouts.get(&output).copied().unwrap_or(0);
-                let arrival = expansion_arrival(&ops, &arrival, nand_delay, load_delay, fanout)?;
+                let arrival = expansion_arrival(&ops, &arrival, nand_arcs, load_delay, fanout)?;
                 candidates.push(Implementation {
                     arrival,
                     cells: ops.len(),
@@ -277,7 +350,7 @@ pub fn to_nand_only(circuit: &Circuit) -> Result<Circuit, MapError> {
 fn expansion_arrival(
     ops: &[NandOp],
     arrival: &BTreeMap<String, u32>,
-    delay: u32,
+    nand_arcs: (u32, u32),
     load_delay: u32,
     final_fanout: usize,
 ) -> Result<u32, MapError> {
@@ -296,8 +369,9 @@ fn expansion_arrival(
             .map(|(x, y, _)| usize::from(x == out) + usize::from(y == out))
             .sum();
         let load = u64::from(load_delay) * (internal + final_fanout) as u64;
-        let total = u64::from(lookup(a).max(lookup(b))) + u64::from(delay) + load;
-        let at = u32::try_from(total).map_err(|_| MapError::Overflow)?;
+        let left = u64::from(lookup(a)) + u64::from(nand_arcs.0);
+        let right = u64::from(lookup(b)) + u64::from(nand_arcs.1);
+        let at = u32::try_from(left.max(right) + load).map_err(|_| MapError::Overflow)?;
         produced.push((out, at));
     }
     Ok(produced.last().map(|(_, at)| *at).unwrap_or(0))
@@ -370,8 +444,25 @@ mod tests {
 
     fn model_of(library: &CellLibrary) -> TimingModel {
         TimingModel {
-            default_delay: library.cells.values().copied().max().unwrap_or(1),
-            delays: library.cells.clone(),
+            default_delay: library
+                .cells
+                .values()
+                .map(CellTiming::base_delay)
+                .max()
+                .unwrap_or(1),
+            delays: library
+                .cells
+                .iter()
+                .map(|(kind, timing)| (kind.clone(), timing.base_delay()))
+                .collect(),
+            arcs: library
+                .cells
+                .iter()
+                .filter_map(|(kind, timing)| match timing {
+                    CellTiming::Arcs { arcs, .. } => Some((kind.clone(), arcs.clone())),
+                    CellTiming::Delay(_) => None,
+                })
+                .collect(),
             load_delay: 0,
         }
     }
@@ -509,6 +600,65 @@ mod tests {
                 .unwrap()
                 .critical_path,
             5
+        );
+    }
+
+    #[test]
+    fn cell_library_accepts_arc_form_and_validates() {
+        let library = CellLibrary::from_json(
+            r#"{"NAND": 1, "AND": {"delay": 3, "arcs": [1, 4]}, "NOT": {"arcs": [2]}}"#,
+        )
+        .unwrap();
+        assert_eq!(library.delay(GateKind::And), Some(3));
+        assert_eq!(library.arc_delay(GateKind::And, 1), Some(4));
+        assert_eq!(library.arc_delay(GateKind::Not, 0), Some(2));
+        let again = CellLibrary::from_json(&library.to_json().unwrap()).unwrap();
+        assert_eq!(again, library);
+        assert_eq!(
+            CellLibrary::from_json(r#"{"AND": {"arcs": [1]}}"#).unwrap_err(),
+            MapError::ArcArity {
+                kind: "AND".to_string(),
+                expected: 2,
+                actual: 1
+            }
+        );
+    }
+
+    #[test]
+    fn pin_arcs_flip_implementation_choice() {
+        // b 经 BUF 后到达 1；AND 的 A2 弧很慢（10），直接单元到达 11。
+        let mut circuit = Circuit::new("orig");
+        circuit.add_input(Signal::new("a"));
+        circuit.add_input(Signal::new("b"));
+        circuit.add_gate(Gate::new(
+            GateKind::Buf,
+            vec![Signal::new("b")],
+            Signal::new("b2"),
+        ));
+        circuit.add_gate(Gate::new(
+            GateKind::And,
+            vec![Signal::new("a"), Signal::new("b2")],
+            Signal::new("y"),
+        ));
+        circuit.add_output(Signal::new("y"));
+        let library = CellLibrary::from_json(
+            r#"{"BUF": {"arcs": [1]}, "AND": {"delay": 1, "arcs": [1, 10]},
+                "NAND": {"arcs": [1, 1]}}"#,
+        )
+        .unwrap();
+        let mapped = to_cells(&circuit, &library, MapStrategy::Timing).unwrap();
+        // NAND 展开两级到达 3 < AND 11，应选 NAND。
+        assert!(
+            mapped.gates.iter().all(|gate| gate.kind != GateKind::And),
+            "慢 A2 弧应让直接 AND 落选"
+        );
+        assert_eq!(
+            mapped
+                .gates
+                .iter()
+                .filter(|gate| gate.kind == GateKind::Nand)
+                .count(),
+            2
         );
     }
 

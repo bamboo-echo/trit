@@ -104,13 +104,8 @@ cargo run --release -p trit-cli -- verify examples/policy.json
   `Limit`／`BudgetExceeded` 错误；策略展开在分配大子树之前扣节点预算。
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-<<<<<<< HEAD
-`python scripts/mutation_check.py` 对 40 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 40/40）；`.github/workflows/mutation.yml` 每周跑一次。
-=======
-`python scripts/mutation_check.py` 对 39 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 39/39）；`.github/workflows/mutation.yml` 每周跑一次。
->>>>>>> 1b11216 (fix: 评审第二批（解析/枚举预算、TriVec 值语义、策略展开、BDD 软限额）)
+`python scripts/mutation_check.py` 对 44 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 44/44）；`.github/workflows/mutation.yml` 每周跑一次。
 
 ## fuzz 与基准
 
@@ -187,12 +182,16 @@ trit map design.v --from verilog --cells cells.json --area-first
 trit map design.net --cells cells.json --load-delay 2   # 扇出按负载延迟参与选实现
 ```
 
-`cells.json` 是「门类型 → 延迟」的扁平对象；没列出的类型视为库里没有该单元
-（与 `timing --library` 的 `default_delay` 语义不同）：
+`cells.json` 是「门类型 → 延迟」的对象；没列出的类型视为库里没有该单元
+（与 `timing --library` 的 `default_delay` 语义不同）。值可以是数字，也可以按输入引脚
+（Liberty 的 `A1`/`A2` → `Y`）给弧延迟：
 
 ```json
-{ "NAND": 1, "AND": 2, "OR": 3, "XOR2": 4 }
+{ "NAND": 1, "AND": {"delay": 3, "arcs": [1, 4]}, "NOT": {"arcs": [2]}, "XOR2": 4 }
 ```
+
+`arcs` 的长度必须等于门元数；`delay` 省略时取弧最大值，只用于不区分引脚的粗估。
+直接单元与 NAND 展开都按各自输入引脚的弧算到达时间，所以慢弧会改变实现的取舍。
 
 ## 设计检查（`trit check`）
 
@@ -216,6 +215,14 @@ trit timing design.v --from verilog --delay 2 --format json
 
 `--library cells.json` 可按门类型给延迟（`{"default_delay":1,"delays":{"AND":2}}`），优先于 `--delay`；
 库里也可写 `"load_delay": N`，或直接用 CLI `--load-delay N`：每个扇出（门输入引用）追加 N 周期。
+按输入引脚给弧延迟用 `arcs`（键同样是门类型短名，长度等于门元数）：
+
+```json
+{ "default_delay": 1, "load_delay": 0, "arcs": { "AND": [1, 4], "NOT": [2] } }
+```
+
+有 `arcs` 的门类型按「输入到达 + 该引脚弧延迟」取最大值，再追加负载延迟；没有的仍走
+`delays` / `default_delay`。`trit check --library` 使用同一份模型。
 `--paths N` 列出最慢的 N 条路径（信号序列 + 延迟）；JSON 里是 `paths`。
 
 ## BDD 引擎（`--bdd`）
