@@ -168,6 +168,14 @@ MUTANTS = [
         "filter": "compaction_merges_witness_patterns",
     },
     {
+        "name": "aiger: 忽略时序锁存器",
+        "file": "crates/trit-circuit/src/aiger.rs",
+        "old": "    if latches > 0 {",
+        "new": "    if false {",
+        "pkg": "trit-circuit",
+        "filter": "rejects_latches_strong_xor_and_bad_header",
+    },
+    {
         "name": "blif: 把 '-' 当成 0 字面量",
         "file": "crates/trit-circuit/src/blif.rs",
         "old": "                        \"-\" => None,",

@@ -3,8 +3,8 @@
 //! 真正的覆盖率引导 fuzz 在 `fuzz/`（cargo-fuzz，需要 nightly）；这里保证 CI 每次都能跑。
 
 use trit_circuit::{
-    Circuit, Gate, GateKind, Signal, generate_tests, parse_blif, parse_netlist, parse_verilog,
-    to_blif,
+    Circuit, Gate, GateKind, Signal, generate_tests, parse_aiger, parse_blif, parse_netlist,
+    parse_verilog, to_aiger, to_blif,
 };
 use trit_core::algebra::Algebra;
 
@@ -84,6 +84,29 @@ fn blif_parser_round_trips_or_rejects() {
             parsed += 1;
             let rendered = to_blif(&circuit).expect("parse 出的组合网表必须能写回");
             let again = parse_blif(&rendered).expect("to_blif 输出必须可解析");
+            assert_eq!(circuit.inputs.len(), again.inputs.len());
+            assert_eq!(circuit.outputs.len(), again.outputs.len());
+        }
+    }
+    assert!(parsed > 0, "变异种子应至少解析成功一次");
+}
+
+#[test]
+fn aiger_parser_round_trips_or_rejects() {
+    let mut state = 0xa1ee_5eed_1234_9876u64;
+    let seed = "aig 3 2 0 1 1
+2
+4
+6
+6 2 4
+";
+    let mut parsed = 0usize;
+    for round in 0..400 {
+        let text = mutate(&mut state, seed, round % 4 + 1);
+        if let Ok(circuit) = parse_aiger(&text) {
+            parsed += 1;
+            let rendered = to_aiger(&circuit).expect("parse 出的组合网表必须能写回");
+            let again = parse_aiger(&rendered).expect("to_aiger 输出必须可解析");
             assert_eq!(circuit.inputs.len(), again.inputs.len());
             assert_eq!(circuit.outputs.len(), again.outputs.len());
         }

@@ -644,6 +644,32 @@ fn map_load_delay_prefers_direct_cell() {
 }
 
 #[test]
+fn netlist_parses_and_writes_aiger() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let aiger = dir.join("and2.aig");
+    let net = dir.join("and2.net");
+    let (stdout, stderr, code) = run(&[
+        "netlist",
+        aiger.to_str().unwrap(),
+        "--from",
+        "aiger",
+        "--to",
+        "text",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("gate AND"), "{stdout}");
+
+    let (stdout, stderr, code) = run(&["netlist", net.to_str().unwrap(), "--to", "aiger"]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.starts_with("aig "), "{stdout}");
+    assert!(!stdout.contains(".end"), "{stdout}");
+
+    let (stdout, stderr, code) = run(&["atpg", aiger.to_str().unwrap(), "--from", "aiger"]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("覆盖率 100.0%"), "{stdout}");
+}
+
+#[test]
 fn netlist_parses_and_writes_blif() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let blif = dir.join("and2.blif");

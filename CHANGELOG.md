@@ -8,6 +8,8 @@
   `inputs` 仍给出具体 0/1 填充，CSV 导出即用该填充。
 - `AtpgReport::x_coverage`（含 X 向量覆盖的可测故障比例）与 `merged`（压缩省下的向量数）；
   表格、JSON、WASM 同步输出。
+- AIGER ASCII 子集读写：`parse_aiger` / `to_aiger`（`L = 0` 组合逻辑，AND + 取反编码）；
+  CLI `netlist --from/--to aiger`；0/1 激励上的往返等价。
 - BLIF 子集读写：`parse_blif` / `to_blif`（`.model/.inputs/.outputs/.names`，拒绝 `.latch`）；
   CLI `netlist --from blif` / `--to blif`；往返等价在 0/1 激励上验证。
 - Verilog `assign` 支持 `^` / `~^` / `^~`、括号与常量字面量，按 Verilog 优先级解析；
