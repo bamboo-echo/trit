@@ -39,12 +39,41 @@ fn atpg_reports_full_coverage_for_and() {
 }
 
 #[test]
+fn bridge_reports_testability_and_rejects_empty_pairs() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let netlist = dir.join("and2.net");
+    let pairs = dir.join("bridges.json");
+    let (stdout, stderr, code) = run(&[
+        "bridge",
+        netlist.to_str().unwrap(),
+        "--pairs",
+        pairs.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("桥接 2 个，可测 1，覆盖率 50.0%"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("不可测"), "{stdout}");
+
+    let empty = dir.join("bridges_empty.json");
+    let (_, stderr, code) = run(&[
+        "bridge",
+        netlist.to_str().unwrap(),
+        "--pairs",
+        empty.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 1, "空列表必须失败");
+    assert!(stderr.contains("桥接列表为空"), "{stderr}");
+}
+
+#[test]
 fn help_lists_all_subcommands() {
     let (stdout, _, code) = run(&["--help"]);
     assert_eq!(code, 0);
     for sub in [
-        "eval", "table", "equiv", "quantify", "simplify", "circuit", "atpg", "timing", "map",
-        "check", "netlist", "belnap", "repl",
+        "eval", "table", "equiv", "quantify", "simplify", "circuit", "atpg", "bridge", "timing",
+        "map", "check", "netlist", "belnap", "repl",
     ] {
         assert!(stdout.contains(sub), "help missing {sub}");
     }

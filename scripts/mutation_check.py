@@ -366,6 +366,38 @@ MUTANTS = [
         "new": "                        need.retain(|_fault| true);",
         "pkg": "trit-circuit",
         "filter": "compaction_merges_witness_patterns"
+    },
+    {
+        "name": "bridge: wired-OR 被当成 wired-AND",
+        "file": "crates/trit-circuit/src/bridge.rs",
+        "old": "            Self::Or => Ternary::True,\n",
+        "new": "            Self::Or => Ternary::False,\n",
+        "pkg": "trit-circuit",
+        "filter": "and_bridge_is_detected_only_for_wired_or"
+    },
+    {
+        "name": "bridge: 两端值恒等导致全部不可测",
+        "file": "crates/trit-circuit/src/bridge.rs",
+        "old": "                .map(|&(a, b, _)| (good[a], good[b]))\n",
+        "new": "                .map(|&(a, _b, _)| (good[a], good[a]))\n",
+        "pkg": "trit-circuit",
+        "filter": "and_bridge_is_detected_only_for_wired_or"
+    },
+    {
+        "name": "bridge: 空列表不失败",
+        "file": "crates/trit-circuit/src/bridge.rs",
+        "old": "    if pairs.is_empty() {\n        return Err(BridgeError::NoPairs);\n    }\n",
+        "new": "    if false {\n        return Err(BridgeError::NoPairs);\n    }\n",
+        "pkg": "trit-circuit",
+        "filter": "validation_rejects_empty_unknown_and_same_pairs"
+    },
+    {
+        "name": "bridge: 同一网络不报错",
+        "file": "crates/trit-circuit/src/bridge.rs",
+        "old": "        if a == b {\n",
+        "new": "        if false {\n",
+        "pkg": "trit-circuit",
+        "filter": "validation_rejects_empty_unknown_and_same_pairs"
     }
 ]
 
