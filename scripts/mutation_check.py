@@ -177,7 +177,7 @@ MUTANTS = [
     },
     {
         "name": "check: 覆盖率无法执行时仍然 PASS",
-        "file": "crates/trit-cli/src/main.rs",
+        "file": "crates\\trit-cli\\src\\commands\\check.rs",
         "old": "    if atpg.is_none() && min_coverage > 0.0 {",
         "new": "    if false {",
         "pkg": "trit-cli",
