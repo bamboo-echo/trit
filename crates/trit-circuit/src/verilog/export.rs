@@ -6,7 +6,7 @@ use trit_core::value::Ternary;
 
 use crate::circuit::{Circuit, Gate, GateKind, Signal};
 
-use super::{VerilogError, is_identifier, message};
+use super::{VerilogError, is_identifier};
 
 fn gate_line(circuit_gate: &Gate, index: usize) -> Result<String, VerilogError> {
     let output = circuit_gate.output.name();
@@ -17,7 +17,7 @@ fn gate_line(circuit_gate: &Gate, index: usize) -> Result<String, VerilogError> 
         _ => inputs.len() == 2,
     };
     if !arity_ok {
-        return Err(message(format!(
+        return Err(VerilogError::export(format!(
             "门 {output} 的输入数量与 {:?} 不符",
             circuit_gate.kind
         )));
@@ -39,7 +39,9 @@ fn gate_line(circuit_gate: &Gate, index: usize) -> Result<String, VerilogError> 
             )
         }
         GateKind::Xor => {
-            return Err(message("三值强加 Xor 不能导出为 Verilog（会变成经典异或）"));
+            return Err(VerilogError::export(
+                "三值强加 Xor 不能导出为 Verilog（会变成经典异或）",
+            ));
         }
         GateKind::Not | GateKind::Buf => format!(
             "  {} g{index} ({output}, {});
@@ -87,7 +89,9 @@ fn group_signals(names: &[&str]) -> Result<Vec<VerilogGroup>, VerilogError> {
             None => (*name, None),
         };
         if !is_identifier(base) {
-            return Err(message(format!("信号名 {name:?} 不能导出为 Verilog")));
+            return Err(VerilogError::export(format!(
+                "信号名 {name:?} 不能导出为 Verilog"
+            )));
         }
         if !groups.contains_key(base) {
             order.push(base.to_string());
@@ -112,14 +116,14 @@ fn group_signals(names: &[&str]) -> Result<Vec<VerilogGroup>, VerilogError> {
     for base in order {
         let acc = groups.remove(&base).expect("刚刚插入");
         if acc.has_scalar && acc.has_bits {
-            return Err(message(format!(
+            return Err(VerilogError::export(format!(
                 "信号 {base} 同时以标量和位选出现，无法导出为 Verilog"
             )));
         }
         let max = acc.indices.iter().next_back().copied().unwrap_or(0);
         let contiguous = acc.indices.len() == max + 1 && acc.indices.iter().copied().eq(0..=max);
         if !contiguous {
-            return Err(message(format!(
+            return Err(VerilogError::export(format!(
                 "信号 {base} 的位下标不连续或缺少低位，无法导出为 Verilog 向量"
             )));
         }
@@ -144,7 +148,8 @@ fn decl_line(direction: &str, group: &VerilogGroup) -> String {
 ///
 /// 三值强加 `Xor` 无法用经典门表示，返回错误；位下标非连续的手工电路也无法导出。
 pub fn to_verilog(circuit: &Circuit) -> Result<String, VerilogError> {
-    crate::circuit::validate(circuit).map_err(|error| message(format!("电路不合法：{error}")))?;
+    crate::circuit::validate(circuit)
+        .map_err(|error| VerilogError::export(format!("电路不合法：{error}")))?;
     let module = if is_identifier(&circuit.name) {
         circuit.name.as_str()
     } else {
@@ -164,7 +169,9 @@ pub fn to_verilog(circuit: &Circuit) -> Result<String, VerilogError> {
         .collect();
     for base in &input_bases {
         if output_bases.contains(base) {
-            return Err(message(format!("信号 {base} 同时是输入和输出，无法导出")));
+            return Err(VerilogError::export(format!(
+                "信号 {base} 同时是输入和输出，无法导出"
+            )));
         }
     }
     let port_bits: HashSet<&str> = input_names
@@ -181,7 +188,7 @@ pub fn to_verilog(circuit: &Circuit) -> Result<String, VerilogError> {
     let wire_groups = group_signals(&wire_names)?;
     for group in &wire_groups {
         if input_bases.contains(group.base.as_str()) || output_bases.contains(group.base.as_str()) {
-            return Err(message(format!(
+            return Err(VerilogError::export(format!(
                 "内部信号 {} 与端口同名，无法导出",
                 group.base
             )));

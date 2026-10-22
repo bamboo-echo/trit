@@ -40,7 +40,9 @@ impl RhsParser {
     fn enter(&mut self) -> Result<(), VerilogError> {
         self.depth += 1;
         if self.depth > MAX_RHS_DEPTH {
-            return Err(message(format!("assign 表达式嵌套超过 {MAX_RHS_DEPTH} 层")));
+            return Err(VerilogError::limit(format!(
+                "assign 表达式嵌套超过 {MAX_RHS_DEPTH} 层"
+            )));
         }
         Ok(())
     }
@@ -162,7 +164,7 @@ impl RhsParser {
                         Some(',') => continue,
                         Some('}') => break,
                         _ => {
-                            return Err(message(
+                            return Err(VerilogError::unsupported(
                                 "拼接缺少 '}'（只支持 {a, b, ...}，不支持复制语法）",
                             ));
                         }
@@ -237,7 +239,7 @@ fn parse_literal(text: &str) -> Result<VExpr, VerilogError> {
         "1" | "1'b1" => Ternary::True,
         "x" | "z" | "1'bx" | "1'bz" => Ternary::Unknown,
         _ => {
-            return Err(message(format!(
+            return Err(VerilogError::unsupported(format!(
                 "暂不支持常量 {text:?}（只接受 0/1/X/Z 或 1'b0/1'b1/1'bX/1'bZ）"
             )));
         }

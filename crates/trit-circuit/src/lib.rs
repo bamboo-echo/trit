@@ -30,4 +30,4 @@ pub use timing::{
     OutputTiming, TimingModel, TimingModelError, TimingPath, TimingReport, analyze_timing,
     critical_paths,
 };
-pub use verilog::{VerilogError, parse_verilog, to_verilog};
+pub use verilog::{VerilogError, VerilogErrorKind, parse_verilog, to_verilog};
