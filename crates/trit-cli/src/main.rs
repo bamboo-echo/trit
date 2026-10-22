@@ -5,6 +5,7 @@
 //! - `eval`：在给定赋值下求值
 //! - `table`：生成完整真值表
 //! - `equiv`：判定两个表达式是否逻辑等价
+//! - `quantify`：对三值变量做存在/全称量化
 //! - `simplify`：化简表达式
 //! - `circuit`：分析三值门级网表
 //! - `repl`：交互式会话
@@ -16,7 +17,7 @@ use std::io::{BufRead, Write};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use trit_bdd::equivalent_bdd;
+use trit_bdd::{Quantifier, equivalent_bdd, quantify_bdd};
 use trit_circuit::circuit::{Circuit, Gate, GateKind, Signal};
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
@@ -105,6 +106,26 @@ enum Commands {
         #[arg(long)]
         minimize: bool,
     },
+    /// 对三值变量做存在/全称量化（BDD）。
+    Quantify {
+        /// 待量化的表达式，例如 `a & b`。
+        expression: String,
+        /// 要量化的变量（逗号分隔）；省略则量化全部变量。
+        #[arg(long, value_name = "VARS")]
+        vars: Option<String>,
+        /// 量化方向：`exists`（默认）或 `forall`。
+        #[arg(long, default_value = "exists", value_name = "KIND")]
+        kind: String,
+        /// 把列出的变量当作已知二值（逗号分隔），其量化域为 {0,1}。
+        #[arg(long, value_name = "VARS")]
+        binary: Option<String>,
+        /// 把所有变量当作已知二值。
+        #[arg(long)]
+        binary_all: bool,
+        /// JSON 输出。
+        #[arg(long)]
+        json: bool,
+    },
     /// 化简表达式。
     Simplify {
         /// 待化简的表达式。
@@ -172,6 +193,24 @@ fn main() -> Result<()> {
                 binary_all,
                 stats,
                 minimize,
+            },
+        ),
+        Commands::Quantify {
+            expression,
+            vars,
+            kind,
+            binary,
+            binary_all,
+            json,
+        } => cmd_quantify(
+            &expression,
+            &cli.algebra,
+            QuantifyOptions {
+                vars,
+                kind: &kind,
+                binary,
+                binary_all,
+                json,
             },
         ),
         Commands::Simplify {
@@ -462,6 +501,158 @@ fn cmd_equiv(
     } else {
         std::process::exit(2)
     }
+}
+
+/// 解析逗号分隔的变量名，并校验它们都出现在表达式里。
+fn parse_var_list(src: &str, all: &[String], flag: &str) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    for name in src.split(',') {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if !all.iter().any(|v| v == name) {
+            bail!("{flag} 变量 {name} 不在表达式里");
+        }
+        if !names.iter().any(|v| v == name) {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+fn assignment_text(asg: &Assignment) -> String {
+    if asg.is_empty() {
+        return "（空）".to_string();
+    }
+    asg.variables()
+        .iter()
+        .map(|name| {
+            format!(
+                "{name}={}",
+                asg.get(name).unwrap_or(Ternary::Unknown).as_char()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn assignment_json(asg: &Assignment) -> serde_json::Value {
+    let mut pairs = serde_json::Map::new();
+    for name in asg.variables() {
+        pairs.insert(
+            name.clone(),
+            serde_json::Value::String(
+                asg.get(&name)
+                    .unwrap_or(Ternary::Unknown)
+                    .as_char()
+                    .to_string(),
+            ),
+        );
+    }
+    serde_json::Value::Object(pairs)
+}
+
+/// `quantify` 子命令。
+struct QuantifyOptions<'a> {
+    vars: Option<String>,
+    kind: &'a str,
+    binary: Option<String>,
+    binary_all: bool,
+    json: bool,
+}
+
+fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> Result<()> {
+    let QuantifyOptions {
+        vars,
+        kind,
+        binary: binary_list,
+        binary_all,
+        json,
+    } = opts;
+    let Some(kind) = Quantifier::parse(kind) else {
+        bail!("未知量化方向 {kind:?}，可选 exists / forall");
+    };
+    let alg = resolve_algebra(alg_name)?;
+    let expr = parse_expr(expression)?;
+    let all = expr.variables();
+    let quantified = match &vars {
+        Some(list) => {
+            let names = parse_var_list(list, &all, "--vars")?;
+            if names.is_empty() {
+                bail!("--vars 不能为空；省略该参数表示量化全部变量");
+            }
+            names
+        }
+        None => all.clone(),
+    };
+    let mut binary = HashSet::new();
+    if binary_all {
+        binary.extend(all.iter().cloned());
+    }
+    if let Some(list) = binary_list {
+        binary.extend(parse_var_list(&list, &all, "--binary")?);
+    }
+    let result = quantify_bdd(&expr, &quantified, kind, alg, &binary)?;
+    let holds = match kind {
+        Quantifier::Exists => result.is_satisfiable(),
+        Quantifier::Forall => result.is_valid(),
+    };
+    let witness = (kind == Quantifier::Exists && result.is_satisfiable())
+        .then(|| result.witness())
+        .flatten();
+    let counterexample = (kind == Quantifier::Forall && !result.is_valid())
+        .then(|| result.counterexample())
+        .flatten();
+    if json {
+        let mut obj = serde_json::json!({
+            "algebra": alg.as_str(),
+            "method": "bdd-quantify",
+            "quantifier": kind.as_str(),
+            "quantified": quantified,
+            "free": result.free_variables(),
+            "satisfiable": result.is_satisfiable(),
+            "valid": result.is_valid(),
+            "nodes": result.nodes(),
+        });
+        if let Some(asg) = &witness {
+            obj["witness"] = assignment_json(asg);
+        }
+        if let Some(asg) = &counterexample {
+            obj["counterexample"] = assignment_json(asg);
+        }
+        println!("{}", serde_json::to_string_pretty(&obj)?);
+    } else {
+        let symbol = match kind {
+            Quantifier::Exists => "∃",
+            Quantifier::Forall => "∀",
+        };
+        let head = format!(
+            "{symbol}{{{}}}. {expression}  [{alg} / bdd-quantify]",
+            quantified.join(", ")
+        );
+        match kind {
+            Quantifier::Exists => {
+                if let Some(asg) = &witness {
+                    println!("可满足：{head}");
+                    println!("见证：{}", assignment_text(asg));
+                } else {
+                    println!("不可满足：{head}");
+                }
+            }
+            Quantifier::Forall => {
+                if holds {
+                    println!("恒真：{head}");
+                } else {
+                    println!("不恒真：{head}");
+                    if let Some(asg) = &counterexample {
+                        println!("反例：{}", assignment_text(asg));
+                    }
+                }
+            }
+        }
+    }
+    if holds { Ok(()) } else { std::process::exit(2) }
 }
 
 /// `verify` 子命令。

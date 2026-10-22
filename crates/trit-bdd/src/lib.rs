@@ -30,6 +30,9 @@ pub enum BddError {
     /// BDD 说可满足但取不到赋值（不应发生）。
     #[error("BDD 缺少反例赋值")]
     MissingWitness,
+    /// 被量化的变量不在表达式里。
+    #[error("表达式里没有变量 {0}")]
+    UnknownVariable(String),
 }
 
 /// BDD 判定结果，附带差集 BDD 的节点数。
@@ -311,4 +314,153 @@ pub fn satisfiable_bdd(
         &vars,
         valuation.as_vector(),
     )))
+}
+
+/// 量化方向。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quantifier {
+    /// 存在量化：存在一组 trit 取值使表达式为真。
+    Exists,
+    /// 全称量化：对所有合法 trit 取值表达式都为真。
+    Forall,
+}
+
+impl Quantifier {
+    /// 解析 `exists` / `forall`。
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "exists" | "exist" | "some" => Some(Self::Exists),
+            "forall" | "all" => Some(Self::Forall),
+            _ => None,
+        }
+    }
+
+    /// 稳定名称。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Exists => "exists",
+            Self::Forall => "forall",
+        }
+    }
+}
+
+/// 量化后的 BDD 与自由变量。
+#[derive(Debug)]
+pub struct Quantified {
+    bdd: Bdd,
+    valid_free: Bdd,
+    free: Vec<String>,
+    varids: HashMap<String, (BddVariable, Option<BddVariable>)>,
+}
+
+impl Quantified {
+    /// 结果是否可满足。
+    pub fn is_satisfiable(&self) -> bool {
+        !self.bdd.is_false()
+    }
+
+    /// 结果是否恒真（对自由变量的所有合法取值）。
+    pub fn is_valid(&self) -> bool {
+        self.bdd.is_true()
+    }
+
+    /// 未被量化的变量（按首次出现顺序）。
+    pub fn free_variables(&self) -> &[String] {
+        &self.free
+    }
+
+    /// 量化后 BDD 的节点数。
+    pub fn nodes(&self) -> usize {
+        self.bdd.size()
+    }
+
+    /// 可满足时给一个自由变量的见证。
+    pub fn witness(&self) -> Option<Assignment> {
+        let valuation = self.bdd.sat_valuations().next()?;
+        Some(self.decode(valuation.as_vector()))
+    }
+
+    /// 不全真时给一个自由变量的反例。
+    pub fn counterexample(&self) -> Option<Assignment> {
+        let negated = self.bdd.not().and(&self.valid_free);
+        let valuation = negated.sat_valuations().next()?;
+        Some(self.decode(valuation.as_vector()))
+    }
+
+    fn decode(&self, bits: &[bool]) -> Assignment {
+        let mut assignment = Assignment::new();
+        for name in &self.free {
+            let (t_var, x_var) = self.varids[name];
+            let t = bits[t_var.to_index()];
+            let x = x_var.is_some_and(|v| bits[v.to_index()]);
+            let value = if t {
+                Ternary::True
+            } else if x {
+                Ternary::Unknown
+            } else {
+                Ternary::False
+            };
+            assignment.set(name.clone(), value);
+        }
+        assignment
+    }
+}
+
+/// 对表达式做三值量化。
+///
+/// 量化的对象是 **trit**（三值变量），不是单根布尔导轨：
+/// 三值变量只在 `{0,1,X}` 三个合法取值上量化；二值变量只在 `{0,1}` 上量化。
+/// “真”指表达式**确定为 True**（不是 X）。自由变量仍要求合法（三值变量的两根导轨不同时为 1）。
+pub fn quantify_bdd(
+    expr: &Expr,
+    quantified: &[String],
+    kind: Quantifier,
+    alg: Algebra,
+    binary_vars: &HashSet<String>,
+) -> Result<Quantified, BddError> {
+    let all = expr.variables();
+    for name in quantified {
+        if !all.iter().any(|v| v == name) {
+            return Err(BddError::UnknownVariable(name.clone()));
+        }
+    }
+    let free: Vec<String> = all
+        .iter()
+        .filter(|v| !quantified.iter().any(|q| q == *v))
+        .cloned()
+        .collect();
+    let enc = Encoder::new(alg, &all, binary_vars)?;
+    let node = enc.encode(expr);
+    let pred = node.t.and(&node.x.not());
+
+    let mut q_rails = Vec::new();
+    let mut valid_q = enc.true_bdd.clone();
+    for name in quantified {
+        let (t_var, x_var) = enc.varids[name];
+        q_rails.push(t_var);
+        if let Some(x_var) = x_var {
+            q_rails.push(x_var);
+            let n = &enc.vars[name];
+            valid_q = valid_q.and(&n.t.not().or(&n.x.not()));
+        }
+    }
+    let mut valid_free = enc.true_bdd.clone();
+    for name in &free {
+        let n = &enc.vars[name];
+        if !n.binary {
+            valid_free = valid_free.and(&n.t.not().or(&n.x.not()));
+        }
+    }
+
+    let quantified_bdd = match kind {
+        Quantifier::Exists => valid_q.and(&pred).exists(&q_rails),
+        // ∀ valid_q ⇒ pred  ==  ¬∃ valid_q ∧ ¬pred
+        Quantifier::Forall => valid_q.and(&pred.not()).exists(&q_rails).not(),
+    };
+    Ok(Quantified {
+        bdd: quantified_bdd.and(&valid_free),
+        valid_free,
+        free,
+        varids: enc.varids,
+    })
 }
