@@ -1,6 +1,8 @@
 # trit
 
 [![CI](https://github.com/bfxh/trit/actions/workflows/ci.yml/badge.svg)](https://github.com/bfxh/trit/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/sansheng.svg)](https://crates.io/crates/sansheng)
+[![docs.rs](https://docs.rs/sansheng/badge.svg)](https://docs.rs/sansheng)
 
 Rust 原生的三值推理工具箱：Kleene K3 / Łukasiewicz Ł3 / Bochvar B3 语义、真值表、穷举参考、
 dual-rail + SAT 等价判定、组合网表 X 传播；二进制与三值的边界是**零拷贝视图**。
