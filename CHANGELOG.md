@@ -1,6 +1,9 @@
 # Changelog
 
-## [未发布]
+## [0.8.0] - 2026-10-22
+
+芯片侧能力的一批新入口：结构化 Verilog、STA-lite、技术映射（NAND-only 与时序驱动）、
+设计检查流水线、X-aware ATPG；三值语义不变。
 
 ### Added
 
