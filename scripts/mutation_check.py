@@ -160,6 +160,14 @@ MUTANTS = [
         "filter": "satisfiable_requires_a_legal_valuation",
     },
     {
+        "name": "atpg: X 合并忽略唯一覆盖（保留全部故障）",
+        "file": "crates/trit-circuit/src/atpg.rs",
+        "old": "                        need.retain(|fault| !detected.contains(fault));",
+        "new": "                        need.retain(|_fault| true);",
+        "pkg": "trit-circuit",
+        "filter": "compaction_merges_witness_patterns",
+    },
+    {
         "name": "map: 直接单元到达时间漏加延迟",
         "file": "crates/trit-circuit/src/map.rs",
         "old": "                arrival: start.saturating_add(delay),",

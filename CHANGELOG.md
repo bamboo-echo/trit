@@ -1,5 +1,14 @@
 # Changelog
 
+## [未发布]
+
+### Added
+
+- ATPG X 合并压缩：两个向量若存在一种填充能覆盖“删掉它们后会失去”的唯一故障，就合成一个；
+  `inputs` 仍给出具体 0/1 填充，CSV 导出即用该填充。
+- `AtpgReport::x_coverage`（含 X 向量覆盖的可测故障比例）与 `merged`（压缩省下的向量数）；
+  表格、JSON、WASM 同步输出。
+
 ## [0.8.0] - 2026-10-22
 
 芯片侧能力的一批新入口：结构化 Verilog、STA-lite、技术映射（NAND-only 与时序驱动）、

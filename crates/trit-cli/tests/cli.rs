@@ -506,6 +506,37 @@ fn timing_reports_critical_path_and_slack() {
 }
 
 #[test]
+fn atpg_json_exposes_x_compaction() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/and2.net");
+    let (stdout, stderr, code) = run(&["atpg", path.to_str().unwrap(), "--format", "json"]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    assert!(stdout.contains("\"x_coverage\""), "{stdout}");
+    assert!(stdout.contains("\"merged\""), "{stdout}");
+    assert!(stdout.contains("\"dont_care_bits\""), "{stdout}");
+}
+
+#[test]
+fn atpg_compacts_x_patterns_and_exports_binary() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/buf3_wide.net");
+    let path = path.to_str().unwrap();
+
+    let (stdout, stderr, code) = run(&["atpg", path]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    assert!(stdout.contains("测试向量 2 个"), "{stdout}");
+    assert!(stdout.contains("压缩省 2 个向量"), "{stdout}");
+    assert!(stdout.contains("X 覆盖率 100.0%"), "{stdout}");
+
+    let (stdout, stderr, code) = run(&["atpg", path, "--format", "csv"]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    for line in stdout.lines().skip(1) {
+        for cell in line.split(',').skip(1).take(9) {
+            assert!(cell == "0" || cell == "1", "CSV 必须是具体 0/1：{cell}");
+        }
+    }
+}
+
+#[test]
 fn atpg_accepts_verilog() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/and2.v");
     let (stdout, stderr, code) = run(&["atpg", path.to_str().unwrap(), "--from", "verilog"]);

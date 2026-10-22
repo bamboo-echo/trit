@@ -1,0 +1,15 @@
+input a
+input b
+input c
+input spare0
+input spare1
+input spare2
+input spare3
+input spare4
+input spare5
+buf a out_a
+buf b out_b
+buf c out_c
+output out_a
+output out_b
+output out_c
