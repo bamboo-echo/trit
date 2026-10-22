@@ -11,6 +11,8 @@
 //! - `belnap`：Belnap 四值（`T`/`F`/`B`/`N`）的 opt-in 求值、真值表与等价
 //! - `repl`：交互式会话
 
+#![forbid(unsafe_code)]
+
 mod commands;
 mod output;
 

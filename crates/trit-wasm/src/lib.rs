@@ -3,6 +3,8 @@
 //! 所有函数只做三件事：解析、求值、把结果编成 JSON 字符串。错误用 `JsValue` 抛出，
 //! 页面上直接显示消息。
 
+#![forbid(unsafe_code)]
+
 use serde_json::{Map, Value, json};
 use wasm_bindgen::prelude::*;
 

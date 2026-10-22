@@ -1,5 +1,7 @@
 //! 三值组合网表的 X 传播与 stuck-at 可测性分析。
 
+#![forbid(unsafe_code)]
+
 pub mod aiger;
 pub mod atpg;
 pub mod blif;

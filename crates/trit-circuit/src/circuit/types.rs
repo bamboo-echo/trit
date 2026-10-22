@@ -252,6 +252,11 @@ impl Circuit {
         self
     }
 
+    /// 校验结构不变量：信号名非空、门元数与常量取值合法、无重复驱动/输出、无组合环。
+    pub fn validate(&self) -> Result<(), CircuitError> {
+        super::validate(self)
+    }
+
     /// 主输入个数。
     pub fn input_count(&self) -> usize {
         self.inputs.len()
@@ -335,6 +340,18 @@ pub enum CircuitError {
         /// 实际输入数。
         actual: usize,
     },
+    /// 常量门缺少 `const_value`。
+    #[error("常量门 {0} 缺少 const_value")]
+    ConstValueMissing(String),
+    /// 非常量门带有 `const_value`。
+    #[error("非常量门 {0} 不应设置 const_value")]
+    ConstValueUnexpected(String),
+    /// 信号名为空。
+    #[error("信号名不能为空")]
+    EmptySignalName,
+    /// 同一个信号被声明了多次主输出。
+    #[error("信号 {0} 被重复声明为主输出")]
+    DuplicateOutput(String),
     /// 信号既未声明为输入，也没有驱动它的门。
     #[error("信号 {0} 未被任何门驱动，也不是主输入")]
     UndrivenSignal(String),

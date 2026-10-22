@@ -1,5 +1,7 @@
 //! 三值等价的 dual-rail + SAT 符号化判定。
 
+#![forbid(unsafe_code)]
+
 pub mod symbolic;
 
 pub use symbolic::{

@@ -14,6 +14,8 @@
 //!
 //! 注意 `⊕` 在 FOUR 里没有公认定义：这里取 `¬(a ⇔ b)`，`B ⊕ B = B`，不要按经典异或理解。
 
+#![forbid(unsafe_code)]
+
 use std::collections::BTreeMap;
 
 use trit_core::ast::Expr;

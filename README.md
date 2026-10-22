@@ -104,8 +104,8 @@ cargo run --release -p trit-cli -- verify examples/policy.json
   `Limit`／`BudgetExceeded` 错误；策略展开在分配大子树之前扣节点预算。
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-`python scripts/mutation_check.py` 对 53 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 53/53）；`.github/workflows/mutation.yml` 每周跑一次。
+`python scripts/mutation_check.py` 对 56 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 56/56）；`.github/workflows/mutation.yml` 每周跑一次。
 
 ## fuzz 与基准
 
@@ -438,10 +438,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-CI 另有三道门：`docs`（rustdoc `-D warnings`）、`action`（用 `examples/policy.json` 跑复合 Action 自测）、
-`MSRV`（1.88，`--locked`）；Release 先过 `guard`：tag 去掉 `v` 后必须等于 `trit-cli` 的版本。
+CI 另有五道门：`docs`（rustdoc `-D warnings`）、`action`（用 `examples/policy.json` 跑复合 Action 自测）、
+`MSRV`（1.88，`--locked`）、`wasm`（wasm32 构建）与 `package`（每个 crate 可打包）；
+Release 先过 `guard`：tag 去掉 `v` 后必须等于 `trit-cli` 的版本。
 
-`main` 受保护：只接受 PR + 4 个必需 check（三平台 + MSRV 1.88），线性历史。
+`main` 受保护：只接受 PR + 8 个必需 check（三平台 + MSRV 1.88 + docs + action + wasm + package），线性历史。
 治理模型为 **BDFL**：架构变更、发布与关键路径审查由维护者最终拍板，详见 [GOVERNANCE.md](GOVERNANCE.md)
 与 `.github/CODEOWNERS`。
 

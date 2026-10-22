@@ -1,5 +1,18 @@
 # Changelog
 
+## [未发布]
+
+### Changed（0.8.2 硬化）
+
+- **Circuit 结构不变量**：`validate` 拒绝常量门缺 `const_value`、非常量门带 `const_value`、
+  空信号名与重复主输出；`Circuit::validate` 公开。`CircuitError` 新增四个变体
+  （`ConstValueMissing` / `ConstValueUnexpected` / `EmptySignalName` / `DuplicateOutput`）。
+- **`trit-bdd` 去上帝模块**：`lib.rs` 1059 行拆成 `encode` / `order` / `equiv` / `quantify`；
+  公开路径不变。
+- 所有 crate 启用 `#![forbid(unsafe_code)]`（当前全仓无 `unsafe`）。
+- CI 新增 `cargo package --workspace --no-verify --locked` 可发布性门。
+- 变异门 53 → 56（新增 Const 取值/空信号名规则）。
+
 ## [0.8.1] - 2026-10-23
 
 评审修复收尾 + 三项芯片侧能力 + 按模块拆分上帝文件；三值语义不变。
