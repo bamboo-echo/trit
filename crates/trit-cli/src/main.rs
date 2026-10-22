@@ -979,6 +979,31 @@ fn parse_netlist(text: &str) -> Result<Circuit> {
                     Signal::new(parts[2]),
                 ));
             }
+            "buf" => {
+                if parts.len() != 3 {
+                    bail!("{ctx}: buf 语法为 `buf <输入> <输出>`");
+                }
+                circuit.add_gate(Gate::new(
+                    GateKind::Buf,
+                    vec![Signal::new(parts[1])],
+                    Signal::new(parts[2]),
+                ));
+            }
+            "const" => {
+                if parts.len() != 3 {
+                    bail!("{ctx}: const 语法为 `const <0|1|X> <输出>`");
+                }
+                let mut chars = parts[1].chars();
+                let ch = chars
+                    .next()
+                    .with_context(|| format!("{ctx}: const 缺取值"))?;
+                if chars.next().is_some() {
+                    bail!("{ctx}: const 的取值只能是单个字符 0/1/X");
+                }
+                let value = Ternary::parse_char(ch)
+                    .with_context(|| format!("{ctx}: const 取值 {ch:?} 不是 0/1/X"))?;
+                circuit.add_gate(Gate::constant(value, Signal::new(parts[2])));
+            }
             other => bail!("{ctx}: 未知指令 {other:?}"),
         }
     }

@@ -160,6 +160,10 @@ $ trit quantify "a | !a" --vars a --kind forall --binary a
 输出每根信号取值、主输出上 `X` 的来源主输入，以及被遮蔽的门（`X & 0 = 0`、`X | 1 = 1`；
 Ł3 的 `X ⊕ X = 1` 也算“确定”）。`--assign` 必须给全所有主输入，缺一个直接报错。
 
+网表指令：`input` / `output` / `gate <AND|OR|XOR|NAND|NOR> <a> <b> <out>` / `not <a> <out>` /
+`buf <a> <out>` / `const <0|1|X> <out>`。`examples/x_mask.net` 是 `X & 0`、`X | 1` 遮蔽的最小例子。
+同一信号被多个源驱动、或主输入重复声明，都会在分析前报错。
+
 ## 构建期验证（`trit verify`）
 
 把决策表写成 JSON，断言必须在**所有合法赋值**上恒真；失败时给出充分最小反例，退出码 1。

@@ -240,6 +240,17 @@ fn circuit_assign_requires_all_inputs() {
 }
 
 #[test]
+fn circuit_const_masks_x() {
+    let netlist =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/x_mask.net");
+    let (stdout, _, code) = run(&["circuit", netlist.to_str().unwrap(), "--assign", "a=X"]);
+    assert_eq!(code, 0, "stdout was:\n{stdout}");
+    assert!(stdout.contains("y_and = 0"), "stdout was:\n{stdout}");
+    assert!(stdout.contains("y_or = 1"), "stdout was:\n{stdout}");
+    assert!(stdout.contains("被遮蔽"), "stdout was:\n{stdout}");
+}
+
+#[test]
 fn unknown_algebra_is_rejected() {
     let (_, stderr, code) = run(&["-a", "nonsense", "table", "a"]);
     assert_ne!(code, 0);

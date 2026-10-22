@@ -1,0 +1,10 @@
+# X 遮蔽的最小例子：a 未知时，a & 0 仍确定为 0，a | 1 仍确定为 1。
+# 语法：const <0|1|X> <输出>
+input  a
+const  0 zero
+const  1 one
+output y_and
+output y_or
+
+gate AND a zero y_and
+gate OR  a one  y_or
