@@ -43,3 +43,10 @@ path = "fuzz_targets/blif.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "aiger"
+path = "fuzz_targets/aiger.rs"
+test = false
+doc = false
+bench = false

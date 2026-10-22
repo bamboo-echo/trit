@@ -162,7 +162,7 @@ enum Commands {
         /// 单向量传播：`a=1,b=X`（给全所有主输入）。
         #[arg(long, value_name = "ASSIGN")]
         assign: Option<String>,
-        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif`。
+        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif` / `aiger`。
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         from: String,
         /// 输出格式。
@@ -173,7 +173,7 @@ enum Commands {
     Atpg {
         /// 网表文件路径。
         path: std::path::PathBuf,
-        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif`。
+        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif` / `aiger`。
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         from: String,
         /// 输出格式。
@@ -184,7 +184,7 @@ enum Commands {
     Timing {
         /// 网表文件路径。
         path: std::path::PathBuf,
-        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif`。
+        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif` / `aiger`。
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         from: String,
         /// 时钟周期（周期数）；省略时取关键路径，即 slack 全为 0。
@@ -210,10 +210,10 @@ enum Commands {
     Map {
         /// 网表文件路径。
         path: std::path::PathBuf,
-        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif`。
+        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif` / `aiger`。
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         from: String,
-        /// 输出格式：`text`（默认）/ `json` / `verilog` / `blif`。
+        /// 输出格式：`text`（默认）/ `json` / `verilog` / `blif` / `aiger`。
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         to: String,
         /// 单元库 JSON（如 `{"AND":1,"NAND":2}`）；给出时按延迟选实现。
@@ -230,7 +230,7 @@ enum Commands {
     Check {
         /// 网表文件路径。
         path: std::path::PathBuf,
-        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif`。
+        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif` / `aiger`。
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         from: String,
         /// 时钟周期；省略时取关键路径。
@@ -256,7 +256,7 @@ enum Commands {
     Netlist {
         /// 输入文件。
         path: std::path::PathBuf,
-        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif`。
+        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif` / `aiger`。
         #[arg(long, default_value = "text")]
         from: String,
         /// 输出格式：`json`（默认）/ `text` / `verilog`。
@@ -1331,7 +1331,7 @@ fn cmd_map(
         "text" => print!("{}", trit_circuit::netlist::to_netlist(&mapped)),
         "json" => println!("{}", trit_circuit::netlist::to_json(&mapped)?),
         "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&mapped)),
-        other => bail!("未知输出格式 {other:?}，可选 text / json / verilog / blif"),
+        other => bail!("未知输出格式 {other:?}，可选 text / json / verilog / blif / aiger"),
     }
     Ok(())
 }
@@ -1540,7 +1540,9 @@ fn load_circuit(path: &std::path::Path, from: &str) -> Result<Circuit> {
             .with_context(|| format!("Verilog 解析失败：{}", path.display())),
         "blif" => trit_circuit::parse_blif(&text)
             .with_context(|| format!("BLIF 解析失败：{}", path.display())),
-        other => bail!("未知输入格式 {other:?}，可选 text / json / verilog / blif"),
+        "aiger" => trit_circuit::parse_aiger(&text)
+            .with_context(|| format!("AIGER 解析失败：{}", path.display())),
+        other => bail!("未知输入格式 {other:?}，可选 text / json / verilog / blif / aiger"),
     }
 }
 
@@ -1552,6 +1554,7 @@ fn cmd_netlist(path: &std::path::Path, from: &str, to: &str) -> Result<()> {
         "json" => println!("{}", trit_circuit::netlist::to_json(&circuit)?),
         "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&circuit)),
         "blif" => print!("{}", trit_circuit::to_blif(&circuit)?),
+        "aiger" => print!("{}", trit_circuit::to_aiger(&circuit)?),
         other => bail!("未知输出格式 {other:?}，可选 json / text / verilog"),
     }
     Ok(())
