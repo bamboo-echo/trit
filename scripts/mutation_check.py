@@ -161,7 +161,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 多输入 NAND/NOR 忘记最终反相",
-        "file": "crates/trit-circuit/src/verilog.rs",
+        "file": "crates\\trit-circuit\\src\\verilog\\parse.rs",
         "old": "                        if invert {",
         "new": "                        if false {",
         "pkg": "trit-circuit",
@@ -201,7 +201,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: assign 的 ^ 退化成强加三值 Xor",
-        "file": "crates/trit-circuit/src/verilog.rs",
+        "file": "crates\\trit-circuit\\src\\verilog\\parse.rs",
         "old": "                    VExpr::Or(..) => GateKind::Or,\n                    _ => GateKind::XorClassic,",
         "new": "                    VExpr::Or(..) => GateKind::Or,\n                    _ => GateKind::Xor,",
         "pkg": "trit-circuit",
@@ -401,7 +401,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 向量位选择恒取 bit 0",
-        "file": "crates/trit-circuit/src/verilog.rs",
+        "file": "crates\\trit-circuit\\src\\verilog\\expr.rs",
         "old": "                Ok(VExpr::Var(format!(\"{name}[{index}]\")))\n",
         "new": "                Ok(VExpr::Var(format!(\"{name}[0]\")))\n",
         "pkg": "trit-circuit",
@@ -409,7 +409,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 拼接按 MSB-first 误解",
-        "file": "crates/trit-circuit/src/verilog.rs",
+        "file": "crates\\trit-circuit\\src\\verilog\\expr.rs",
         "old": "            for item in items.iter().rev() {\n",
         "new": "            for item in items.iter() {\n",
         "pkg": "trit-circuit",
@@ -417,7 +417,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 向量端口只展开 bit 0",
-        "file": "crates/trit-circuit/src/verilog.rs",
+        "file": "crates\\trit-circuit\\src\\verilog\\parse.rs",
         "old": "                widths.insert(name.clone(), msb + 1);\n                for index in (0..=msb).rev() {\n",
         "new": "                widths.insert(name.clone(), msb + 1);\n                for index in [0] {\n",
         "pkg": "trit-circuit",
@@ -425,7 +425,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 导出不分组向量端口",
-        "file": "crates/trit-circuit/src/verilog.rs",
+        "file": "crates\\trit-circuit\\src\\verilog\\export.rs",
         "old": "            vector: acc.has_bits,\n",
         "new": "            vector: false,\n",
         "pkg": "trit-circuit",
@@ -433,7 +433,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 右值深度预算失效",
-        "file": "crates/trit-circuit/src/verilog.rs",
+        "file": "crates\\trit-circuit\\src\\verilog\\expr.rs",
         "old": "        if self.depth > MAX_RHS_DEPTH {\n",
         "new": "        if false {\n",
         "pkg": "trit-circuit",
