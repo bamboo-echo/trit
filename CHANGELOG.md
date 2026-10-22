@@ -8,6 +8,12 @@
   `inputs` 仍给出具体 0/1 填充，CSV 导出即用该填充。
 - `AtpgReport::x_coverage`（含 X 向量覆盖的可测故障比例）与 `merged`（压缩省下的向量数）；
   表格、JSON、WASM 同步输出。
+- Verilog `assign` 支持 `^` / `~^` / `^~`、括号与常量字面量，按 Verilog 优先级解析；
+  `^` 映射为经典异或（`XorClassic`），不是强加三值 `Xor`。
+- 负载感知时序：`TimingModel.load_delay`（每个扇出追加延迟）进入 `analyze_timing` / `critical_paths`；
+  `to_cells_with_load` 在选实现时按扇出计负载；CLI `timing` / `check` / `map --load-delay`。
+- fuzz：`fuzz/` 下 cargo-fuzz 目标（netlist / Verilog / ATPG）+ CI 可跑的稳定 smoke；
+  `scripts/bench.sh` 与 `trit-circuit` 的 `core` bench（解析/时序/映射/ATPG）。
 
 ## [0.8.0] - 2026-10-22
 

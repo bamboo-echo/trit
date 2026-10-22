@@ -608,6 +608,58 @@ fn check_passes_with_slack_and_coverage() {
 }
 
 #[test]
+fn timing_uses_load_delay() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fanout3.net");
+    let (stdout, stderr, code) = run(&[
+        "timing",
+        path.to_str().unwrap(),
+        "--load-delay",
+        "2",
+        "--clock",
+        "8",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("负载模型：每扇出 +2 周期"), "{stdout}");
+    assert!(stdout.contains("关键路径 8 周期"), "{stdout}");
+    assert!(stdout.contains("违例 0 个"), "{stdout}");
+}
+
+#[test]
+fn map_load_delay_prefers_direct_cell() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let net = dir.join("and2.net");
+    let cells = dir.join("cells_and3.json");
+    let net = net.to_str().unwrap();
+    let cells = cells.to_str().unwrap();
+
+    let (stdout, stderr, code) = run(&["map", net, "--cells", cells]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert_eq!(stdout.matches("gate NAND").count(), 2, "{stdout}");
+
+    let (stdout, stderr, code) = run(&["map", net, "--cells", cells, "--load-delay", "2"]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("gate AND"), "{stdout}");
+    assert!(!stdout.contains("gate NAND"), "{stdout}");
+}
+
+#[test]
+fn netlist_parses_verilog_assign_xor() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/xor_assign.v");
+    let (stdout, stderr, code) = run(&[
+        "netlist",
+        path.to_str().unwrap(),
+        "--from",
+        "verilog",
+        "--to",
+        "text",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("gate XOR2"), "{stdout}");
+}
+
+#[test]
 fn map_lowers_to_nand_only() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/and2.net");
     let (stdout, stderr, code) = run(&["map", path.to_str().unwrap()]);

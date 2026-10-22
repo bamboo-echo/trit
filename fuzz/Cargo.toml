@@ -1,0 +1,38 @@
+[package]
+name = "trit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.trit-circuit]
+path = ".."
+
+[dependencies.trit-core]
+path = "../crates/trit-core"
+
+[[bin]]
+name = "parse_netlist"
+path = "fuzz_targets/parse_netlist.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_verilog"
+path = "fuzz_targets/parse_verilog.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "atpg"
+path = "fuzz_targets/atpg.rs"
+test = false
+doc = false
+bench = false

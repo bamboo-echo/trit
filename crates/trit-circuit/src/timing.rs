@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::circuit::{Circuit, CircuitError, GateKind, topological_order, validate};
+use crate::circuit::{Circuit, CircuitError, GateKind, fanout_counts, topological_order, validate};
 
 /// 时序模型：每类门一个延迟；未列出的用 `default_delay`（常量门恒为 0）。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -12,6 +12,8 @@ pub struct TimingModel {
     pub default_delay: u32,
     /// 门类型（`AND` / `OR` / ...）到延迟的映射。
     pub delays: BTreeMap<String, u32>,
+    /// 每个扇出（门输入引用）追加的延迟；0 表示不看负载。
+    pub load_delay: u32,
 }
 
 impl Default for TimingModel {
@@ -19,6 +21,7 @@ impl Default for TimingModel {
         Self {
             default_delay: 1,
             delays: BTreeMap::new(),
+            load_delay: 0,
         }
     }
 }
@@ -33,6 +36,12 @@ impl TimingModel {
             .get(kind.as_str())
             .copied()
             .unwrap_or(self.default_delay)
+    }
+
+    /// 某类门在给定扇出下的延迟：单元延迟 + `load_delay × fanout`。
+    pub fn gate_delay(&self, kind: GateKind, fanout: usize) -> u32 {
+        self.delay_for(kind)
+            .saturating_add(self.load_delay.saturating_mul(fanout as u32))
     }
 
     /// 从 JSON 读取（形如 `{"default_delay":1,"delays":{"AND":2}}`）。
@@ -94,6 +103,7 @@ pub fn critical_paths(
     }
     validate(circuit)?;
     let order = topological_order(circuit)?;
+    let fanouts = fanout_counts(circuit);
     let mut best: BTreeMap<String, Vec<(u32, Vec<String>)>> = BTreeMap::new();
     for input in &circuit.inputs {
         best.insert(
@@ -104,7 +114,7 @@ pub fn critical_paths(
     for &index in &order {
         let gate = &circuit.gates[index];
         let output = gate.output.name().to_string();
-        let delay = model.delay_for(gate.kind);
+        let delay = model.gate_delay(gate.kind, fanouts.get(&output).copied().unwrap_or(0));
         let mut candidates: Vec<(u32, Vec<String>)> = Vec::new();
         if gate.kind == GateKind::Const {
             candidates.push((0, vec![output.clone()]));
@@ -151,6 +161,7 @@ pub fn analyze_timing(
 ) -> Result<TimingReport, CircuitError> {
     validate(circuit)?;
     let order = topological_order(circuit)?;
+    let fanouts = fanout_counts(circuit);
     let mut arrival: BTreeMap<String, u32> = circuit
         .inputs
         .iter()
@@ -164,9 +175,10 @@ pub fn analyze_timing(
             .map(|signal| arrival.get(signal.name()).copied().unwrap_or(0))
             .max()
             .unwrap_or(0);
+        let fanout = fanouts.get(gate.output.name()).copied().unwrap_or(0);
         arrival.insert(
             gate.output.name().to_string(),
-            start.saturating_add(model.delay_for(gate.kind)),
+            start.saturating_add(model.gate_delay(gate.kind, fanout)),
         );
     }
     let critical_path = circuit
@@ -184,7 +196,8 @@ pub fn analyze_timing(
     for &index in order.iter().rev() {
         let gate = &circuit.gates[index];
         let output_required = required.get(gate.output.name()).copied().unwrap_or(clock);
-        let input_required = output_required.saturating_sub(model.delay_for(gate.kind));
+        let fanout = fanouts.get(gate.output.name()).copied().unwrap_or(0);
+        let input_required = output_required.saturating_sub(model.gate_delay(gate.kind, fanout));
         for input in &gate.inputs {
             let entry = required
                 .entry(input.name().to_string())
@@ -281,6 +294,40 @@ output y
         let again = TimingModel::from_json(&json).unwrap();
         assert_eq!(again.delay_for(GateKind::And), 2);
         assert_eq!(again.delay_for(GateKind::Xor), 1);
+    }
+
+    #[test]
+    fn load_delay_accumulates_with_fanout() {
+        let circuit = parse_netlist(
+            "input a
+input b
+gate AND a b n
+buf n y1
+buf n y2
+buf n y3
+output y1
+output y2
+output y3
+",
+        )
+        .unwrap();
+        let model = TimingModel {
+            load_delay: 2,
+            ..Default::default()
+        };
+        let report = analyze_timing(&circuit, model.clone(), None).unwrap();
+        // AND: 0 + 1 + 2×3 = 7；BUF: 7 + 1 = 8
+        assert_eq!(report.critical_path, 8);
+        assert_eq!(report.outputs[0].arrival, 8);
+        let no_load = analyze_timing(&circuit, TimingModel::default(), None).unwrap();
+        assert_eq!(no_load.critical_path, 2);
+
+        let tight = analyze_timing(&circuit, model.clone(), Some(7)).unwrap();
+        assert_eq!(tight.violations, 3, "三个输出都差 1 个周期");
+
+        let json = model.to_json().unwrap();
+        let again = TimingModel::from_json(&json).unwrap();
+        assert_eq!(again.load_delay, 2);
     }
 
     #[test]

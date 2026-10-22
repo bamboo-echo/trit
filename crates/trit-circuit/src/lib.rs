@@ -12,7 +12,7 @@ pub use circuit::{
     Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,
     SimulationRow, UntestableReason, analyze, analyze_faults, propagate,
 };
-pub use map::{CellLibrary, MapError, MapStrategy, to_cells, to_nand_only};
+pub use map::{CellLibrary, MapError, MapStrategy, to_cells, to_cells_with_load, to_nand_only};
 pub use netlist::{NetlistError, from_json, parse_netlist, to_json, to_netlist};
 pub use timing::{
     OutputTiming, TimingModel, TimingPath, TimingReport, analyze_timing, critical_paths,
