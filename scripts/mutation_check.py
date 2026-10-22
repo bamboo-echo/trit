@@ -121,7 +121,7 @@ MUTANTS = [
     },
     {
         "name": "atpg: 精确覆盖递归错误清除已覆盖位",
-        "file": "crates/trit-circuit/src/atpg.rs",
+        "file": "crates/trit-circuit/src/coverage.rs",
         "old": "        search_cover(\n            uncovered & !faults,",
         "new": "        search_cover(\n            uncovered & faults,",
         "pkg": "trit-circuit",

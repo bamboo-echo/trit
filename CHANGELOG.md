@@ -4,6 +4,9 @@
 
 ### Changed（评审修复第二批，含 API 变更）
 
+- **设计去重**：ATPG 与桥接故障的精确/贪心集合覆盖抽到私有 `coverage` 模块，
+  `TestPattern` 抽到 `pattern` 模块；`bridge` 不再直接调用 `atpg` 的私有实现，
+  两套覆盖策略不再各写一份。公开 API 路径保持不变（`atpg::TestPattern` / crate 根导出）。
 - 解析器在构造期扣预算：右结合蕴含链改为迭代收集再右折，扁平二元链按实际 AST 深度拒绝；
   新增输入字节上限（1 MiB）与节点预算错误；`Parser::parse_with_limits` 可指定预算。
 - `Evaluator::assignment_count` / `chunk_planes` / `evaluate` 改为可失败（`Result`），
