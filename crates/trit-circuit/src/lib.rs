@@ -5,8 +5,10 @@ pub mod atpg;
 pub mod blif;
 pub mod bridge;
 pub mod circuit;
+mod coverage;
 pub mod map;
 pub mod netlist;
+mod pattern;
 pub mod timing;
 pub mod verilog;
 

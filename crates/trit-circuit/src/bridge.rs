@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use trit_core::algebra::Algebra;
 use trit_core::value::Ternary;
 
-use crate::atpg::TestPattern;
 use crate::circuit::{Circuit, CircuitError, Simulator, validate};
+use crate::pattern::TestPattern;
 
 /// 检查次数上限：`桥接对数 × 2^输入数`。
 const MAX_CHECKS: usize = 1_000_000;
@@ -234,72 +234,17 @@ pub fn generate_bridge_tests(
     let coverage = testable as f64 / bridges.len() as f64;
     let mut optimal = false;
     let mut patterns: Vec<TestPattern> = Vec::new();
-    if exhaustive && !by_mask.is_empty() && bridges.len() <= 64 && by_mask.len() <= 256 {
-        let sets: Vec<(u64, u64)> = by_mask
-            .iter()
-            .map(|(mask, covers)| {
-                let bits = covers
-                    .iter()
-                    .fold(0u64, |acc, &index| acc | (1u64 << index));
-                (*mask, bits)
-            })
-            .collect();
-        let full = sets.iter().fold(0u64, |acc, (_, faults)| acc | faults);
-        let (cover, proven) = crate::atpg::minimum_cover(&sets, full, 100_000);
-        if let Some(masks) = cover {
-            optimal = proven;
-            let mut assigned = vec![false; bridges.len()];
-            for mask in masks {
-                let mut covers = Vec::new();
-                for &index in &by_mask[&mask] {
-                    if !assigned[index] {
-                        assigned[index] = true;
-                        covers.push(index);
-                    }
-                }
-                patterns.push(TestPattern {
-                    inputs: circuit.decode_binary(mask)?,
-                    covers,
-                    dont_care: Vec::new(),
-                });
-            }
-        }
+    if exhaustive
+        && !by_mask.is_empty()
+        && let Some((exact, proven)) =
+            crate::coverage::exact_cover(circuit, &by_mask, bridges.len(), 100_000)?
+    {
+        optimal = proven;
+        patterns = exact;
     }
     if !optimal {
-        let mut uncovered: Vec<bool> = bridges.iter().map(|bridge| bridge.testable).collect();
-        loop {
-            let mut best: Option<(u64, usize)> = None;
-            for (&mask, covers) in &by_mask {
-                let gain = covers.iter().filter(|&&index| uncovered[index]).count();
-                if gain == 0 {
-                    continue;
-                }
-                let better = match best {
-                    None => true,
-                    Some((best_mask, best_gain)) => {
-                        gain > best_gain || (gain == best_gain && mask < best_mask)
-                    }
-                };
-                if better {
-                    best = Some((mask, gain));
-                }
-            }
-            let Some((mask, _)) = best else {
-                break;
-            };
-            let mut covers = Vec::new();
-            for &index in &by_mask[&mask] {
-                if uncovered[index] {
-                    uncovered[index] = false;
-                    covers.push(index);
-                }
-            }
-            patterns.push(TestPattern {
-                inputs: circuit.decode_binary(mask)?,
-                covers,
-                dont_care: Vec::new(),
-            });
-        }
+        let covered: Vec<bool> = bridges.iter().map(|bridge| bridge.testable).collect();
+        patterns = crate::coverage::greedy_cover(circuit, &by_mask, &covered)?;
     }
 
     Ok(BridgeReport {
