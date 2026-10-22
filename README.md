@@ -27,7 +27,7 @@ GitHub Releases（`v0.3.1` 起）提供：
 | `trit-core` | `Ternary`、K3/Ł3/B3、AST、解析器、位并行 `TriBit`、位切片 `TriVec` |
 | `trit-eval` | 求值、真值表、穷举等价、化简 |
 | `trit-sat` | dual-rail + SAT 等价判定与反例 |
-| `trit-circuit` | 组合网表 X 传播、stuck-at 可测性、ATPG、STA-lite、技术映射、结构化 Verilog |
+| `trit-circuit` | 组合网表 X 传播、stuck-at/桥接可测性、ATPG、STA-lite、技术映射、结构化 Verilog |
 | `trit-belnap` | Belnap 四值（T/F/B/N）的 opt-in 语义 |
 | `trit-wasm` | WASM 绑定：给 `playground/` 的求值、真值表、等价 |
 | `trit-bdd` | BDD（canonical）等价判定、三值量化 |
@@ -104,8 +104,8 @@ cargo run --release -p trit-cli -- verify examples/policy.json
   `Limit`／`BudgetExceeded` 错误；策略展开在分配大子树之前扣节点预算。
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-`python scripts/mutation_check.py` 对 44 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 44/44）；`.github/workflows/mutation.yml` 每周跑一次。
+`python scripts/mutation_check.py` 对 48 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 48/48）；`.github/workflows/mutation.yml` 每周跑一次。
 
 ## fuzz 与基准
 
@@ -328,6 +328,29 @@ python -m http.server 8765 --directory playground
 `--format csv` 导出 `pattern,<输入…>,covered`，便于喂给外部仿真器。
 主输入 ≤ 8 且 故障数 × `2^n` ≤ 50000 时会枚举全部向量再做贪心覆盖（`exhaustive`），否则退回每个故障的首个见证。
 故障数 ≤ 64 且向量数 ≤ 256 时再跑精确最小覆盖（`optimal`，DFS + 下界剪枝，10 万节点预算）。
+
+### 桥接故障（`trit bridge`）
+
+把两条网络短路建模为 **wired-AND**（都拉到 0）或 **wired-OR**（都拉到 1）：只有当某个
+二进制向量下两条网络取值不同、且短路后某个主输出与正常值不同时，才算可测。取值相同的
+向量不会暴露桥接，不计覆盖。
+
+`--pairs` 给桥接对 JSON（`mode` 可写 `and`/`or` 或 `wired-and`/`wired-or`）：
+
+```json
+[{"a":"n1","b":"n2","mode":"and"},{"a":"a","b":"b","mode":"or"}]
+```
+
+```bash
+trit bridge design.net --pairs bridges.json
+trit bridge design.v --from verilog --format json
+```
+
+省略 `--pairs` 会枚举主输入/门输出之间的全部配对（每对展开 AND/OR 两种），`--max-pairs`
+（默认 128）限制数量。CLI 输入上限 10；库侧规模 `对数 × 2^n > 1,000,000` 时拒绝；
+空列表直接失败，不会把“没检查”报成通过。这是**逻辑级静态模型**：不建模模拟电阻、竞争、
+延迟或布局邻近性；短到自身输入的桥接按静态强制值处理，不代表真实振荡行为。
+JSON 输出含每对的 `testable`/`witness` 与测试向量 `patterns`。
 
 `trit map` 拒绝把三值强加 `Xor` 导出成 Verilog `xor`（会改变语义）；多输入 `nand/nor/xnor` 按原语语义
 先合并再取反，临时信号在全模块内唯一。`check` 在无法运行 ATPG 时，若用户给了 `--min-coverage` 则直接 FAIL，

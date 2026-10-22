@@ -466,7 +466,7 @@ fn compact_patterns(
     merged
 }
 
-fn minimum_cover(sets: &[(u64, u64)], full: u64, budget: usize) -> (Option<Vec<u64>>, bool) {
+pub(crate) fn minimum_cover(sets: &[(u64, u64)], full: u64, budget: usize) -> (Option<Vec<u64>>, bool) {
     let mut best: Option<Vec<u64>> = None;
     let mut chosen: Vec<u64> = Vec::new();
     let max_gain = sets

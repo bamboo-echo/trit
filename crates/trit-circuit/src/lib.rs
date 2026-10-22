@@ -3,6 +3,7 @@
 pub mod aiger;
 pub mod atpg;
 pub mod blif;
+pub mod bridge;
 pub mod circuit;
 pub mod map;
 pub mod netlist;
@@ -12,6 +13,9 @@ pub mod verilog;
 pub use aiger::{AigerError, parse_aiger, to_aiger};
 pub use atpg::{AtpgReport, CoverageStat, TestPattern, generate_tests};
 pub use blif::{BlifError, parse_blif, to_blif};
+pub use bridge::{
+    BridgeError, BridgeFault, BridgeMode, BridgePair, BridgeReport, generate_bridge_tests,
+};
 pub use circuit::{
     Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,
     SimulationRow, UntestableReason, analyze, analyze_faults, propagate,

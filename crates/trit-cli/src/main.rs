@@ -180,6 +180,23 @@ enum Commands {
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
     },
+    /// 桥接故障（wired-AND / wired-OR）可测性与测试向量。
+    Bridge {
+        /// 网表文件路径。
+        path: std::path::PathBuf,
+        /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif` / `aiger`。
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        from: String,
+        /// 桥接对 JSON 文件；省略则枚举主输入/门输出之间的全部配对。
+        #[arg(long, value_name = "FILE")]
+        pairs: Option<std::path::PathBuf>,
+        /// 自动枚举的桥接上限（每个网络对展开 AND/OR 两种）。
+        #[arg(long, value_name = "N", default_value_t = 128)]
+        max_pairs: usize,
+        /// 输出格式。
+        #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
+        format: Format,
+    },
     /// 组合时序估算（单位延迟 STA-lite）。
     Timing {
         /// 网表文件路径。
@@ -388,6 +405,20 @@ fn main() -> Result<()> {
             format,
         } => cmd_circuit(&path, format, &cli.algebra, assign.as_deref(), &from),
         Commands::Atpg { path, from, format } => cmd_atpg(&path, format, &cli.algebra, &from),
+        Commands::Bridge {
+            path,
+            from,
+            pairs,
+            max_pairs,
+            format,
+        } => cmd_bridge(
+            &path,
+            format,
+            &cli.algebra,
+            &from,
+            pairs.as_deref(),
+            max_pairs,
+        ),
         Commands::Timing {
             path,
             from,
@@ -1749,6 +1780,143 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str, from: &str) 
         }
     }
     Ok(())
+}
+
+/// `bridge` 子命令：桥接故障（wired-AND / wired-OR）可测性。
+fn cmd_bridge(
+    path: &std::path::Path,
+    format: Format,
+    alg_name: &str,
+    from: &str,
+    pairs_path: Option<&std::path::Path>,
+    max_pairs: usize,
+) -> Result<()> {
+    let alg = resolve_algebra(alg_name)?;
+    let circuit = load_circuit(path, from)?;
+    if circuit.input_count() > 10 {
+        bail!(
+            "桥接 ATPG 最多 10 个主输入（2^11 个向量 × 桥接对数），当前 {}",
+            circuit.input_count()
+        );
+    }
+    let pairs = match pairs_path {
+        Some(file) => {
+            let text = std::fs::read_to_string(file)
+                .with_context(|| format!("无法读取桥接对文件 {}", file.display()))?;
+            serde_json::from_str::<Vec<trit_circuit::BridgePair>>(&text)
+                .with_context(|| format!("桥接对 JSON 无效：{}", file.display()))?
+        }
+        None => auto_bridge_pairs(&circuit, max_pairs)?,
+    };
+    let report = trit_circuit::generate_bridge_tests(&circuit, alg, &pairs)
+        .with_context(|| format!("桥接分析失败：{}", path.display()))?;
+    match format {
+        Format::Json => {
+            let obj = serde_json::json!({
+                "circuit": circuit.name,
+                "algebra": alg.as_str(),
+                "total": report.bridges.len(),
+                "testable": report.testable,
+                "coverage": report.coverage,
+                "exhaustive": report.exhaustive,
+                "optimal": report.optimal,
+                "bridges": report.bridges.iter().map(|bridge| serde_json::json!({
+                    "a": bridge.a,
+                    "b": bridge.b,
+                    "mode": bridge.mode.as_str(),
+                    "testable": bridge.testable,
+                    "witness": bridge.witness,
+                })).collect::<Vec<_>>(),
+                "patterns": report.patterns.iter().map(|pattern| serde_json::json!({
+                    "inputs": pattern
+                        .inputs
+                        .iter()
+                        .map(|(name, value)| (name.clone(), value.as_char().to_string()))
+                        .collect::<BTreeMap<_, _>>(),
+                    "covers": pattern.covers,
+                })).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&obj)?);
+        }
+        _ => {
+            println!(
+                "桥接 {} 个，可测 {}，覆盖率 {:.1}%（{}）",
+                report.bridges.len(),
+                report.testable,
+                report.coverage * 100.0,
+                if report.optimal {
+                    "精确最小"
+                } else if report.exhaustive {
+                    "全向量搜索"
+                } else {
+                    "见证贪心"
+                }
+            );
+            for (index, bridge) in report.bridges.iter().enumerate() {
+                match bridge.witness {
+                    Some(mask) => println!(
+                        "  #{} {}--{} [{}] 可测 witness={mask}",
+                        index + 1,
+                        bridge.a,
+                        bridge.b,
+                        bridge.mode.as_str()
+                    ),
+                    None => println!(
+                        "  #{} {}--{} [{}] 不可测",
+                        index + 1,
+                        bridge.a,
+                        bridge.b,
+                        bridge.mode.as_str()
+                    ),
+                }
+            }
+            for (index, pattern) in report.patterns.iter().enumerate() {
+                let inputs = pattern
+                    .inputs
+                    .iter()
+                    .map(|(name, value)| format!("{name}={}", value.as_char()))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                println!("#{} {inputs}  → {} 个桥接", index + 1, pattern.covers.len());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 自动枚举主输入与门输出之间的全部桥接（每对展开 AND/OR 两种）。
+fn auto_bridge_pairs(circuit: &Circuit, limit: usize) -> Result<Vec<trit_circuit::BridgePair>> {
+    let mut nets: Vec<String> = Vec::new();
+    for input in &circuit.inputs {
+        nets.push(input.name().to_string());
+    }
+    for gate in &circuit.gates {
+        let name = gate.output.name().to_string();
+        if !nets.contains(&name) {
+            nets.push(name);
+        }
+    }
+    let mut pairs = Vec::new();
+    for left in 0..nets.len() {
+        for right in left + 1..nets.len() {
+            for mode in [trit_circuit::BridgeMode::And, trit_circuit::BridgeMode::Or] {
+                if pairs.len() >= limit {
+                    bail!(
+                        "自动枚举的桥接超过上限 {limit}；请用 --pairs 精确指定（或调大 --max-pairs）"
+                    );
+                }
+                pairs.push(trit_circuit::BridgePair {
+                    a: nets[left].clone(),
+                    b: nets[right].clone(),
+                    mode,
+                });
+            }
+        }
+    }
+    if pairs.is_empty() {
+        bail!("电路没有可配对的网络");
+    }
+    Ok(pairs)
 }
 
 /// `belnap` 子命令：Belnap 四值（opt-in）。

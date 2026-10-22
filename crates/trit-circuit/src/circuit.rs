@@ -771,6 +771,10 @@ impl<'a> Simulator<'a> {
         self.index[name]
     }
 
+    pub(crate) fn signal_index_checked(&self, name: &str) -> Option<usize> {
+        self.index.get(name).copied()
+    }
+
     pub(crate) fn output_indices(&self) -> &[usize] {
         &self.outputs
     }
@@ -788,15 +792,42 @@ impl<'a> Simulator<'a> {
                 Ternary::True
             };
         }
-        self.run(fault);
+        self.run(fault, &[]);
         &self.values
     }
 
-    fn run(&mut self, fault: Option<(usize, usize, Ternary)>) {
+    /// 同 [`Simulator::eval_binary`]，但把若干网络强制为指定值（桥接故障用）。
+    ///
+    /// 覆盖可以落在主输入或门输出上；被覆盖的门输出不再求值，下游按强制值重算。
+    pub(crate) fn eval_binary_with_overrides(
+        &mut self,
+        mask: u64,
+        overrides: &[(usize, Ternary)],
+    ) -> &[Ternary] {
+        self.values.fill(Ternary::Unknown);
+        for (bit, &slot) in self.inputs.iter().enumerate() {
+            self.values[slot] = if (mask >> bit) & 1 == 0 {
+                Ternary::False
+            } else {
+                Ternary::True
+            };
+        }
+        for &(slot, value) in overrides {
+            self.values[slot] = value;
+        }
+        self.run(None, overrides);
+        &self.values
+    }
+
+    fn run(&mut self, fault: Option<(usize, usize, Ternary)>, overrides: &[(usize, Ternary)]) {
         let Self {
             alg, gates, values, ..
         } = self;
         for gate in gates.iter() {
+            if let Some(&(_, forced)) = overrides.iter().find(|(slot, _)| *slot == gate.output) {
+                values[gate.output] = forced;
+                continue;
+            }
             let arity = gate.kind.arity();
             let mut ins = [Ternary::Unknown; 2];
             for (slot, &source) in ins.iter_mut().zip(gate.inputs.iter()) {
