@@ -99,8 +99,8 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 - SAT / BDD / 策略入口先 `check_expr` 再编码，超限返回专门的 `Limit` 错误；
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-`python scripts/mutation_check.py` 对 12 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 12/12）；`.github/workflows/mutation.yml` 每周跑一次。
+`python scripts/mutation_check.py` 对 20 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 20/20）；`.github/workflows/mutation.yml` 每周跑一次。
 
 ## 符号化等价（SAT）
 
@@ -128,10 +128,25 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 
 ## 技术映射（`trit map`）
 
-把 AND/OR/NAND/NOR/NOT/BUF/经典 XOR 降到 NAND + 常量。三值强加 `Xor` 需要 X 检测单元，明确拒绝。
+默认把 AND/OR/NAND/NOR/NOT/BUF/经典 XOR 降到 NAND + 常量。三值强加 `Xor` 需要 X 检测单元，明确拒绝。
 
 ```bash
 trit map design.net --to verilog
+```
+
+给单元库时按时序选实现：每个门在「直接单元」与「NAND 展开」之间取到达时间更短者
+（拓扑序上的最长路径 DP，关键路径最优）；`--area-first` 改成单元数优先。
+
+```bash
+trit map design.net --cells cells.json --to verilog
+trit map design.v --from verilog --cells cells.json --area-first
+```
+
+`cells.json` 是「门类型 → 延迟」的扁平对象；没列出的类型视为库里没有该单元
+（与 `timing --library` 的 `default_delay` 语义不同）：
+
+```json
+{ "NAND": 1, "AND": 2, "OR": 3, "XOR2": 4 }
 ```
 
 ## 设计检查（`trit check`）

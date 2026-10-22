@@ -213,6 +213,12 @@ enum Commands {
         /// 输出格式：`text`（默认）/ `json` / `verilog`。
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         to: String,
+        /// 单元库 JSON（如 `{"AND":1,"NAND":2}`）；给出时按延迟选实现。
+        #[arg(long, value_name = "JSON")]
+        cells: Option<std::path::PathBuf>,
+        /// 面积优先（最少单元），平手再看延迟；需配合 `--cells`。
+        #[arg(long)]
+        area_first: bool,
     },
     /// 设计检查：结构 + 时序 + X 传播 + ATPG 覆盖率（一条命令）。
     Check {
@@ -390,7 +396,13 @@ fn main() -> Result<()> {
             paths,
             format,
         ),
-        Commands::Map { path, from, to } => cmd_map(&path, &from, &to),
+        Commands::Map {
+            path,
+            from,
+            to,
+            cells,
+            area_first,
+        } => cmd_map(&path, &from, &to, cells.as_deref(), area_first),
         Commands::Check {
             path,
             from,
@@ -1274,11 +1286,32 @@ fn cmd_circuit(
     Ok(())
 }
 
-/// `map` 子命令：降到 NAND-only。
-fn cmd_map(path: &std::path::Path, from: &str, to: &str) -> Result<()> {
+/// `map` 子命令：降到 NAND-only，或按单元库时序驱动映射。
+fn cmd_map(
+    path: &std::path::Path,
+    from: &str,
+    to: &str,
+    cells: Option<&std::path::Path>,
+    area_first: bool,
+) -> Result<()> {
     let circuit = load_circuit(path, from)?;
-    let mapped = trit_circuit::to_nand_only(&circuit)
-        .with_context(|| format!("映射失败：{}", path.display()))?;
+    let mapped = match cells {
+        Some(library_path) => {
+            let text = std::fs::read_to_string(library_path)
+                .with_context(|| format!("无法读取单元库 {}", library_path.display()))?;
+            let library = trit_circuit::CellLibrary::from_json(&text)
+                .with_context(|| format!("单元库解析失败：{}", library_path.display()))?;
+            let strategy = if area_first {
+                trit_circuit::MapStrategy::Area
+            } else {
+                trit_circuit::MapStrategy::Timing
+            };
+            trit_circuit::to_cells(&circuit, &library, strategy)
+        }
+        None if area_first => bail!("--area-first 需要配合 --cells 使用"),
+        None => trit_circuit::to_nand_only(&circuit),
+    }
+    .with_context(|| format!("映射失败：{}", path.display()))?;
     match to {
         "text" => print!("{}", trit_circuit::netlist::to_netlist(&mapped)),
         "json" => println!("{}", trit_circuit::netlist::to_json(&mapped)?),
