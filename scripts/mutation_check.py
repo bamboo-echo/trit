@@ -136,6 +136,30 @@ MUTANTS = [
         "filter": "empty_signal_name_is_rejected"
     },
     {
+        "name": "verilog: 向量声明记成 1 位",
+        "file": "crates/trit-circuit/src/verilog/parse.rs",
+        "old": "                    .insert(name.clone(), Bus::new(name.clone(), msb + 1));",
+        "new": "                    .insert(name.clone(), Bus::new(name.clone(), 1));",
+        "pkg": "trit-circuit",
+        "filter": "vector_declarations_are_recorded_as_buses"
+    },
+    {
+        "name": "verilog: 导出忽略 bus 宽度",
+        "file": "crates/trit-circuit/src/verilog/export.rs",
+        "old": "        let (max, vector) = if let Some(bus) = buses.get(&base) {",
+        "new": "        let (max, vector) = if let Some(bus) = buses.get(&base).filter(|_| false) {",
+        "pkg": "trit-circuit",
+        "filter": "export_uses_declared_bus_width_for_partial_wire"
+    },
+    {
+        "name": "circuit: 零宽 bus 不再报错",
+        "file": "crates/trit-circuit/src/circuit/validate.rs",
+        "old": "            || bus.width == 0",
+        "new": "            || false",
+        "pkg": "trit-circuit",
+        "filter": "zero_width_bus_is_rejected"
+    },
+    {
         "name": "netlist: gate 参数计数失效",
         "file": "crates/trit-circuit/src/netlist.rs",
         "old": "                if parts.len() != 5 {",
@@ -442,16 +466,16 @@ MUTANTS = [
     {
         "name": "verilog: 向量端口只展开 bit 0",
         "file": "crates\\trit-circuit\\src\\verilog\\parse.rs",
-        "old": "                widths.insert(name.clone(), msb + 1);\n                for index in (0..=msb).rev() {\n",
-        "new": "                widths.insert(name.clone(), msb + 1);\n                for index in [0] {\n",
+        "old": "                    .insert(name.clone(), Bus::new(name.clone(), msb + 1));\n                for index in (0..=msb).rev() {",
+        "new": "                    .insert(name.clone(), Bus::new(name.clone(), msb + 1));\n                for index in [0] {",
         "pkg": "trit-circuit",
         "filter": "parses_vector_ports_and_vectorized_bitwise_assign"
     },
     {
         "name": "verilog: 导出不分组向量端口",
         "file": "crates\\trit-circuit\\src\\verilog\\export.rs",
-        "old": "            vector: acc.has_bits,\n",
-        "new": "            vector: false,\n",
+        "old": "            (max, true)",
+        "new": "            (max, false)",
         "pkg": "trit-circuit",
         "filter": "vector_round_trip_regroups_ports"
     },

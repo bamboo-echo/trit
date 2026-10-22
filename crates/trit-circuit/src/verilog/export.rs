@@ -1,10 +1,10 @@
 //! Verilog 导出：门级原语 + 向量端口重组。
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use trit_core::value::Ternary;
 
-use crate::circuit::{Circuit, Gate, GateKind, Signal};
+use crate::circuit::{Bus, Circuit, Gate, GateKind, Signal};
 
 use super::{VerilogError, is_identifier};
 
@@ -75,7 +75,10 @@ struct VerilogGroup {
     vector: bool,
 }
 
-fn group_signals(names: &[&str]) -> Result<Vec<VerilogGroup>, VerilogError> {
+fn group_signals(
+    names: &[&str],
+    buses: &BTreeMap<String, Bus>,
+) -> Result<Vec<VerilogGroup>, VerilogError> {
     struct Acc {
         has_scalar: bool,
         has_bits: bool,
@@ -120,18 +123,35 @@ fn group_signals(names: &[&str]) -> Result<Vec<VerilogGroup>, VerilogError> {
                 "信号 {base} 同时以标量和位选出现，无法导出为 Verilog"
             )));
         }
-        let max = acc.indices.iter().next_back().copied().unwrap_or(0);
-        let contiguous = acc.indices.len() == max + 1 && acc.indices.iter().copied().eq(0..=max);
-        if !contiguous {
-            return Err(VerilogError::export(format!(
-                "信号 {base} 的位下标不连续或缺少低位，无法导出为 Verilog 向量"
-            )));
-        }
-        out.push(VerilogGroup {
-            base,
-            max,
-            vector: acc.has_bits,
-        });
+        let (max, vector) = if let Some(bus) = buses.get(&base) {
+            let max = bus
+                .width
+                .checked_sub(1)
+                .ok_or_else(|| VerilogError::export(format!("向量 {base} 的宽度为 0，无法导出")))?;
+            if acc.has_scalar {
+                return Err(VerilogError::export(format!(
+                    "向量 {base} 与同名标量信号冲突，无法导出"
+                )));
+            }
+            if let Some(index) = acc.indices.iter().find(|index| **index > max) {
+                return Err(VerilogError::export(format!(
+                    "信号 {base}[{index}] 超出声明宽度 {}",
+                    bus.width
+                )));
+            }
+            (max, true)
+        } else {
+            let max = acc.indices.iter().next_back().copied().unwrap_or(0);
+            let contiguous =
+                acc.indices.len() == max + 1 && acc.indices.iter().copied().eq(0..=max);
+            if !contiguous {
+                return Err(VerilogError::export(format!(
+                    "信号 {base} 的位下标不连续或缺少低位，无法导出为 Verilog 向量"
+                )));
+            }
+            (max, acc.has_bits)
+        };
+        out.push(VerilogGroup { base, max, vector });
     }
     Ok(out)
 }
@@ -157,8 +177,8 @@ pub fn to_verilog(circuit: &Circuit) -> Result<String, VerilogError> {
     };
     let input_names: Vec<&str> = circuit.inputs.iter().map(Signal::name).collect();
     let output_names: Vec<&str> = circuit.outputs.iter().map(Signal::name).collect();
-    let input_groups = group_signals(&input_names)?;
-    let output_groups = group_signals(&output_names)?;
+    let input_groups = group_signals(&input_names, &circuit.buses)?;
+    let output_groups = group_signals(&output_names, &circuit.buses)?;
     let input_bases: HashSet<&str> = input_groups
         .iter()
         .map(|group| group.base.as_str())
@@ -185,7 +205,7 @@ pub fn to_verilog(circuit: &Circuit) -> Result<String, VerilogError> {
         .map(|gate| gate.output.name())
         .filter(|name| !port_bits.contains(name))
         .collect();
-    let wire_groups = group_signals(&wire_names)?;
+    let wire_groups = group_signals(&wire_names, &circuit.buses)?;
     for group in &wire_groups {
         if input_bases.contains(group.base.as_str()) || output_bases.contains(group.base.as_str()) {
             return Err(VerilogError::export(format!(

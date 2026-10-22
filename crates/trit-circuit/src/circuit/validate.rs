@@ -44,6 +44,37 @@ pub(crate) fn validate(circuit: &Circuit) -> Result<(), CircuitError> {
             return Err(CircuitError::EmptySignalName);
         }
     }
+    for (base, bus) in &circuit.buses {
+        if base != &bus.name
+            || base.is_empty()
+            || base.contains('[')
+            || base.contains(']')
+            || bus.width == 0
+        {
+            return Err(CircuitError::InvalidBus(format!(
+                "{base:?}（宽度 {}）",
+                bus.width
+            )));
+        }
+    }
+    let scalar_names: BTreeSet<&str> = circuit
+        .inputs
+        .iter()
+        .chain(&circuit.outputs)
+        .chain(
+            circuit
+                .gates
+                .iter()
+                .flat_map(|gate| std::iter::once(&gate.output).chain(gate.inputs.iter())),
+        )
+        .map(|sig| sig.name())
+        .filter(|name| !name.contains('['))
+        .collect();
+    for base in circuit.buses.keys() {
+        if scalar_names.contains(base.as_str()) {
+            return Err(CircuitError::BusNameConflict(base.clone()));
+        }
+    }
     let mut seen_inputs: BTreeSet<&str> = BTreeSet::new();
     for inp in &circuit.inputs {
         if !seen_inputs.insert(inp.name()) {

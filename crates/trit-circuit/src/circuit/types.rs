@@ -212,6 +212,28 @@ pub struct Fault {
 
 /// 故障分析结果：冗余引脚列表与逐极性故障列表。
 pub type FaultReport = (Vec<GateSignalPair>, Vec<Fault>);
+/// 向量声明（当前只支持 `[width-1:0]`）。
+///
+/// 位信号仍以 `name[i]` 的形式存在于 `inputs` / `outputs` / `gates` 中；
+/// `Bus` 只保存声明宽度，供导出与 JSON 往返使用。宽度可以大于实际建模的位数
+/// （例如只用到 `t[3]` 的 8 位内部线网）。
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub struct Bus {
+    /// 向量基名。
+    pub name: String,
+    /// 位宽（至少 1）。
+    pub width: usize,
+}
+
+impl Bus {
+    /// 构造向量声明。
+    pub fn new(name: impl Into<String>, width: usize) -> Self {
+        Self {
+            name: name.into(),
+            width,
+        }
+    }
+}
 /// 一个电路。
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Circuit {
@@ -223,6 +245,9 @@ pub struct Circuit {
     pub outputs: Vec<Signal>,
     /// 门列表。
     pub gates: Vec<Gate>,
+    /// 向量声明；空映射不参与序列化，旧 JSON 可直接读取。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub buses: BTreeMap<String, Bus>,
 }
 
 impl Circuit {
@@ -352,6 +377,12 @@ pub enum CircuitError {
     /// 同一个信号被声明了多次主输出。
     #[error("信号 {0} 被重复声明为主输出")]
     DuplicateOutput(String),
+    /// 向量声明非法（空名、零宽度、键名不一致或基名含位选）。
+    #[error("向量声明非法：{0}")]
+    InvalidBus(String),
+    /// 向量基名与同名标量信号冲突。
+    #[error("向量 {0} 与同名标量信号冲突")]
+    BusNameConflict(String),
     /// 信号既未声明为输入，也没有驱动它的门。
     #[error("信号 {0} 未被任何门驱动，也不是主输入")]
     UndrivenSignal(String),

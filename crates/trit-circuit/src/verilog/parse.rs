@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use trit_core::value::Ternary;
 
-use crate::circuit::{Circuit, Gate, GateKind, Signal};
+use crate::circuit::{Bus, Circuit, Gate, GateKind, Signal};
 
 use super::expr::{RhsParser, VExpr, bit_expr, expr_width};
 use super::{VerilogError, is_identifier, is_signal_ref, message};
@@ -271,6 +271,9 @@ fn declare_ports(
         match range {
             Some(msb) => {
                 widths.insert(name.clone(), msb + 1);
+                circuit
+                    .buses
+                    .insert(name.clone(), Bus::new(name.clone(), msb + 1));
                 for index in (0..=msb).rev() {
                     let bit = format!("{name}[{index}]");
                     match direction {

@@ -21,7 +21,7 @@ pub use bridge::{
     BridgeError, BridgeFault, BridgeMode, BridgePair, BridgeReport, generate_bridge_tests,
 };
 pub use circuit::{
-    Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,
+    Bus, Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,
     SimulationRow, UntestableReason, analyze, analyze_faults, propagate,
 };
 pub use map::{
