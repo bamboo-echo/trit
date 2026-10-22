@@ -97,7 +97,7 @@ MUTANTS = [
     },
     {
         "name": "atpg: 全向量矩阵枚举为空",
-        "file": "crates/trit-circuit/src/atpg.rs",
+        "file": "crates\\trit-circuit\\src\\atpg\\mod.rs",
         "old": "    let total = 1u64 << circuit.input_count();",
         "new": "    let total = 0;",
         "pkg": "trit-circuit",
@@ -169,7 +169,7 @@ MUTANTS = [
     },
     {
         "name": "atpg: X 位只验证一种填充",
-        "file": "crates/trit-circuit/src/atpg.rs",
+        "file": "crates\\trit-circuit\\src\\atpg\\mod.rs",
         "old": "    for fill in 0..(1u64 << xbits.len()) {",
         "new": "    for fill in 0..1 {",
         "pkg": "trit-circuit",
@@ -361,7 +361,7 @@ MUTANTS = [
     },
     {
         "name": "atpg: X 合并忽略唯一覆盖（保留全部故障）",
-        "file": "crates/trit-circuit/src/atpg.rs",
+        "file": "crates\\trit-circuit\\src\\atpg\\compact.rs",
         "old": "                        need.retain(|fault| !detected.contains(fault));",
         "new": "                        need.retain(|_fault| true);",
         "pkg": "trit-circuit",
