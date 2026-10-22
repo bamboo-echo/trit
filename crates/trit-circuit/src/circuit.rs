@@ -280,8 +280,15 @@ impl Circuit {
     }
 
     /// 把二进制测试向量（bit i 对应第 i 个主输入）解码成赋值表。
-    pub fn decode_binary(&self, mask: u64) -> BTreeMap<String, Ternary> {
-        self.inputs
+    pub fn decode_binary(&self, mask: u64) -> Result<BTreeMap<String, Ternary>, CircuitError> {
+        if self.input_count() > 64 {
+            return Err(CircuitError::BinaryInputLimit {
+                max: 64,
+                actual: self.input_count(),
+            });
+        }
+        Ok(self
+            .inputs
             .iter()
             .enumerate()
             .map(|(i, sig)| {
@@ -292,7 +299,7 @@ impl Circuit {
                 };
                 (sig.name().to_string(), value)
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -366,6 +373,14 @@ pub enum CircuitError {
     /// 主输入过多，二进制向量空间不可枚举。
     #[error("主输入 {0} 个，超过故障分析的 16 个上限")]
     TooManyInputs(usize),
+    /// 二值掩码只能覆盖 64 个主输入。
+    #[error("二值掩码最多支持 {max} 个主输入，当前 {actual} 个")]
+    BinaryInputLimit {
+        /// 上限。
+        max: usize,
+        /// 实际数量。
+        actual: usize,
+    },
 }
 
 /// 对电路做一次完整分析。

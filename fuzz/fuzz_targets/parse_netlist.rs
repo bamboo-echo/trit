@@ -9,7 +9,9 @@ fuzz_target!(|data: &[u8]| {
     let Ok(circuit) = trit_circuit::parse_netlist(text) else {
         return;
     };
-    let rendered = trit_circuit::netlist::to_netlist(&circuit);
+    let Ok(rendered) = trit_circuit::netlist::to_netlist(&circuit) else {
+        return;
+    };
     let again = trit_circuit::parse_netlist(&rendered).expect("序列化结果必须可解析");
     assert_eq!(circuit, again);
 });

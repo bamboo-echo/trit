@@ -1328,9 +1328,9 @@ fn cmd_map(
     }
     .with_context(|| format!("映射失败：{}", path.display()))?;
     match to {
-        "text" => print!("{}", trit_circuit::netlist::to_netlist(&mapped)),
+        "text" => print!("{}", trit_circuit::netlist::to_netlist(&mapped)?),
         "json" => println!("{}", trit_circuit::netlist::to_json(&mapped)?),
-        "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&mapped)),
+        "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&mapped)?),
         other => bail!("未知输出格式 {other:?}，可选 text / json / verilog / blif / aiger"),
     }
     Ok(())
@@ -1350,6 +1350,9 @@ fn cmd_check(
     alg_name: &str,
 ) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
+    if !min_coverage.is_finite() || !(0.0..=1.0).contains(&min_coverage) {
+        bail!("--min-coverage 必须在 [0, 1] 内，当前 {min_coverage}");
+    }
     let circuit = load_circuit(path, from)?;
     let model = timing_model(library, delay, load_delay)?;
     let timing = trit_circuit::timing::analyze_timing(&circuit, model, clock)?;
@@ -1370,6 +1373,13 @@ fn cmd_check(
         failures.push(format!(
             "覆盖率 {:.1}% 低于下限 {:.1}%",
             report.coverage * 100.0,
+            min_coverage * 100.0
+        ));
+    }
+    if atpg.is_none() && min_coverage > 0.0 {
+        failures.push(format!(
+            "覆盖率检查未执行：主输入 {} > 10，无法验证下限 {:.1}%",
+            circuit.input_count(),
             min_coverage * 100.0
         ));
     }
@@ -1418,6 +1428,9 @@ fn cmd_check(
             );
             if let Some(report) = &analysis {
                 println!("  X：未知输出组合 {}", report.unknown_output_combinations);
+            }
+            if atpg.is_none() {
+                println!("  ATPG：跳过（主输入 {} > 10）", circuit.input_count());
             }
             if let Some(report) = &atpg {
                 println!(
@@ -1550,9 +1563,9 @@ fn load_circuit(path: &std::path::Path, from: &str) -> Result<Circuit> {
 fn cmd_netlist(path: &std::path::Path, from: &str, to: &str) -> Result<()> {
     let circuit = load_circuit(path, from)?;
     match to {
-        "text" => print!("{}", trit_circuit::netlist::to_netlist(&circuit)),
+        "text" => print!("{}", trit_circuit::netlist::to_netlist(&circuit)?),
         "json" => println!("{}", trit_circuit::netlist::to_json(&circuit)?),
-        "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&circuit)),
+        "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&circuit)?),
         "blif" => print!("{}", trit_circuit::to_blif(&circuit)?),
         "aiger" => print!("{}", trit_circuit::to_aiger(&circuit)?),
         other => bail!("未知输出格式 {other:?}，可选 json / text / verilog"),

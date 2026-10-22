@@ -50,17 +50,16 @@ fn is_identifier(name: &str) -> bool {
 
 struct Builder<'a> {
     circuit: &'a mut Circuit,
-    used: HashSet<String>,
-    counter: usize,
+    used: &'a mut std::collections::BTreeSet<String>,
+    counter: &'a mut usize,
 }
 
 impl Builder<'_> {
     fn fresh(&mut self) -> String {
         loop {
-            let name = format!("__v{}", self.counter);
-            self.counter += 1;
-            if !self.used.contains(&name) {
-                self.used.insert(name.clone());
+            let name = format!("__v{}", *self.counter);
+            *self.counter += 1;
+            if self.used.insert(name.clone()) {
                 return name;
             }
         }
@@ -355,6 +354,12 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
             let close = header
                 .rfind(')')
                 .ok_or_else(|| message("module 端口列表缺少 ')'"))?;
+            if close <= open {
+                return Err(message("module 端口列表的括号顺序错误"));
+            }
+            if !header[close + 1..].trim().is_empty() {
+                return Err(message("module 头在 ')' 之后有多余内容"));
+            }
             (
                 header[..open].trim(),
                 Some(header[open + 1..close].to_string()),
@@ -368,6 +373,8 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
     let mut circuit = Circuit::new(module_name);
     let mut declared: HashSet<String> = HashSet::new();
     let mut wires: HashSet<String> = HashSet::new();
+    let mut used: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut counter = 0usize;
 
     if let Some(ports) = port_text.filter(|p| !p.trim().is_empty()) {
         let ansi = ports.contains("input") || ports.contains("output");
@@ -397,6 +404,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
         }
     }
 
+    used.extend(declared.iter().cloned());
     for statement in body.split(';') {
         let statement = statement.trim();
         if statement.is_empty() {
@@ -412,6 +420,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                     if !declared.insert(name.clone()) {
                         continue;
                     }
+                    used.insert(name.clone());
                     if first == "input" {
                         circuit.add_input(Signal::new(name));
                     } else {
@@ -424,6 +433,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                     if !is_identifier(&name) {
                         return Err(message(format!("非法 wire 名 {name:?}")));
                     }
+                    used.insert(name.clone());
                     wires.insert(name);
                 }
             }
@@ -439,12 +449,8 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                 let expr = RhsParser::new(rhs.trim()).parse()?;
                 let mut builder = Builder {
                     circuit: &mut circuit,
-                    used: declared
-                        .iter()
-                        .cloned()
-                        .chain(wires.iter().cloned())
-                        .collect(),
-                    counter: 0,
+                    used: &mut used,
+                    counter: &mut counter,
                 };
                 builder.synth_v(&expr, lhs)?;
             }
@@ -462,6 +468,15 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                     .iter()
                     .rposition(|token| *token == ")")
                     .ok_or_else(|| message(format!("{first} 缺少 ')'")))?;
+                if open >= close {
+                    return Err(message(format!("{first} 的括号顺序错误")));
+                }
+                if close + 1 != tokens.len() {
+                    return Err(message(format!("{first} 在 ')' 之后有多余内容")));
+                }
+                if open > 2 || (open == 2 && !is_identifier(tokens[1])) {
+                    return Err(message(format!("{first} 的实例名格式不支持")));
+                }
                 let args: Vec<&str> = tokens[open + 1..close]
                     .iter()
                     .copied()
@@ -472,14 +487,13 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                 }
                 let output = args[0];
                 let inputs = &args[1..];
+                if !is_identifier(output) || inputs.iter().any(|name| !is_identifier(name)) {
+                    return Err(message(format!("{first} 里有非法信号名")));
+                }
                 let mut builder = Builder {
                     circuit: &mut circuit,
-                    used: declared
-                        .iter()
-                        .cloned()
-                        .chain(wires.iter().cloned())
-                        .collect(),
-                    counter: 0,
+                    used: &mut used,
+                    counter: &mut counter,
                 };
                 match first {
                     "not" | "buf" => {
@@ -494,18 +508,18 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                         builder.add_gate(kind, vec![inputs[0].to_string()], output);
                     }
                     _ => {
+                        // 多输入 NAND/NOR 必须“先合取/析取全部输入，最后反相一次”；
+                        // XNOR 也要先折叠 XOR，再 NOT 到输出，不能写回同一信号。
                         let base = match first {
-                            "and" => GateKind::And,
-                            "or" => GateKind::Or,
-                            "nand" => GateKind::Nand,
-                            "nor" => GateKind::Nor,
-                            "xnor" | "xor" => GateKind::XorClassic,
-                            _ => unreachable!(),
+                            "and" | "nand" => GateKind::And,
+                            "or" | "nor" => GateKind::Or,
+                            _ => GateKind::XorClassic,
                         };
+                        let invert = matches!(first, "nand" | "nor" | "xnor");
                         let mut current = inputs[0].to_string();
                         for (index, input) in inputs[1..].iter().enumerate() {
                             let last = index + 2 == inputs.len();
-                            let target = if last {
+                            let target = if last && !invert {
                                 output.to_string()
                             } else {
                                 builder.fresh()
@@ -517,7 +531,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                             );
                             current = target;
                         }
-                        if first == "xnor" {
+                        if invert {
                             builder.add_gate(GateKind::Not, vec![current], output);
                         }
                     }
@@ -534,38 +548,58 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
     Ok(circuit)
 }
 
-fn gate_line(circuit_gate: &Gate, index: usize) -> String {
+fn gate_line(circuit_gate: &Gate, index: usize) -> Result<String, VerilogError> {
     let output = circuit_gate.output.name();
     let inputs: Vec<&str> = circuit_gate.inputs.iter().map(Signal::name).collect();
-    match circuit_gate.kind {
+    let arity_ok = match circuit_gate.kind {
+        GateKind::Const => inputs.is_empty(),
+        GateKind::Not | GateKind::Buf => inputs.len() == 1,
+        _ => inputs.len() == 2,
+    };
+    if !arity_ok {
+        return Err(message(format!(
+            "门 {output} 的输入数量与 {:?} 不符",
+            circuit_gate.kind
+        )));
+    }
+    Ok(match circuit_gate.kind {
         GateKind::Const => {
             let value = circuit_gate.const_value.unwrap_or(Ternary::False);
             format!(
-                "  assign {output} = 1'b{};\n",
+                "  assign {output} = 1'b{};
+",
                 value.as_char().to_ascii_lowercase()
             )
         }
-        GateKind::XorClassic => format!(
-            "  xor g{index} ({output}, {}, {});
+        GateKind::XorClassic => {
+            format!(
+                "  xor g{index} ({output}, {}, {});
 ",
-            inputs[0], inputs[1]
-        ),
+                inputs[0], inputs[1]
+            )
+        }
+        GateKind::Xor => {
+            return Err(message("三值强加 Xor 不能导出为 Verilog（会变成经典异或）"));
+        }
         GateKind::Not | GateKind::Buf => format!(
-            "  {} g{index} ({output}, {});\n",
+            "  {} g{index} ({output}, {});
+",
             circuit_gate.kind.as_str().to_ascii_lowercase(),
             inputs[0]
         ),
         kind => format!(
-            "  {} g{index} ({output}, {}, {});\n",
+            "  {} g{index} ({output}, {}, {});
+",
             kind.as_str().to_ascii_lowercase(),
             inputs[0],
             inputs[1]
         ),
-    }
+    })
 }
 
-/// 生成结构化 Verilog（单比特）。
-pub fn to_verilog(circuit: &Circuit) -> String {
+/// 生成结构化 Verilog（单比特）。三值强加 `Xor` 无法用经典门表示，返回错误。
+pub fn to_verilog(circuit: &Circuit) -> Result<String, VerilogError> {
+    crate::circuit::validate(circuit).map_err(|error| message(format!("电路不合法：{error}")))?;
     let module = if is_identifier(&circuit.name) {
         circuit.name.as_str()
     } else {
@@ -574,7 +608,8 @@ pub fn to_verilog(circuit: &Circuit) -> String {
     let mut ports: Vec<&str> = circuit.inputs.iter().map(Signal::name).collect();
     ports.extend(circuit.outputs.iter().map(Signal::name));
     let mut out = format!(
-        "module {module} ({});\n",
+        "module {module} ({});
+",
         ports
             .iter()
             .map(|name| name.to_string())
@@ -582,22 +617,37 @@ pub fn to_verilog(circuit: &Circuit) -> String {
             .join(", ")
     );
     for input in &circuit.inputs {
-        out.push_str(&format!("  input {};\n", input.name()));
+        out.push_str(&format!(
+            "  input {};
+",
+            input.name()
+        ));
     }
     for output in &circuit.outputs {
-        out.push_str(&format!("  output {};\n", output.name()));
+        out.push_str(&format!(
+            "  output {};
+",
+            output.name()
+        ));
     }
     let known: HashSet<&str> = ports.into_iter().collect();
     for gate in &circuit.gates {
         if !known.contains(gate.output.name()) {
-            out.push_str(&format!("  wire {};\n", gate.output.name()));
+            out.push_str(&format!(
+                "  wire {};
+",
+                gate.output.name()
+            ));
         }
     }
     for (index, gate) in circuit.gates.iter().enumerate() {
-        out.push_str(&gate_line(gate, index));
+        out.push_str(&gate_line(gate, index)?);
     }
-    out.push_str("endmodule\n");
-    out
+    out.push_str(
+        "endmodule
+",
+    );
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -628,7 +678,7 @@ mod tests {
             "input a\ninput b\nconst 1 one\nnot a na\ngate AND na b n\ngate OR n one y\noutput y\n",
         )
         .unwrap();
-        let text = to_verilog(&circuit);
+        let text = to_verilog(&circuit).unwrap();
         assert!(text.contains("module netlist"), "{text}");
         let again = parse_verilog(&text).unwrap();
         let left = analyze(&circuit, Algebra::Kleene).unwrap();
@@ -646,7 +696,7 @@ mod tests {
 endmodule
 ";
         let circuit = parse_verilog(text).unwrap();
-        let rendered = to_verilog(&circuit);
+        let rendered = to_verilog(&circuit).unwrap();
         assert!(rendered.contains("xor g0"), "{rendered}");
         let again = parse_verilog(&rendered).unwrap();
         let mut assignment = BTreeMap::new();
@@ -736,6 +786,119 @@ endmodule
             eval_assign("(a | b) & !c", &[("a", False), ("b", True), ("c", False)]),
             True
         );
+    }
+
+    #[test]
+    fn rejects_reversed_parentheses_without_panicking() {
+        for text in [
+            "module m;
+and ) (;
+endmodule
+",
+            "module m)(;
+endmodule
+",
+            "module m;
+and g1 (y, a) trailing;
+endmodule
+",
+        ] {
+            assert!(parse_verilog(text).is_err(), "{text}");
+        }
+    }
+
+    #[test]
+    fn multi_input_nand_nor_are_not_left_folded() {
+        use crate::circuit::propagate;
+        use std::collections::BTreeMap;
+        use trit_core::value::Ternary::*;
+
+        let nand = parse_verilog(
+            "module m(input a, input b, input c, output y);
+  nand g(y, a, b, c);
+endmodule
+",
+        )
+        .unwrap();
+        let mut assignment = BTreeMap::new();
+        assignment.insert("a".to_string(), False);
+        assignment.insert("b".to_string(), True);
+        assignment.insert("c".to_string(), True);
+        let values = propagate(&nand, &assignment, Algebra::Kleene).unwrap();
+        assert_eq!(values.signals.get("y"), Some(&True), "NAND3 应先与后非");
+
+        let nor = parse_verilog(
+            "module m(input a, input b, input c, output y);
+  nor g(y, a, b, c);
+endmodule
+",
+        )
+        .unwrap();
+        let mut assignment = BTreeMap::new();
+        assignment.insert("a".to_string(), True);
+        assignment.insert("b".to_string(), False);
+        assignment.insert("c".to_string(), False);
+        let values = propagate(&nor, &assignment, Algebra::Kleene).unwrap();
+        assert_eq!(values.signals.get("y"), Some(&False), "NOR3 应先或后非");
+    }
+
+    #[test]
+    fn xnor_has_a_single_driver() {
+        use crate::circuit::propagate;
+        use trit_core::value::Ternary::*;
+        let circuit = parse_verilog(
+            "module m(input a, input b, output y);
+  xnor g(y, a, b);
+endmodule
+",
+        )
+        .unwrap();
+        let outputs: Vec<&str> = circuit.gates.iter().map(|g| g.output.name()).collect();
+        let mut sorted = outputs.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(outputs.len(), sorted.len(), "门输出不能重复驱动");
+        let mut assignment = std::collections::BTreeMap::new();
+        assignment.insert("a".to_string(), True);
+        assignment.insert("b".to_string(), True);
+        let values = propagate(&circuit, &assignment, Algebra::Kleene).unwrap();
+        assert_eq!(values.signals.get("y"), Some(&True));
+    }
+
+    #[test]
+    fn temp_names_are_module_unique() {
+        use std::collections::BTreeSet;
+        let circuit = parse_verilog(
+            "module m(input a, input b, output y, output z);
+  assign y = ~(a & b);
+  assign z = ~(a | b);
+endmodule
+",
+        )
+        .unwrap();
+        let mut seen = BTreeSet::new();
+        for gate in &circuit.gates {
+            assert!(
+                seen.insert(gate.output.name()),
+                "重复驱动 {}",
+                gate.output.name()
+            );
+        }
+        crate::circuit::validate(&circuit).expect("合法模块不能产生双驱动");
+    }
+
+    #[test]
+    fn strong_xor_export_is_rejected() {
+        let mut circuit = Circuit::new("m");
+        circuit.add_input(Signal::new("a"));
+        circuit.add_input(Signal::new("b"));
+        circuit.add_gate(Gate::new(
+            GateKind::Xor,
+            vec![Signal::new("a"), Signal::new("b")],
+            Signal::new("y"),
+        ));
+        circuit.add_output(Signal::new("y"));
+        assert!(to_verilog(&circuit).is_err(), "强加 Xor 不能导出为经典 xor");
     }
 
     #[test]

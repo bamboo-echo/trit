@@ -1,19 +1,3 @@
-#!/usr/bin/env python3
-"""变异门：对关键规则做单点文本变异，跑对应回归；测试必须变红。
-
-用法：python scripts/mutation_check.py
-每个变异都会在 finally 里恢复原文件；退出码 1 表示有 mutant 存活（测试没抓住）。
-"""
-
-from __future__ import annotations
-
-import pathlib
-import re
-import subprocess
-import sys
-
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-
 MUTANTS = [
     {
         "name": "core: K3 strong_add 用 OR 代替 AND",
@@ -21,7 +5,7 @@ MUTANTS = [
         "old": "    pub const fn strong_and(self, a: Ternary, b: Ternary) -> Ternary {\n        match self {\n            Self::Lukasiewicz => {\n                let s = a.as_f64() + b.as_f64() - 1.0;\n                if s <= 0.0 {\n                    Ternary::False\n                } else if s >= 1.0 {\n                    Ternary::True\n                } else {\n                    Ternary::Unknown\n                }\n            }\n            Self::Kleene | Self::Bochvar => {\n                if a.is_unknown() || b.is_unknown() {\n                    Ternary::Unknown\n                } else if a.is_true() && b.is_true() {",
         "new": "    pub const fn strong_and(self, a: Ternary, b: Ternary) -> Ternary {\n        match self {\n            Self::Lukasiewicz => {\n                let s = a.as_f64() + b.as_f64() - 1.0;\n                if s <= 0.0 {\n                    Ternary::False\n                } else if s >= 1.0 {\n                    Ternary::True\n                } else {\n                    Ternary::Unknown\n                }\n            }\n            Self::Kleene | Self::Bochvar => {\n                if a.is_unknown() || b.is_unknown() {\n                    Ternary::Unknown\n                } else if a.is_true() || b.is_true() {",
         "pkg": "trit-core",
-        "filter": "strong_and_lukasiewicz_matches_formula",
+        "filter": "strong_and_lukasiewicz_matches_formula"
     },
     {
         "name": "core: B3 或忘记扣掉未知位",
@@ -29,7 +13,7 @@ MUTANTS = [
         "old": "let res1 = (a1 | b1) & !resx;",
         "new": "let res1 = a1 | b1;",
         "pkg": "trit-core",
-        "filter": "ops_never_produce_illegal_rails",
+        "filter": "ops_never_produce_illegal_rails"
     },
     {
         "name": "core: from_binary 不截断多余字",
@@ -37,7 +21,7 @@ MUTANTS = [
         "old": "        ones.truncate(words);",
         "new": "        let _ = words;",
         "pkg": "trit-core",
-        "filter": "from_binary_normalizes",
+        "filter": "from_binary_normalizes"
     },
     {
         "name": "eval: OR 吸收误用 AND 形状",
@@ -45,7 +29,7 @@ MUTANTS = [
         "old": "    if let Expr::And(p, q) = y",
         "new": "    if let Expr::Or(p, q) = y",
         "pkg": "trit-eval",
-        "filter": "absorption_only_removes_matching_operator",
+        "filter": "absorption_only_removes_matching_operator"
     },
     {
         "name": "eval: K3 a^a 不再折回 a",
@@ -53,7 +37,7 @@ MUTANTS = [
         "old": "    if x == y && alg != Algebra::Lukasiewicz {",
         "new": "    if x == y && alg == Algebra::Lukasiewicz {",
         "pkg": "trit-eval",
-        "filter": "xor_and_equiv_self_respect_unknown",
+        "filter": "xor_and_equiv_self_respect_unknown"
     },
     {
         "name": "eval: 自等价对所有代数折叠成 1",
@@ -61,7 +45,7 @@ MUTANTS = [
         "old": "    if x == y && alg == Algebra::Lukasiewicz {",
         "new": "    if x == y {",
         "pkg": "trit-eval",
-        "filter": "xor_and_equiv_self_respect_unknown",
+        "filter": "xor_and_equiv_self_respect_unknown"
     },
     {
         "name": "sat: 二值 strong_add 的 Ł3 分支用 AND",
@@ -69,7 +53,7 @@ MUTANTS = [
         "old": "            Algebra::Lukasiewicz => self.binary_or(a, b),",
         "new": "            Algebra::Lukasiewicz => self.binary_and(a, b),",
         "pkg": "trit-sat",
-        "filter": "binary_fast_path_uses_strong_add_not_xor",
+        "filter": "binary_fast_path_uses_strong_add_not_xor"
     },
     {
         "name": "circuit: 拓扑排序退回声明序",
@@ -77,7 +61,7 @@ MUTANTS = [
         "old": "            if deps.iter().all(|d| resolved.contains(d)) {",
         "new": "            if true {",
         "pkg": "trit-circuit",
-        "filter": "evaluation_is_independent_of_gate_declaration_order",
+        "filter": "evaluation_is_independent_of_gate_declaration_order"
     },
     {
         "name": "circuit: 引脚故障不注入",
@@ -85,7 +69,7 @@ MUTANTS = [
         "old": "                ins[pin] = value;",
         "new": "                let _ = value;",
         "pkg": "trit-circuit",
-        "filter": "fault_polarities_are_reported_separately",
+        "filter": "fault_polarities_are_reported_separately"
     },
     {
         "name": "sat: 前提过滤不再要求 premise.t=1",
@@ -93,7 +77,7 @@ MUTANTS = [
         "old": "    enc.clause(&[Lit::from_var(p.t, true)]);",
         "new": "    enc.clause(&[Lit::from_var(p.t, false)]);",
         "pkg": "trit-policy",
-        "filter": "counterexample_satisfies_premise",
+        "filter": "counterexample_satisfies_premise"
     },
     {
         "name": "atpg: 全向量矩阵枚举为空",
@@ -101,7 +85,7 @@ MUTANTS = [
         "old": "    let total = 1u64 << circuit.input_count();",
         "new": "    let total = 0;",
         "pkg": "trit-circuit",
-        "filter": "atpg",
+        "filter": "atpg"
     },
     {
         "name": "circuit: 不可观测误判为被遮蔽",
@@ -109,7 +93,7 @@ MUTANTS = [
         "old": "                } else if reachable.contains(gate.output.name()) {",
         "new": "                } else if true {",
         "pkg": "trit-circuit",
-        "filter": "untestable_reasons",
+        "filter": "untestable_reasons"
     },
     {
         "name": "netlist: gate 参数计数失效",
@@ -117,15 +101,15 @@ MUTANTS = [
         "old": "                if parts.len() != 5 {",
         "new": "                if false {",
         "pkg": "trit-circuit",
-        "filter": "reports_line_numbers",
+        "filter": "reports_line_numbers"
     },
     {
         "name": "atpg: 精确覆盖递归错误清除已覆盖位",
         "file": "crates/trit-circuit/src/atpg.rs",
-        "old": "        search_cover(uncovered & !faults, chosen, best, sets, max_gain, budget);",
-        "new": "        search_cover(uncovered & faults, chosen, best, sets, max_gain, budget);",
+        "old": "        search_cover(\n            uncovered & !faults,",
+        "new": "        search_cover(\n            uncovered & faults,",
         "pkg": "trit-circuit",
-        "filter": "minimum_cover_matches_bruteforce",
+        "filter": "minimum_cover_matches_bruteforce"
     },
     {
         "name": "bdd: 节点预算永不触发",
@@ -133,7 +117,7 @@ MUTANTS = [
         "old": "        if bdd.size() > self.limits.max_nodes {",
         "new": "        if false {",
         "pkg": "trit-bdd",
-        "filter": "budget_rejects",
+        "filter": "budget_rejects"
     },
     {
         "name": "bdd: 频率降序写反",
@@ -141,7 +125,7 @@ MUTANTS = [
         "old": "                    cr.cmp(&cl)",
         "new": "                    cl.cmp(&cr)",
         "pkg": "trit-bdd",
-        "filter": "frequency_order",
+        "filter": "frequency_order"
     },
     {
         "name": "bdd: is_valid 退回布尔全集",
@@ -149,7 +133,7 @@ MUTANTS = [
         "old": "        self.bdd.not().and(&self.valid_free).is_false()",
         "new": "        self.bdd.is_true()",
         "pkg": "trit-bdd",
-        "filter": "forall_with_free_ternary_variable_is_judged_on_valid_domain",
+        "filter": "forall_with_free_ternary_variable_is_judged_on_valid_domain"
     },
     {
         "name": "bdd: satisfiable 不限制合法域",
@@ -157,15 +141,31 @@ MUTANTS = [
         "old": "    let sat = enc.guard(enc.valid()?.and(&node.t).and(&node.x.not()))?;",
         "new": "    let sat = enc.guard(node.t.and(&node.x.not()))?;",
         "pkg": "trit-bdd",
-        "filter": "satisfiable_requires_a_legal_valuation",
+        "filter": "satisfiable_requires_a_legal_valuation"
     },
     {
-        "name": "atpg: X 合并忽略唯一覆盖（保留全部故障）",
-        "file": "crates/trit-circuit/src/atpg.rs",
-        "old": "                        need.retain(|fault| !detected.contains(fault));",
-        "new": "                        need.retain(|_fault| true);",
+        "name": "verilog: 多输入 NAND/NOR 忘记最终反相",
+        "file": "crates/trit-circuit/src/verilog.rs",
+        "old": "                        if invert {",
+        "new": "                        if false {",
         "pkg": "trit-circuit",
-        "filter": "compaction_merges_witness_patterns",
+        "filter": "multi_input_nand_nor_are_not_left_folded"
+    },
+    {
+        "name": "atpg: X 位只验证一种填充",
+        "file": "crates/trit-circuit/src/atpg.rs",
+        "old": "    for fill in 0..(1u64 << xbits.len()) {",
+        "new": "    for fill in 0..1 {",
+        "pkg": "trit-circuit",
+        "filter": "dont_care_bits_are_jointly_fillable"
+    },
+    {
+        "name": "check: 覆盖率无法执行时仍然 PASS",
+        "file": "crates/trit-cli/src/main.rs",
+        "old": "    if atpg.is_none() && min_coverage > 0.0 {",
+        "new": "    if false {",
+        "pkg": "trit-cli",
+        "filter": "check_fails_closed_when_coverage_cannot_run"
     },
     {
         "name": "aiger: 忽略时序锁存器",
@@ -173,7 +173,7 @@ MUTANTS = [
         "old": "    if latches > 0 {",
         "new": "    if false {",
         "pkg": "trit-circuit",
-        "filter": "rejects_latches_strong_xor_and_bad_header",
+        "filter": "rejects_latches_strong_xor_and_bad_header"
     },
     {
         "name": "blif: 把 '-' 当成 0 字面量",
@@ -181,31 +181,31 @@ MUTANTS = [
         "old": "                        \"-\" => None,",
         "new": "                        \"-\" => Some(false),",
         "pkg": "trit-circuit",
-        "filter": "constants_and_dont_care_rows",
+        "filter": "constants_and_dont_care_rows"
     },
     {
         "name": "verilog: assign 的 ^ 退化成强加三值 Xor",
         "file": "crates/trit-circuit/src/verilog.rs",
-        "old": "                    _ => GateKind::XorClassic,",
-        "new": "                    _ => GateKind::Xor,",
+        "old": "                    VExpr::Or(..) => GateKind::Or,\n                    _ => GateKind::XorClassic,",
+        "new": "                    VExpr::Or(..) => GateKind::Or,\n                    _ => GateKind::Xor,",
         "pkg": "trit-circuit",
-        "filter": "assign_xor_is_not_lukasiewicz_strong_sum",
+        "filter": "assign_xor_is_not_lukasiewicz_strong_sum"
     },
     {
         "name": "timing: 负载延迟不参与到达时间",
         "file": "crates/trit-circuit/src/timing.rs",
-        "old": "        self.delay_for(kind)\n            .saturating_add(self.load_delay.saturating_mul(fanout as u32))",
-        "new": "        self.delay_for(kind)",
+        "old": "        u64::from(self.delay_for(kind)) + u64::from(self.load_delay) * fanout as u64",
+        "new": "        u64::from(self.delay_for(kind))",
         "pkg": "trit-circuit",
-        "filter": "load_delay_accumulates_with_fanout",
+        "filter": "load_delay_accumulates_with_fanout"
     },
     {
         "name": "map: 直接单元到达时间漏加延迟",
         "file": "crates/trit-circuit/src/map.rs",
-        "old": "                arrival: start.saturating_add(delay).saturating_add(load),",
-        "new": "                arrival: start.saturating_add(load),",
+        "old": "            let total = u64::from(start) + u64::from(delay) + u64::from(load_delay) * fanout;",
+        "new": "            let total = u64::from(start) + u64::from(load_delay) * fanout;",
         "pkg": "trit-circuit",
-        "filter": "timing_driven_picks_lower_arrival_implementation",
+        "filter": "timing_driven_picks_lower_arrival_implementation"
     },
     {
         "name": "map: 面积策略按延迟排序",
@@ -213,8 +213,16 @@ MUTANTS = [
         "old": "                MapStrategy::Area => (candidate.cells as u64, candidate.arrival as u64),",
         "new": "                MapStrategy::Area => (candidate.arrival as u64, candidate.cells as u64),",
         "pkg": "trit-circuit",
-        "filter": "timing_driven_picks_lower_arrival_implementation",
+        "filter": "timing_driven_picks_lower_arrival_implementation"
     },
+    {
+        "name": "atpg: X 合并忽略唯一覆盖（保留全部故障）",
+        "file": "crates/trit-circuit/src/atpg.rs",
+        "old": "                        need.retain(|fault| !detected.contains(fault));",
+        "new": "                        need.retain(|_fault| true);",
+        "pkg": "trit-circuit",
+        "filter": "compaction_merges_witness_patterns"
+    }
 ]
 
 

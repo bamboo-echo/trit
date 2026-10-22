@@ -42,7 +42,9 @@ fn netlist_parser_round_trips_or_rejects() {
         let text = mutate(&mut state, seed, round % 4 + 1);
         if let Ok(circuit) = parse_netlist(&text) {
             parsed += 1;
-            let rendered = trit_circuit::netlist::to_netlist(&circuit);
+            let Ok(rendered) = trit_circuit::netlist::to_netlist(&circuit) else {
+                continue;
+            };
             let again = parse_netlist(&rendered).expect("to_netlist 输出必须可解析");
             assert_eq!(circuit, again);
         }
@@ -59,7 +61,9 @@ fn verilog_parser_round_trips_or_rejects() {
         let text = mutate(&mut state, seed, round % 4 + 1);
         if let Ok(circuit) = parse_verilog(&text) {
             parsed += 1;
-            let rendered = trit_circuit::to_verilog(&circuit);
+            let Ok(rendered) = trit_circuit::to_verilog(&circuit) else {
+                continue;
+            };
             let again = parse_verilog(&rendered).expect("to_verilog 输出必须可解析");
             assert_eq!(circuit.outputs.len(), again.outputs.len());
         }

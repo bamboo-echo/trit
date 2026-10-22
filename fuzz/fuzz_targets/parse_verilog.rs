@@ -9,7 +9,9 @@ fuzz_target!(|data: &[u8]| {
     let Ok(circuit) = trit_circuit::parse_verilog(text) else {
         return;
     };
-    let rendered = trit_circuit::to_verilog(&circuit);
+    let Ok(rendered) = trit_circuit::to_verilog(&circuit) else {
+        return;
+    };
     let again = trit_circuit::parse_verilog(&rendered).expect("to_verilog 的输出必须可解析");
     assert_eq!(circuit.outputs.len(), again.outputs.len());
 });

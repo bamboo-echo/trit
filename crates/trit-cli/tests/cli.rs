@@ -644,6 +644,51 @@ fn map_load_delay_prefers_direct_cell() {
 }
 
 #[test]
+fn netlist_refuses_to_export_strong_xor() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/strong_xor.net");
+    let (stdout, stderr, code) = run(&["netlist", path.to_str().unwrap(), "--to", "verilog"]);
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
+    assert!(stderr.contains("强加 Xor"), "stderr={stderr}");
+}
+
+#[test]
+fn timing_overflow_is_an_error() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fanout3.net");
+    let (stdout, stderr, code) = run(&[
+        "timing",
+        path.to_str().unwrap(),
+        "--delay",
+        "4294967295",
+        "--clock",
+        "4294967295",
+    ]);
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
+    assert!(stderr.contains("超出 u32"), "stderr={stderr}");
+}
+
+#[test]
+fn check_fails_closed_when_coverage_cannot_run() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/wide11.net");
+    let path = path.to_str().unwrap();
+
+    let (stdout, stderr, code) = run(&["check", path, "--clock", "999", "--min-coverage", "0.9"]);
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("覆盖率检查未执行"), "{stdout}");
+    assert!(stdout.contains("结果：FAIL"), "{stdout}");
+
+    let (stdout, stderr, code) = run(&["check", path, "--clock", "999"]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("ATPG：跳过"), "{stdout}");
+
+    let (_, stderr, code) = run(&["check", path, "--min-coverage", "1.5"]);
+    assert_eq!(code, 1, "stderr={stderr}");
+    assert!(stderr.contains("--min-coverage"), "{stderr}");
+}
+
+#[test]
 fn netlist_parses_and_writes_aiger() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let aiger = dir.join("and2.aig");

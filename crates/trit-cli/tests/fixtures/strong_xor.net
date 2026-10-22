@@ -1,0 +1,4 @@
+input a
+input b
+gate XOR a b y
+output y
