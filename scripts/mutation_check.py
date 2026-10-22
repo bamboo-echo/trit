@@ -82,8 +82,8 @@ MUTANTS = [
     {
         "name": "circuit: 引脚故障不注入",
         "file": "crates/trit-circuit/src/circuit.rs",
-        "old": "            *slot = value;",
-        "new": "            let _ = value;",
+        "old": "                ins[pin] = value;",
+        "new": "                let _ = value;",
         "pkg": "trit-circuit",
         "filter": "fault_polarities_are_reported_separately",
     },
@@ -158,6 +158,22 @@ MUTANTS = [
         "new": "    let sat = enc.guard(node.t.and(&node.x.not()))?;",
         "pkg": "trit-bdd",
         "filter": "satisfiable_requires_a_legal_valuation",
+    },
+    {
+        "name": "map: 直接单元到达时间漏加延迟",
+        "file": "crates/trit-circuit/src/map.rs",
+        "old": "                arrival: start.saturating_add(delay),",
+        "new": "                arrival: start,",
+        "pkg": "trit-circuit",
+        "filter": "timing_driven_picks_lower_arrival_implementation",
+    },
+    {
+        "name": "map: 面积策略按延迟排序",
+        "file": "crates/trit-circuit/src/map.rs",
+        "old": "                MapStrategy::Area => (candidate.cells as u64, candidate.arrival as u64),",
+        "new": "                MapStrategy::Area => (candidate.arrival as u64, candidate.cells as u64),",
+        "pkg": "trit-circuit",
+        "filter": "timing_driven_picks_lower_arrival_implementation",
     },
 ]
 

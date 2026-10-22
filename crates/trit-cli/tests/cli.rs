@@ -584,3 +584,43 @@ fn map_lowers_to_nand_only() {
     assert!(stdout.contains("gate NAND"), "{stdout}");
     assert!(!stdout.contains("gate AND"), "{stdout}");
 }
+
+#[test]
+fn map_cell_library_picks_implementation_by_timing() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let net = dir.join("and2.net");
+    let net = net.to_str().unwrap();
+
+    // AND 延迟 1 < 两级 NAND 延迟 8：时序驱动应保留单个 AND 单元。
+    let cheap_and = dir.join("cells_and.json");
+    let (stdout, stderr, code) = run(&["map", net, "--cells", cheap_and.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("gate AND"), "{stdout}");
+    assert!(!stdout.contains("gate NAND"), "{stdout}");
+
+    // AND 延迟 4 > 两级 NAND 延迟 2：时序驱动应展开成 NAND。
+    let cheap_nand = dir.join("cells_nand.json");
+    let (stdout, stderr, code) = run(&["map", net, "--cells", cheap_nand.to_str().unwrap()]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(!stdout.contains("gate AND"), "{stdout}");
+    assert_eq!(stdout.matches("gate NAND").count(), 2, "{stdout}");
+
+    // 面积优先同库下选单个 AND（1 个单元），哪怕更慢。
+    let (stdout, stderr, code) = run(&[
+        "map",
+        net,
+        "--cells",
+        cheap_nand.to_str().unwrap(),
+        "--area-first",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("gate AND"), "{stdout}");
+}
+
+#[test]
+fn map_area_first_without_cells_is_rejected() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/and2.net");
+    let (_, stderr, code) = run(&["map", path.to_str().unwrap(), "--area-first"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("--area-first 需要配合 --cells"), "{stderr}");
+}

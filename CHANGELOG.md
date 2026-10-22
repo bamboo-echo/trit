@@ -4,6 +4,8 @@
 
 ### Added
 
+- 时序驱动技术映射：`CellLibrary` + `to_cells`，每门在直接单元与 NAND 展开间按到达时间选实现
+  （最长路径 DP，关键路径最优）；`MapStrategy::Area` 优先单元数。CLI `map --cells` / `--area-first`。
 - `trit atpg --format csv`：`pattern,<输入…>,covered`，便于导出给外部仿真器。
 - `trit_circuit::netlist`：`parse_netlist` / `to_netlist` 从 CLI 下沉到库（可往返）。
 - WASM `atpg_js(netlist, algebra)`：浏览器里直接跑 ATPG，返回 JSON。
