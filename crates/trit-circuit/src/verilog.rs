@@ -18,6 +18,17 @@ fn message(text: impl Into<String>) -> VerilogError {
     VerilogError::Message(text.into())
 }
 
+/// 输入文本上限：在切分/展开之前拒绝超大文件。
+const MAX_VERILOG_BYTES: usize = 1 << 20;
+/// 单个向量端口/线网的位宽上限。
+const MAX_VECTOR_WIDTH: usize = 4096;
+/// 声明出来的总网络数上限。
+const MAX_NETS: usize = 100_000;
+/// 生成的门数上限。
+const MAX_GATES: usize = 100_000;
+/// assign 右值的最大嵌套深度。
+const MAX_RHS_DEPTH: usize = 256;
+
 fn strip_comments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let chars: Vec<char> = text.chars().collect();
@@ -48,6 +59,21 @@ fn is_identifier(name: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
 }
 
+/// 信号引用：标识符或位选 `name[3]`。
+fn is_signal_ref(token: &str) -> bool {
+    if is_identifier(token) {
+        return true;
+    }
+    let Some(open) = token.find('[') else {
+        return false;
+    };
+    let base = &token[..open];
+    let Some(inner) = token[open + 1..].strip_suffix(']') else {
+        return false;
+    };
+    is_identifier(base) && !inner.is_empty() && inner.chars().all(|ch| ch.is_ascii_digit())
+}
+
 struct Builder<'a> {
     circuit: &'a mut Circuit,
     used: &'a mut std::collections::BTreeSet<String>,
@@ -65,29 +91,50 @@ impl Builder<'_> {
         }
     }
 
-    fn add_gate(&mut self, kind: GateKind, inputs: Vec<String>, output: &str) {
+    fn check_gate_budget(&self) -> Result<(), VerilogError> {
+        if self.circuit.gates.len() >= MAX_GATES {
+            return Err(message(format!("生成的门数超过上限 {MAX_GATES}")));
+        }
+        Ok(())
+    }
+
+    fn add_gate(
+        &mut self,
+        kind: GateKind,
+        inputs: Vec<String>,
+        output: &str,
+    ) -> Result<(), VerilogError> {
+        self.check_gate_budget()?;
         self.used.insert(output.to_string());
         self.circuit.add_gate(Gate::new(
             kind,
             inputs.into_iter().map(Signal::new).collect(),
             Signal::new(output),
         ));
+        Ok(())
+    }
+
+    fn add_const(&mut self, value: Ternary, target: &str) -> Result<(), VerilogError> {
+        self.check_gate_budget()?;
+        self.used.insert(target.to_string());
+        self.circuit
+            .add_gate(Gate::constant(value, Signal::new(target)));
+        Ok(())
     }
 
     fn synth_v(&mut self, expr: &VExpr, target: &str) -> Result<(), VerilogError> {
         match expr {
             VExpr::Var(name) => {
                 if name != target {
-                    self.add_gate(GateKind::Buf, vec![name.clone()], target);
+                    self.add_gate(GateKind::Buf, vec![name.clone()], target)?;
                 }
             }
             VExpr::Const(value) => {
-                self.circuit
-                    .add_gate(Gate::constant(*value, Signal::new(target)));
+                self.add_const(*value, target)?;
             }
             VExpr::Not(inner) => {
                 let source = self.temp_v(inner)?;
-                self.add_gate(GateKind::Not, vec![source], target);
+                self.add_gate(GateKind::Not, vec![source], target)?;
             }
             VExpr::And(a, b) | VExpr::Or(a, b) | VExpr::Xor(a, b) => {
                 let left = self.temp_v(a)?;
@@ -97,7 +144,10 @@ impl Builder<'_> {
                     VExpr::Or(..) => GateKind::Or,
                     _ => GateKind::XorClassic,
                 };
-                self.add_gate(kind, vec![left, right], target);
+                self.add_gate(kind, vec![left, right], target)?;
+            }
+            VExpr::Concat(_) => {
+                return Err(message("拼接只能用于向量化 assign"));
             }
         }
         Ok(())
@@ -108,10 +158,10 @@ impl Builder<'_> {
             VExpr::Var(name) => Ok(name.clone()),
             VExpr::Const(value) => {
                 let name = self.fresh();
-                self.circuit
-                    .add_gate(Gate::constant(*value, Signal::new(name.clone())));
+                self.add_const(*value, &name)?;
                 Ok(name)
             }
+            VExpr::Concat(_) => Err(message("拼接只能用于向量化 assign")),
             _ => {
                 let name = self.fresh();
                 self.synth_v(expr, &name)?;
@@ -130,11 +180,14 @@ enum VExpr {
     And(Box<VExpr>, Box<VExpr>),
     Or(Box<VExpr>, Box<VExpr>),
     Xor(Box<VExpr>, Box<VExpr>),
+    /// 拼接 `{a, b, ...}`（低位在右）。
+    Concat(Vec<VExpr>),
 }
 
 struct RhsParser {
     chars: Vec<char>,
     pos: usize,
+    depth: usize,
 }
 
 impl RhsParser {
@@ -142,7 +195,20 @@ impl RhsParser {
         Self {
             chars: text.chars().collect(),
             pos: 0,
+            depth: 0,
         }
+    }
+
+    fn enter(&mut self) -> Result<(), VerilogError> {
+        self.depth += 1;
+        if self.depth > MAX_RHS_DEPTH {
+            return Err(message(format!("assign 表达式嵌套超过 {MAX_RHS_DEPTH} 层")));
+        }
+        Ok(())
+    }
+
+    fn leave(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
     fn skip_ws(&mut self) {
@@ -236,7 +302,10 @@ impl RhsParser {
         match self.peek() {
             Some('~') | Some('!') => {
                 self.pos += 1;
-                Ok(VExpr::Not(Box::new(self.parse_unary()?)))
+                self.enter()?;
+                let inner = self.parse_unary();
+                self.leave();
+                Ok(VExpr::Not(Box::new(inner?)))
             }
             _ => self.parse_primary(),
         }
@@ -245,9 +314,30 @@ impl RhsParser {
     fn parse_primary(&mut self) -> Result<VExpr, VerilogError> {
         self.skip_ws();
         match self.peek() {
+            Some('{') => {
+                self.pos += 1;
+                let mut items = Vec::new();
+                loop {
+                    items.push(self.parse_or()?);
+                    self.skip_ws();
+                    match self.bump() {
+                        Some(',') => continue,
+                        Some('}') => break,
+                        _ => {
+                            return Err(message(
+                                "拼接缺少 '}'（只支持 {a, b, ...}，不支持复制语法）",
+                            ));
+                        }
+                    }
+                }
+                Ok(VExpr::Concat(items))
+            }
             Some('(') => {
                 self.pos += 1;
-                let expr = self.parse_or()?;
+                self.enter()?;
+                let expr = self.parse_or();
+                self.leave();
+                let expr = expr?;
                 self.skip_ws();
                 if self.bump() != Some(')') {
                     return Err(message("assign 表达式缺少 ')'"));
@@ -275,7 +365,26 @@ impl RhsParser {
                         break;
                     }
                 }
-                Ok(VExpr::Var(self.chars[start..self.pos].iter().collect()))
+                let name: String = self.chars[start..self.pos].iter().collect();
+                // 位选 `a[3]` 直接解析成位网名 `a[3]`。
+                self.skip_ws();
+                if self.peek() == Some('[') {
+                    self.pos += 1;
+                    let index_start = self.pos;
+                    while self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+                        self.pos += 1;
+                    }
+                    let index: String = self.chars[index_start..self.pos].iter().collect();
+                    self.skip_ws();
+                    if self.bump() != Some(']') {
+                        return Err(message("位选缺少 ']'"));
+                    }
+                    let index: usize = index
+                        .parse()
+                        .map_err(|_| message(format!("位选 {name}[{index}] 的下标不是数字")))?;
+                    return Ok(VExpr::Var(format!("{name}[{index}]")));
+                }
+                Ok(VExpr::Var(name))
             }
             Some(ch) => Err(message(format!("assign 表达式里出现意外字符 {ch:?}"))),
             None => Err(message("assign 表达式不完整")),
@@ -304,15 +413,157 @@ fn split_list(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// 解析 `[N:0]`；只支持降序到 0。返回 `None` 表示没有位宽声明。
+fn parse_range(token: &str) -> Result<Option<usize>, VerilogError> {
+    let token = token.trim();
+    let Some(inner) = token
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    else {
+        return Ok(None);
+    };
+    let Some((left, right)) = inner.split_once(':') else {
+        return Err(message(format!("位宽声明 {token:?} 需要 [msb:lsb]")));
+    };
+    let left: usize = left
+        .trim()
+        .parse()
+        .map_err(|_| message(format!("位宽上界 {left:?} 不是数字")))?;
+    let right: usize = right
+        .trim()
+        .parse()
+        .map_err(|_| message(format!("位宽下界 {right:?} 不是数字")))?;
+    if right != 0 {
+        return Err(message(format!(
+            "只支持 [N:0] 形式的位宽，{token:?} 不受支持"
+        )));
+    }
+    let width = left.checked_add(1).ok_or_else(|| message("位宽溢出"))?;
+    if width > MAX_VECTOR_WIDTH {
+        return Err(message(format!("位宽 {width} 超过上限 {MAX_VECTOR_WIDTH}")));
+    }
+    Ok(Some(left))
+}
+
+/// 把声明文本拆成 `(位宽, 名字列表)`；例如 `[3:0] a, b` → `(Some(3), "a, b")`。
+fn split_declaration(text: &str) -> Result<(Option<usize>, String), VerilogError> {
+    let text = text.trim();
+    if let Some(open) = text.find('[') {
+        let close = text.find(']').ok_or_else(|| message("位宽声明缺少 ']'"))?;
+        if close < open {
+            return Err(message("位宽声明的括号顺序错误"));
+        }
+        let range = parse_range(&text[open..=close])?
+            .ok_or_else(|| message("内部错误：位宽声明解析失败"))?;
+        Ok((Some(range), text[close + 1..].trim().to_string()))
+    } else {
+        Ok((None, text.to_string()))
+    }
+}
+
+/// 解析 assign 左值：`y` 或 `y[3]`。
+fn parse_lhs(text: &str) -> Result<(String, Option<usize>), VerilogError> {
+    let text = text.trim();
+    if let Some(open) = text.find('[') {
+        let close = text
+            .rfind(']')
+            .ok_or_else(|| message("assign 目标位选缺少 ']'"))?;
+        if close + 1 != text.len() {
+            return Err(message("assign 目标位选后有多余字符"));
+        }
+        let base = text[..open].trim();
+        if !is_identifier(base) {
+            return Err(message(format!("非法 assign 目标 {base:?}")));
+        }
+        let index: usize = text[open + 1..close]
+            .trim()
+            .parse()
+            .map_err(|_| message("assign 目标位选的下标不是数字"))?;
+        Ok((base.to_string(), Some(index)))
+    } else {
+        if !is_identifier(text) {
+            return Err(message(format!("非法 assign 目标 {text:?}")));
+        }
+        Ok((text.to_string(), None))
+    }
+}
+
+/// 表达式位宽（标量 1；向量按声明位宽；拼接为各段之和）。
+fn expr_width(expr: &VExpr, widths: &std::collections::BTreeMap<String, usize>) -> usize {
+    match expr {
+        VExpr::Var(name) => widths.get(name).copied().unwrap_or(1),
+        VExpr::Const(_) => 1,
+        VExpr::Not(inner) => expr_width(inner, widths),
+        VExpr::And(a, b) | VExpr::Or(a, b) | VExpr::Xor(a, b) => {
+            expr_width(a, widths).max(expr_width(b, widths))
+        }
+        VExpr::Concat(items) => items.iter().map(|item| expr_width(item, widths)).sum(),
+    }
+}
+
+/// 取向量化 assign 的第 `index` 位；标量与常量按 Verilog 规则零扩展。
+fn bit_expr(
+    expr: &VExpr,
+    index: usize,
+    widths: &std::collections::BTreeMap<String, usize>,
+) -> Result<VExpr, VerilogError> {
+    match expr {
+        VExpr::Var(name) => {
+            let width = widths.get(name).copied().unwrap_or(1);
+            if width > 1 {
+                if index >= width {
+                    return Err(message(format!(
+                        "位 {index} 超出向量 {name} 的宽度 {width}"
+                    )));
+                }
+                Ok(VExpr::Var(format!("{name}[{index}]")))
+            } else if index == 0 {
+                Ok(VExpr::Var(name.clone()))
+            } else {
+                Ok(VExpr::Const(Ternary::False))
+            }
+        }
+        VExpr::Const(value) => Ok(VExpr::Const(if index == 0 {
+            *value
+        } else {
+            Ternary::False
+        })),
+        VExpr::Not(inner) => Ok(VExpr::Not(Box::new(bit_expr(inner, index, widths)?))),
+        VExpr::And(a, b) => Ok(VExpr::And(
+            Box::new(bit_expr(a, index, widths)?),
+            Box::new(bit_expr(b, index, widths)?),
+        )),
+        VExpr::Or(a, b) => Ok(VExpr::Or(
+            Box::new(bit_expr(a, index, widths)?),
+            Box::new(bit_expr(b, index, widths)?),
+        )),
+        VExpr::Xor(a, b) => Ok(VExpr::Xor(
+            Box::new(bit_expr(a, index, widths)?),
+            Box::new(bit_expr(b, index, widths)?),
+        )),
+        VExpr::Concat(items) => {
+            let mut offset = 0usize;
+            for item in items.iter().rev() {
+                let width = expr_width(item, widths);
+                if index < offset + width {
+                    return bit_expr(item, index - offset, widths);
+                }
+                offset += width;
+            }
+            Err(message(format!("拼接位 {index} 越界")))
+        }
+    }
+}
+
 fn declare_ports(
     circuit: &mut Circuit,
     direction: &str,
+    range: Option<usize>,
     list: &str,
     declared: &mut HashSet<String>,
+    widths: &mut std::collections::BTreeMap<String, usize>,
+    nets: &mut usize,
 ) -> Result<(), VerilogError> {
-    if list.contains('[') {
-        return Err(message("暂不支持多比特端口"));
-    }
     for name in split_list(list) {
         if !is_identifier(&name) {
             return Err(message(format!("非法端口名 {name:?}")));
@@ -320,21 +571,69 @@ fn declare_ports(
         if !declared.insert(name.clone()) {
             continue;
         }
-        match direction {
-            "input" => {
-                circuit.add_input(Signal::new(name.clone()));
+        let width = range.map_or(1, |msb| msb + 1);
+        *nets = nets
+            .checked_add(width)
+            .ok_or_else(|| message("网络数溢出"))?;
+        if *nets > MAX_NETS {
+            return Err(message(format!("声明的网络数超过上限 {MAX_NETS}")));
+        }
+        match range {
+            Some(msb) => {
+                widths.insert(name.clone(), msb + 1);
+                for index in (0..=msb).rev() {
+                    let bit = format!("{name}[{index}]");
+                    match direction {
+                        "input" => {
+                            circuit.add_input(Signal::new(bit));
+                        }
+                        "output" => {
+                            circuit.add_output(Signal::new(bit));
+                        }
+                        _ => {}
+                    }
+                }
             }
-            "output" => {
-                circuit.add_output(Signal::new(name.clone()));
+            None => {
+                widths.insert(name.clone(), 1);
+                match direction {
+                    "input" => {
+                        circuit.add_input(Signal::new(name));
+                    }
+                    "output" => {
+                        circuit.add_output(Signal::new(name));
+                    }
+                    _ => {}
+                }
             }
-            _ => {}
         }
     }
     Ok(())
 }
 
+fn mark_used(used: &mut std::collections::BTreeSet<String>, range: Option<usize>, list: &str) {
+    for name in split_list(list) {
+        match range {
+            Some(msb) => {
+                for index in (0..=msb).rev() {
+                    used.insert(format!("{name}[{index}]"));
+                }
+            }
+            None => {
+                used.insert(name);
+            }
+        }
+    }
+}
+
 /// 解析结构化 Verilog 子集。
 pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
+    if text.len() > MAX_VERILOG_BYTES {
+        return Err(message(format!(
+            "Verilog 文本 {} 字节，超过上限 {MAX_VERILOG_BYTES}",
+            text.len()
+        )));
+    }
     let cleaned = strip_comments(text);
     let Some(module_at) = cleaned.find("module") else {
         return Err(message("缺少 module 声明"));
@@ -373,26 +672,57 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
     let mut circuit = Circuit::new(module_name);
     let mut declared: HashSet<String> = HashSet::new();
     let mut wires: HashSet<String> = HashSet::new();
+    let mut widths: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut nets = 0usize;
     let mut used: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut counter = 0usize;
 
     if let Some(ports) = port_text.filter(|p| !p.trim().is_empty()) {
         let ansi = ports.contains("input") || ports.contains("output");
         if ansi {
+            let mut last_direction: Option<&'static str> = None;
+            let mut last_range: Option<usize> = None;
             for part in ports.split(',') {
                 let tokens: Vec<&str> = part.split_whitespace().collect();
-                let Some(direction) = tokens.first().copied() else {
+                let Some(first) = tokens.first().copied() else {
                     continue;
                 };
-                if direction != "input" && direction != "output" {
-                    return Err(message(format!("未知端口方向 {direction:?}")));
-                }
-                let names: Vec<&str> = tokens
+                let (direction, rest_tokens) = if first == "input" || first == "output" {
+                    last_direction = Some(if first == "input" { "input" } else { "output" });
+                    last_range = None;
+                    (last_direction.unwrap(), &tokens[1..])
+                } else {
+                    let Some(direction) = last_direction else {
+                        return Err(message(format!("未知端口方向 {first:?}")));
+                    };
+                    (direction, &tokens[..])
+                };
+                let rest: String = rest_tokens
                     .iter()
                     .copied()
-                    .filter(|token| *token != "input" && *token != "output" && *token != "wire")
-                    .collect();
-                declare_ports(&mut circuit, direction, &names.join(","), &mut declared)?;
+                    .filter(|token| *token != "wire")
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if rest.is_empty() {
+                    continue;
+                }
+                let (range, list) = if rest.trim_start().starts_with('[') {
+                    let (range, list) = split_declaration(&rest)?;
+                    last_range = range;
+                    (range, list)
+                } else {
+                    (last_range, rest)
+                };
+                declare_ports(
+                    &mut circuit,
+                    direction,
+                    range,
+                    &list,
+                    &mut declared,
+                    &mut widths,
+                    &mut nets,
+                )?;
+                mark_used(&mut used, range, &list);
             }
         } else {
             for name in split_list(&ports) {
@@ -404,55 +734,105 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
         }
     }
 
-    used.extend(declared.iter().cloned());
-    for statement in body.split(';') {
-        let statement = statement.trim();
-        if statement.is_empty() {
-            continue;
-        }
+    let statements: Vec<&str> = body
+        .split(';')
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+        .collect();
+    // 先收集声明，assign 可以写在声明之前（与常见 Verilog 写法兼容）。
+    for statement in &statements {
         let first = statement.split_whitespace().next().unwrap_or("");
         match first {
             "input" | "output" => {
-                for name in split_list(statement[first.len()..].trim()) {
-                    if !is_identifier(&name) {
-                        return Err(message(format!("非法端口名 {name:?}")));
-                    }
-                    if !declared.insert(name.clone()) {
-                        continue;
-                    }
-                    used.insert(name.clone());
-                    if first == "input" {
-                        circuit.add_input(Signal::new(name));
-                    } else {
-                        circuit.add_output(Signal::new(name));
-                    }
-                }
+                let (range, list) = split_declaration(statement[first.len()..].trim())?;
+                declare_ports(
+                    &mut circuit,
+                    first,
+                    range,
+                    &list,
+                    &mut declared,
+                    &mut widths,
+                    &mut nets,
+                )?;
+                mark_used(&mut used, range, &list);
             }
             "wire" => {
-                for name in split_list(statement["wire".len()..].trim()) {
+                let (range, list) = split_declaration(statement["wire".len()..].trim())?;
+                for name in split_list(&list) {
                     if !is_identifier(&name) {
                         return Err(message(format!("非法 wire 名 {name:?}")));
                     }
-                    used.insert(name.clone());
-                    wires.insert(name);
+                    if !wires.insert(name.clone()) {
+                        continue;
+                    }
+                    let width = range.map_or(1, |msb| msb + 1);
+                    nets = nets
+                        .checked_add(width)
+                        .ok_or_else(|| message("网络数溢出"))?;
+                    if nets > MAX_NETS {
+                        return Err(message(format!("声明的网络数超过上限 {MAX_NETS}")));
+                    }
+                    widths.insert(name.clone(), width);
                 }
+                mark_used(&mut used, range, &list);
             }
+            _ => {}
+        }
+    }
+
+    for statement in &statements {
+        let statement = statement.trim();
+        let first = statement.split_whitespace().next().unwrap_or("");
+        match first {
+            "input" | "output" | "wire" => {}
             "assign" => {
                 let rest = statement["assign".len()..].trim();
                 let Some((lhs, rhs)) = rest.split_once('=') else {
                     return Err(message("assign 缺少 '='"));
                 };
-                let lhs = lhs.trim();
-                if !is_identifier(lhs) {
-                    return Err(message(format!("非法 assign 目标 {lhs:?}")));
-                }
+                let (lhs_base, lhs_bit) = parse_lhs(lhs.trim())?;
                 let expr = RhsParser::new(rhs.trim()).parse()?;
                 let mut builder = Builder {
                     circuit: &mut circuit,
                     used: &mut used,
                     counter: &mut counter,
                 };
-                builder.synth_v(&expr, lhs)?;
+                match lhs_bit {
+                    Some(index) => {
+                        let width = widths.get(&lhs_base).copied().unwrap_or(1);
+                        if index >= width {
+                            return Err(message(format!(
+                                "assign 目标位 {lhs_base}[{index}] 超出宽度 {width}"
+                            )));
+                        }
+                        if expr_width(&expr, &widths) != 1 {
+                            return Err(message("单比特赋值右侧必须是单比特表达式"));
+                        }
+                        builder.synth_v(&expr, &format!("{lhs_base}[{index}]"))?;
+                    }
+                    None => {
+                        let width = widths.get(&lhs_base).copied().unwrap_or(1);
+                        if width == 1 {
+                            if expr_width(&expr, &widths) != 1 {
+                                return Err(message(format!(
+                                    "标量目标 {lhs_base} 不能接多比特右值"
+                                )));
+                            }
+                            builder.synth_v(&expr, &lhs_base)?;
+                        } else {
+                            let rhs_width = expr_width(&expr, &widths);
+                            if rhs_width != width {
+                                return Err(message(format!(
+                                    "向量赋值位宽不匹配：{lhs_base} 是 {width} 位，右侧是 {rhs_width} 位"
+                                )));
+                            }
+                            for index in 0..width {
+                                let bit = bit_expr(&expr, index, &widths)?;
+                                builder.synth_v(&bit, &format!("{lhs_base}[{index}]"))?;
+                            }
+                        }
+                    }
+                }
             }
             "and" | "or" | "nand" | "nor" | "xor" | "xnor" | "not" | "buf" => {
                 let normalized = statement
@@ -487,7 +867,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                 }
                 let output = args[0];
                 let inputs = &args[1..];
-                if !is_identifier(output) || inputs.iter().any(|name| !is_identifier(name)) {
+                if !is_signal_ref(output) || inputs.iter().any(|name| !is_signal_ref(name)) {
                     return Err(message(format!("{first} 里有非法信号名")));
                 }
                 let mut builder = Builder {
@@ -505,7 +885,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                         } else {
                             GateKind::Buf
                         };
-                        builder.add_gate(kind, vec![inputs[0].to_string()], output);
+                        builder.add_gate(kind, vec![inputs[0].to_string()], output)?;
                     }
                     _ => {
                         // 多输入 NAND/NOR 必须“先合取/析取全部输入，最后反相一次”；
@@ -528,11 +908,11 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                                 base,
                                 vec![current.clone(), input.to_string()],
                                 &target,
-                            );
+                            )?;
                             current = target;
                         }
                         if invert {
-                            builder.add_gate(GateKind::Not, vec![current], output);
+                            builder.add_gate(GateKind::Not, vec![current], output)?;
                         }
                     }
                 }
@@ -597,7 +977,92 @@ fn gate_line(circuit_gate: &Gate, index: usize) -> Result<String, VerilogError> 
     })
 }
 
-/// 生成结构化 Verilog（单比特）。三值强加 `Xor` 无法用经典门表示，返回错误。
+/// 把 `name[3]` 拆成 `("name", 3)`。
+fn split_bit(name: &str) -> Option<(&str, usize)> {
+    let open = name.rfind('[')?;
+    let base = &name[..open];
+    let index = name[open + 1..].strip_suffix(']')?.parse().ok()?;
+    Some((base, index))
+}
+
+/// 导出时的一组信号：标量或连续向量。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerilogGroup {
+    base: String,
+    max: usize,
+    vector: bool,
+}
+
+fn group_signals(names: &[&str]) -> Result<Vec<VerilogGroup>, VerilogError> {
+    struct Acc {
+        has_scalar: bool,
+        has_bits: bool,
+        indices: std::collections::BTreeSet<usize>,
+    }
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: std::collections::BTreeMap<String, Acc> = std::collections::BTreeMap::new();
+    for name in names {
+        let (base, index) = match split_bit(name) {
+            Some((base, index)) => (base, Some(index)),
+            None => (*name, None),
+        };
+        if !is_identifier(base) {
+            return Err(message(format!("信号名 {name:?} 不能导出为 Verilog")));
+        }
+        if !groups.contains_key(base) {
+            order.push(base.to_string());
+        }
+        let entry = groups.entry(base.to_string()).or_insert_with(|| Acc {
+            has_scalar: false,
+            has_bits: false,
+            indices: std::collections::BTreeSet::new(),
+        });
+        match index {
+            Some(index) => {
+                entry.has_bits = true;
+                entry.indices.insert(index);
+            }
+            None => {
+                entry.has_scalar = true;
+                entry.indices.insert(0);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for base in order {
+        let acc = groups.remove(&base).expect("刚刚插入");
+        if acc.has_scalar && acc.has_bits {
+            return Err(message(format!(
+                "信号 {base} 同时以标量和位选出现，无法导出为 Verilog"
+            )));
+        }
+        let max = acc.indices.iter().next_back().copied().unwrap_or(0);
+        let contiguous = acc.indices.len() == max + 1 && acc.indices.iter().copied().eq(0..=max);
+        if !contiguous {
+            return Err(message(format!(
+                "信号 {base} 的位下标不连续或缺少低位，无法导出为 Verilog 向量"
+            )));
+        }
+        out.push(VerilogGroup {
+            base,
+            max,
+            vector: acc.has_bits,
+        });
+    }
+    Ok(out)
+}
+
+fn decl_line(direction: &str, group: &VerilogGroup) -> String {
+    if group.vector {
+        format!("  {direction} [{}:0] {};\n", group.max, group.base)
+    } else {
+        format!("  {direction} {};\n", group.base)
+    }
+}
+
+/// 生成结构化 Verilog（支持多比特端口；按位展开后再分组成向量）。
+///
+/// 三值强加 `Xor` 无法用经典门表示，返回错误；位下标非连续的手工电路也无法导出。
 pub fn to_verilog(circuit: &Circuit) -> Result<String, VerilogError> {
     crate::circuit::validate(circuit).map_err(|error| message(format!("电路不合法：{error}")))?;
     let module = if is_identifier(&circuit.name) {
@@ -605,48 +1070,62 @@ pub fn to_verilog(circuit: &Circuit) -> Result<String, VerilogError> {
     } else {
         "trit_top"
     };
-    let mut ports: Vec<&str> = circuit.inputs.iter().map(Signal::name).collect();
-    ports.extend(circuit.outputs.iter().map(Signal::name));
-    let mut out = format!(
-        "module {module} ({});
-",
-        ports
-            .iter()
-            .map(|name| name.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    for input in &circuit.inputs {
-        out.push_str(&format!(
-            "  input {};
-",
-            input.name()
-        ));
-    }
-    for output in &circuit.outputs {
-        out.push_str(&format!(
-            "  output {};
-",
-            output.name()
-        ));
-    }
-    let known: HashSet<&str> = ports.into_iter().collect();
-    for gate in &circuit.gates {
-        if !known.contains(gate.output.name()) {
-            out.push_str(&format!(
-                "  wire {};
-",
-                gate.output.name()
-            ));
+    let input_names: Vec<&str> = circuit.inputs.iter().map(Signal::name).collect();
+    let output_names: Vec<&str> = circuit.outputs.iter().map(Signal::name).collect();
+    let input_groups = group_signals(&input_names)?;
+    let output_groups = group_signals(&output_names)?;
+    let input_bases: HashSet<&str> = input_groups
+        .iter()
+        .map(|group| group.base.as_str())
+        .collect();
+    let output_bases: HashSet<&str> = output_groups
+        .iter()
+        .map(|group| group.base.as_str())
+        .collect();
+    for base in &input_bases {
+        if output_bases.contains(base) {
+            return Err(message(format!("信号 {base} 同时是输入和输出，无法导出")));
         }
+    }
+    let port_bits: HashSet<&str> = input_names
+        .iter()
+        .chain(output_names.iter())
+        .copied()
+        .collect();
+    let wire_names: Vec<&str> = circuit
+        .gates
+        .iter()
+        .map(|gate| gate.output.name())
+        .filter(|name| !port_bits.contains(name))
+        .collect();
+    let wire_groups = group_signals(&wire_names)?;
+    for group in &wire_groups {
+        if input_bases.contains(group.base.as_str()) || output_bases.contains(group.base.as_str()) {
+            return Err(message(format!(
+                "内部信号 {} 与端口同名，无法导出",
+                group.base
+            )));
+        }
+    }
+    let ports: Vec<&str> = input_groups
+        .iter()
+        .chain(output_groups.iter())
+        .map(|group| group.base.as_str())
+        .collect();
+    let mut out = format!("module {module} ({});\n", ports.join(", "));
+    for group in &input_groups {
+        out.push_str(&decl_line("input", group));
+    }
+    for group in &output_groups {
+        out.push_str(&decl_line("output", group));
+    }
+    for group in &wire_groups {
+        out.push_str(&decl_line("wire", group));
     }
     for (index, gate) in circuit.gates.iter().enumerate() {
         out.push_str(&gate_line(gate, index)?);
     }
-    out.push_str(
-        "endmodule
-",
-    );
+    out.push_str("endmodule\n");
     Ok(out)
 }
 
@@ -905,5 +1384,154 @@ endmodule
     fn rejects_sequential() {
         let text = "module m(input a, output y);\nreg r;\nalways @(posedge a) r <= a;\nendmodule\n";
         assert!(parse_verilog(text).is_err());
+    }
+
+    #[test]
+    fn parses_vector_ports_and_vectorized_bitwise_assign() {
+        let text = r#"
+module m(input [3:0] a, input [3:0] b, output [3:0] y);
+  assign y = a & b;
+endmodule
+"#;
+        let circuit = parse_verilog(text).unwrap();
+        assert_eq!(circuit.inputs.len(), 8);
+        assert_eq!(circuit.outputs.len(), 4);
+        assert_eq!(circuit.gates.len(), 4);
+        assert_eq!(
+            circuit.inputs.iter().map(Signal::name).collect::<Vec<_>>(),
+            vec![
+                "a[3]", "a[2]", "a[1]", "a[0]", "b[3]", "b[2]", "b[1]", "b[0]"
+            ]
+        );
+        assert_eq!(
+            circuit.outputs.iter().map(Signal::name).collect::<Vec<_>>(),
+            vec!["y[3]", "y[2]", "y[1]", "y[0]"]
+        );
+
+        let mut assignment = std::collections::BTreeMap::new();
+        for (name, value) in [
+            ("a[3]", Ternary::True),
+            ("a[2]", Ternary::False),
+            ("a[1]", Ternary::True),
+            ("a[0]", Ternary::False),
+            ("b[3]", Ternary::True),
+            ("b[2]", Ternary::True),
+            ("b[1]", Ternary::False),
+            ("b[0]", Ternary::True),
+        ] {
+            assignment.insert(name.to_string(), value);
+        }
+        let propagated = crate::circuit::propagate(&circuit, &assignment, Algebra::Kleene).unwrap();
+        assert_eq!(propagated.signals.get("y[3]"), Some(&Ternary::True));
+        assert_eq!(propagated.signals.get("y[2]"), Some(&Ternary::False));
+        assert_eq!(propagated.signals.get("y[1]"), Some(&Ternary::False));
+        assert_eq!(propagated.signals.get("y[0]"), Some(&Ternary::False));
+    }
+
+    #[test]
+    fn parses_bit_selects_and_concatenation() {
+        let text = r#"
+module m(input [1:0] a, input b, output [2:0] y);
+  assign y = {a, b};
+endmodule
+"#;
+        let circuit = parse_verilog(text).unwrap();
+        assert_eq!(circuit.outputs.len(), 3);
+        // {a[1], a[0], b} -> y[2], y[1], y[0]
+        assert_eq!(circuit.gates.len(), 3);
+        let mut assignment = std::collections::BTreeMap::new();
+        assignment.insert("a[1]".to_string(), Ternary::True);
+        assignment.insert("a[0]".to_string(), Ternary::False);
+        assignment.insert("b".to_string(), Ternary::True);
+        let propagated = crate::circuit::propagate(&circuit, &assignment, Algebra::Kleene).unwrap();
+        assert_eq!(propagated.signals.get("y[2]"), Some(&Ternary::True));
+        assert_eq!(propagated.signals.get("y[1]"), Some(&Ternary::False));
+        assert_eq!(propagated.signals.get("y[0]"), Some(&Ternary::True));
+
+        let selects = r#"
+module m(input [1:0] a, output [1:0] y);
+  assign y[0] = a[1];
+  assign y[1] = ~a[0];
+endmodule
+"#;
+        let circuit = parse_verilog(selects).unwrap();
+        let mut assignment = std::collections::BTreeMap::new();
+        assignment.insert("a[1]".to_string(), Ternary::True);
+        assignment.insert("a[0]".to_string(), Ternary::False);
+        let propagated = crate::circuit::propagate(&circuit, &assignment, Algebra::Kleene).unwrap();
+        assert_eq!(propagated.signals.get("y[0]"), Some(&Ternary::True));
+        assert_eq!(propagated.signals.get("y[1]"), Some(&Ternary::True));
+    }
+
+    #[test]
+    fn vector_round_trip_regroups_ports() {
+        let text = r#"
+module m(input [3:0] a, input [3:0] b, output [3:0] y);
+  assign y = a & b;
+endmodule
+"#;
+        let circuit = parse_verilog(text).unwrap();
+        let rendered = to_verilog(&circuit).unwrap();
+        assert!(rendered.contains("input [3:0] a;"), "{rendered}");
+        assert!(rendered.contains("input [3:0] b;"), "{rendered}");
+        assert!(rendered.contains("output [3:0] y;"), "{rendered}");
+        let again = parse_verilog(&rendered).unwrap();
+        assert_eq!(again, circuit);
+    }
+
+    #[test]
+    fn vector_errors_are_classified() {
+        for text in [
+            // 只支持 [N:0]
+            "module m(input [0:3] a, output y);\nassign y = a[0];\nendmodule\n",
+            // 不支持复制语法
+            "module m(input a, output [1:0] y);\nassign y = {2{a}};\nendmodule\n",
+            // 位宽不匹配
+            "module m(input [3:0] a, output [1:0] y);\nassign y = a;\nendmodule\n",
+            // 标量目标不能接向量
+            "module m(input [1:0] a, output y);\nassign y = a;\nendmodule\n",
+            // 位选越界
+            "module m(input [1:0] a, output [1:0] y);\nassign y[2] = a[0];\nendmodule\n",
+        ] {
+            assert!(parse_verilog(text).is_err(), "应拒绝：{text}");
+        }
+
+        // 手工电路里只有 t[1]，无法导出为连续向量
+        let mut circuit = Circuit::new("m");
+        circuit.add_input(Signal::new("t[1]"));
+        circuit.add_output(Signal::new("t[1]"));
+        assert!(to_verilog(&circuit).is_err(), "非连续向量位必须拒绝导出");
+    }
+
+    #[test]
+    fn deep_rhs_is_rejected() {
+        let deep_parens = format!(
+            "module m(input a, output y);\nassign y = {}a{};\nendmodule\n",
+            "(".repeat(300),
+            ")".repeat(300)
+        );
+        assert!(parse_verilog(&deep_parens).is_err());
+        let deep_nots = format!(
+            "module m(input a, output y);\nassign y = {}a;\nendmodule\n",
+            "!".repeat(300)
+        );
+        assert!(parse_verilog(&deep_nots).is_err());
+        let ok = format!(
+            "module m(input a, output y);\nassign y = {}a{};\nendmodule\n",
+            "(".repeat(100),
+            ")".repeat(100)
+        );
+        assert!(parse_verilog(&ok).is_ok(), "合理嵌套必须仍可解析");
+    }
+
+    #[test]
+    fn vector_width_and_input_size_are_bounded() {
+        let too_wide = "module m(input [5000:0] a, output y);\nassign y = a[0];\nendmodule\n";
+        assert!(parse_verilog(too_wide).is_err(), "超宽向量必须拒绝");
+
+        let mut oversized =
+            String::from("module m(input a, output y);\nassign y = a;\nendmodule\n");
+        oversized.push_str(&" ".repeat(MAX_VERILOG_BYTES));
+        assert!(parse_verilog(&oversized).is_err(), "超大文本必须拒绝");
     }
 }

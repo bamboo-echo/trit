@@ -41,6 +41,10 @@
   `inputs` 仍给出具体 0/1 填充，CSV 导出即用该填充。
 - `AtpgReport::x_coverage`（含 X 向量覆盖的可测故障比例）与 `merged`（压缩省下的向量数）；
   表格、JSON、WASM 同步输出。
+- 多比特 Verilog 子集：`input/output [N:0]` 向量端口按位展开为 `a[3]`… 单比特网；
+  支持位选 `a[3]`、拼接 `{a, b}`、等宽逐位向量赋值 `assign y = a & b;`，
+  导出时按连续位重新分组为向量端口。只支持 `[N:0]` 组合逻辑；拒绝 `[0:N]`、复制语法、
+  位宽不匹配、非连续向量位。CLI `netlist --from verilog --to verilog` 可往返。
 - 桥接故障 ATPG：`BridgePair` / `BridgeMode`（wired-AND、wired-OR）→ `generate_bridge_tests`，
   在二进制向量上判定短路可测性并给出覆盖向量；CLI `trit bridge` 支持 `--pairs`/`--max-pairs`/JSON。
   空列表与未知网络直接报错，规模超限拒绝；逻辑级模型，不建模模拟/布局效应。

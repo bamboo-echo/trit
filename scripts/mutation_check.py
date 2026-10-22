@@ -398,6 +398,46 @@ MUTANTS = [
         "new": "        if false {\n",
         "pkg": "trit-circuit",
         "filter": "validation_rejects_empty_unknown_and_same_pairs"
+    },
+    {
+        "name": "verilog: 向量位选择恒取 bit 0",
+        "file": "crates/trit-circuit/src/verilog.rs",
+        "old": "                Ok(VExpr::Var(format!(\"{name}[{index}]\")))\n",
+        "new": "                Ok(VExpr::Var(format!(\"{name}[0]\")))\n",
+        "pkg": "trit-circuit",
+        "filter": "parses_vector_ports_and_vectorized_bitwise_assign"
+    },
+    {
+        "name": "verilog: 拼接按 MSB-first 误解",
+        "file": "crates/trit-circuit/src/verilog.rs",
+        "old": "            for item in items.iter().rev() {\n",
+        "new": "            for item in items.iter() {\n",
+        "pkg": "trit-circuit",
+        "filter": "parses_bit_selects_and_concatenation"
+    },
+    {
+        "name": "verilog: 向量端口只展开 bit 0",
+        "file": "crates/trit-circuit/src/verilog.rs",
+        "old": "                widths.insert(name.clone(), msb + 1);\n                for index in (0..=msb).rev() {\n",
+        "new": "                widths.insert(name.clone(), msb + 1);\n                for index in [0] {\n",
+        "pkg": "trit-circuit",
+        "filter": "parses_vector_ports_and_vectorized_bitwise_assign"
+    },
+    {
+        "name": "verilog: 导出不分组向量端口",
+        "file": "crates/trit-circuit/src/verilog.rs",
+        "old": "            vector: acc.has_bits,\n",
+        "new": "            vector: false,\n",
+        "pkg": "trit-circuit",
+        "filter": "vector_round_trip_regroups_ports"
+    },
+    {
+        "name": "verilog: 右值深度预算失效",
+        "file": "crates/trit-circuit/src/verilog.rs",
+        "old": "        if self.depth > MAX_RHS_DEPTH {\n",
+        "new": "        if false {\n",
+        "pkg": "trit-circuit",
+        "filter": "deep_rhs_is_rejected"
     }
 ]
 
