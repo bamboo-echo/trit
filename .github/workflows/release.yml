@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Tag must equal trit-cli version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -51,7 +51,7 @@ jobs:
             asset: trit-macos-aarch64
             ext: ""
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
