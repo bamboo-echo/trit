@@ -4,6 +4,8 @@
 
 ### Changed（评审修复第二批，含 API 变更）
 
+- **ATPG 去上帝模块**：`atpg.rs`（1042 行）拆成 `atpg/{mod,compact}.rs` + `tests.rs`；
+  `generate_tests` / `AtpgReport` / `CoverageStat` / `TestPattern` 公开路径不变。
 - **Circuit 去上帝模块**：`circuit.rs`（1493 行）拆成 `circuit/{types,sim,analyze,graph}.rs`
   + `tests/test_support`；`Circuit`/`CircuitError`/`analyze`/`propagate` 等公开路径不变。
 - **CLI 去上帝模块**：`trit-cli/src/main.rs`（2091 行）拆成 `commands/` 下 15 个命令模块，
