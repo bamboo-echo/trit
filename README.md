@@ -28,7 +28,7 @@ GitHub Releases（`v0.3.1` 起）提供：
 | `trit-eval` | 求值、真值表、穷举等价、化简 |
 | `trit-sat` | dual-rail + SAT 等价判定与反例 |
 | `trit-circuit` | 组合网表 X 传播、stuck-at 可测性 |
-| `trit-bdd` | BDD（canonical）等价判定 |
+| `trit-bdd` | BDD（canonical）等价判定、三值量化 |
 | `trit-policy` | 三值决策表的构建期验证 |
 | `sansheng` | 三生：统一入口伞包（re-export 以上能力） |
 | `trit-cli` | `trit` 命令行 |
@@ -60,6 +60,7 @@ cargo run --release -p trit-cli -- equiv --symbolic "..." "..."   # 大变量数
 cargo run --release -p trit-cli -- equiv --symbolic --binary-all --stats "..." "..."
 cargo run --release -p trit-cli -- equiv --symbolic --minimize "a & (b | !b)" "0"
 cargo run --release -p trit-cli -- equiv --bdd "a & (b | c)" "(a & b) | (a & c)"
+cargo run --release -p trit-cli -- quantify "a | !a" --vars a --kind forall
 cargo run --release -p trit-cli -- verify examples/policy.json
 ```
 
@@ -124,6 +125,31 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 
 结论：这批结构化小公式上 SAT 略快；BDD 的价值在 canonical 表示与可枚举/可组合的图结构，
 不是“无条件更快”。变量顺序、函数结构都会影响 BDD 规模，极端函数会指数爆炸——按基准选引擎。
+
+## 量化（`trit quantify`）
+
+对三值变量做存在/全称量化。量化的对象是 **trit**（`{0,1,X}`），不是两根布尔导轨：
+
+- `∃x. f`：存在某个合法 trit 取值使 `f` **确定为 True**；
+- `∀x. f`：对所有合法 trit 取值 `f` 都确定为 True；
+- `--binary x` 把该变量的量化域收窄到 `{0,1}`；自由变量始终按三值域约束。
+
+```bash
+$ trit quantify "a & b" --vars a
+可满足：∃{a}. a & b  [kleene / bdd-quantify]
+见证：b=1
+
+$ trit quantify "a | !a" --vars a --kind forall
+不恒真：∀{a}. a | !a  [kleene / bdd-quantify]
+反例：（空）
+
+$ trit quantify "a | !a" --vars a --kind forall --binary a
+恒真：∀{a}. a | !a  [kleene / bdd-quantify]
+```
+
+性质成立退出 `0`，不成立退出 `2`；`--json` 输出 `satisfiable` / `valid` / `free` /
+`witness` / `counterexample` / `nodes`。被量化变量已被消去，见证与反例只含自由变量。
+省略 `--vars` 即量化全部变量，结果退化为一个布尔判定。
 
 ## 网表
 

@@ -33,7 +33,9 @@ fn run(args: &[&str]) -> (String, String, i32) {
 fn help_lists_all_subcommands() {
     let (stdout, _, code) = run(&["--help"]);
     assert_eq!(code, 0);
-    for sub in ["eval", "table", "equiv", "simplify", "circuit", "repl"] {
+    for sub in [
+        "eval", "table", "equiv", "quantify", "simplify", "circuit", "repl",
+    ] {
         assert!(stdout.contains(sub), "help missing {sub}");
     }
 }
@@ -137,6 +139,40 @@ fn equiv_json_contains_counterexample() {
     let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
     assert_eq!(v["equivalent"], serde_json::json!(false));
     assert!(v.get("counterexample").is_some());
+}
+
+#[test]
+fn quantify_forall_excluded_middle_fails_on_ternary_domain() {
+    let (stdout, _, code) = run(&["quantify", "a | !a", "--vars", "a", "--kind", "forall"]);
+    assert_eq!(code, 2, "stdout was:\n{stdout}");
+    assert!(stdout.contains("不恒真"), "stdout was:\n{stdout}");
+    assert!(stdout.contains("反例：（空）"), "stdout was:\n{stdout}");
+}
+
+#[test]
+fn quantify_forall_holds_on_binary_domain() {
+    let (stdout, _, code) = run(&[
+        "quantify", "a | !a", "--vars", "a", "--kind", "forall", "--binary", "a",
+    ]);
+    assert_eq!(code, 0, "stdout was:\n{stdout}");
+    assert!(stdout.contains("恒真"), "stdout was:\n{stdout}");
+}
+
+#[test]
+fn quantify_json_exposes_free_witness() {
+    let (stdout, _, code) = run(&["quantify", "a & b", "--vars", "a", "--json"]);
+    assert_eq!(code, 0, "stdout was:\n{stdout}");
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert_eq!(v["quantifier"], serde_json::json!("exists"));
+    assert_eq!(v["free"], serde_json::json!(["b"]));
+    assert_eq!(v["witness"]["b"], serde_json::json!("1"));
+}
+
+#[test]
+fn quantify_rejects_unknown_variable() {
+    let (_, stderr, code) = run(&["quantify", "a & b", "--vars", "c"]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("不在表达式里"), "stderr was:\n{stderr}");
 }
 
 #[test]

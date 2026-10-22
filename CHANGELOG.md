@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `trit_bdd::quantify_bdd` 与 `trit quantify`：三值存在/全称量化（`exists` / `forall`），
+  量化域是 trit（`{0,1,X}`），可用 `--binary` 收窄到 `{0,1}`；提供自由变量上的见证/反例与 `--json`。
+- `sansheng` 再导出 `Quantifier` / `Quantified` / `quantify_bdd`。
+
 ## [0.3.2] - 2026-10-22
 
 ### Added

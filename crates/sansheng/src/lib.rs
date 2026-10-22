@@ -8,8 +8,21 @@
 //! let b = Parser::parse("(a & b) | (a & c)").unwrap();
 //! assert!(equivalent_symbolic(&a, &b, Algebra::Kleene).unwrap().equivalent);
 //! ```
+//!
+//! 量化按 **trit** 取值（`{0,1,X}`）解释，而不是按两根布尔导轨：
+//!
+//! ```
+//! use std::collections::HashSet;
+//! use sansheng::{Algebra, Parser, Quantifier, quantify_bdd};
+//! let e = Parser::parse("a | !a").unwrap();
+//! let vars = e.variables();
+//! let q = quantify_bdd(&e, &vars, Quantifier::Forall, Algebra::Kleene, &HashSet::new()).unwrap();
+//! assert!(!q.is_valid(), "三值域下 a=X 时 a|!a 不为真");
+//! ```
 
-pub use trit_bdd::{BddError, BddVerdict, equivalent_bdd, satisfiable_bdd};
+pub use trit_bdd::{
+    BddError, BddVerdict, Quantified, Quantifier, equivalent_bdd, quantify_bdd, satisfiable_bdd,
+};
 pub use trit_circuit::{
     Circuit, CircuitError, CircuitReport, Gate, GateKind, Signal, SimulationRow, analyze,
 };
