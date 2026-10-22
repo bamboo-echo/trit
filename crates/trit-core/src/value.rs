@@ -66,12 +66,17 @@ impl Ternary {
         }
     }
 
-    /// 经典二值真值（把 `X` 当作假）。
+    /// 是否**精确等于**假；`X` 返回 `false`。
+    ///
+    /// 这里不做任何折叠。若要把 `X` 当假/当真的二值化，请用
+    /// [`to_bool_strict`](Self::to_bool_strict) / [`to_bool_loose`](Self::to_bool_loose)。
     pub const fn is_false(self) -> bool {
         matches!(self, Self::False)
     }
 
-    /// 经典二值真值（把 `X` 当作真）。
+    /// 是否**精确等于**真；`X` 返回 `false`。
+    ///
+    /// 若要把 `X` 当真的二值化，请用 [`to_bool_loose`](Self::to_bool_loose)。
     pub const fn is_true(self) -> bool {
         matches!(self, Self::True)
     }

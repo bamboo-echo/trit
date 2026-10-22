@@ -19,6 +19,48 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 变量名错误。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum VarNameError {
+    /// 空名字。
+    #[error("变量名不能为空")]
+    Empty,
+    /// 不是合法标识符。
+    #[error("变量名 {0:?} 不是合法标识符")]
+    Invalid(String),
+    /// 与常量 token 冲突（`X`、`True` 等在解析时会被识别为常量）。
+    #[error("变量名 {0:?} 是保留常量 token")]
+    Reserved(String),
+}
+
+/// 是否为合法标识符（与解析器一致：首字符为字母或 `_`，其余为字母/数字/`_`）。
+pub fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_alphabetic() || first == '_') && chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// 作为变量名时会被解析成常量的保留 token。
+pub fn is_reserved_token(name: &str) -> bool {
+    matches!(
+        name,
+        "0" | "False"
+            | "false"
+            | "FALSE"
+            | "1"
+            | "True"
+            | "true"
+            | "TRUE"
+            | "X"
+            | "x"
+            | "?"
+            | "Unknown"
+            | "unknown"
+    )
+}
+
 /// 表达式节点。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Expr {
@@ -68,66 +110,108 @@ impl Expr {
         Self::Equiv(Box::new(a), Box::new(b))
     }
 
+    /// 校验并构造变量节点。
+    ///
+    /// [`Expr::Var`] 的字段是公开的，直接构造可以塞进空白、运算符或常量 token；
+    /// 这类 AST 的 [`Display`](std::fmt::Display) 不保证能被 [`Parser`](crate::parser::Parser)
+    /// 无损解析回来。
+    pub fn try_var(name: impl Into<String>) -> Result<Self, VarNameError> {
+        let name = name.into();
+        if name.is_empty() {
+            return Err(VarNameError::Empty);
+        }
+        if is_reserved_token(&name) {
+            return Err(VarNameError::Reserved(name));
+        }
+        if !is_identifier(&name) {
+            return Err(VarNameError::Invalid(name));
+        }
+        Ok(Self::Var(name))
+    }
+
     /// 是否为常量 `Unknown`。
     pub const fn is_unknown_const(&self) -> bool {
         matches!(self, Self::Const(crate::value::Ternary::Unknown))
     }
 
     /// 收集表达式中出现的全部变量名（保持首次出现顺序）。
+    ///
+    /// 迭代实现，不对任意深的树递归。
     pub fn variables(&self) -> Vec<String> {
         let mut out = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        self.collect_vars(&mut out, &mut seen);
+        let mut stack = vec![self];
+        while let Some(node) = stack.pop() {
+            match node {
+                Self::Const(_) => {}
+                Self::Var(name) => {
+                    if seen.insert(name.clone()) {
+                        out.push(name.clone());
+                    }
+                }
+                Self::Not(a) => stack.push(a),
+                Self::And(a, b)
+                | Self::Or(a, b)
+                | Self::Xor(a, b)
+                | Self::Implies(a, b)
+                | Self::Equiv(a, b) => {
+                    stack.push(b);
+                    stack.push(a);
+                }
+            }
+        }
         out
     }
 
-    fn collect_vars(&self, out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>) {
-        match self {
-            Self::Const(_) => {}
-            Self::Var(name) => {
-                if seen.insert(name.clone()) {
-                    out.push(name.clone());
+    /// 节点总数（用于复杂度统计）。迭代实现。
+    pub fn node_count(&self) -> usize {
+        let mut count = 0usize;
+        let mut stack = vec![self];
+        while let Some(node) = stack.pop() {
+            count += 1;
+            match node {
+                Self::Const(_) | Self::Var(_) => {}
+                Self::Not(a) => stack.push(a),
+                Self::And(a, b)
+                | Self::Or(a, b)
+                | Self::Xor(a, b)
+                | Self::Implies(a, b)
+                | Self::Equiv(a, b) => {
+                    stack.push(a);
+                    stack.push(b);
                 }
             }
-            Self::Not(a) => a.collect_vars(out, seen),
-            Self::And(a, b) | Self::Or(a, b) | Self::Xor(a, b) => {
-                a.collect_vars(out, seen);
-                b.collect_vars(out, seen);
-            }
-            Self::Implies(a, b) | Self::Equiv(a, b) => {
-                a.collect_vars(out, seen);
-                b.collect_vars(out, seen);
-            }
         }
+        count
     }
 
-    /// 节点总数（用于复杂度统计）。
-    pub fn node_count(&self) -> usize {
-        match self {
-            Self::Const(_) | Self::Var(_) => 1,
-            Self::Not(a) => 1 + a.node_count(),
-            Self::And(a, b)
-            | Self::Or(a, b)
-            | Self::Xor(a, b)
-            | Self::Implies(a, b)
-            | Self::Equiv(a, b) => 1 + a.node_count() + b.node_count(),
-        }
-    }
-
-    /// 树的最大深度。
+    /// 树的最大深度（根为 1）。迭代实现。
     pub fn depth(&self) -> usize {
-        match self {
-            Self::Const(_) | Self::Var(_) => 1,
-            Self::Not(a) => 1 + a.depth(),
-            Self::And(a, b)
-            | Self::Or(a, b)
-            | Self::Xor(a, b)
-            | Self::Implies(a, b)
-            | Self::Equiv(a, b) => 1 + a.depth().max(b.depth()),
+        let mut max = 0usize;
+        let mut stack = vec![(self, 1usize)];
+        while let Some((node, depth)) = stack.pop() {
+            max = max.max(depth);
+            match node {
+                Self::Const(_) | Self::Var(_) => {}
+                Self::Not(a) => stack.push((a, depth + 1)),
+                Self::And(a, b)
+                | Self::Or(a, b)
+                | Self::Xor(a, b)
+                | Self::Implies(a, b)
+                | Self::Equiv(a, b) => {
+                    stack.push((a, depth + 1));
+                    stack.push((b, depth + 1));
+                }
+            }
         }
+        max
     }
 
     /// 渲染为规范的中缀记法（带全角运算符），用于展示与化简输出。
+    ///
+    /// 递归实现；对未经过预算检查的手工深树，请先调用
+    /// [`check_expr`](crate::limits::check_expr)。任意 [`Expr::Var`] 的文本
+    /// 往返由 [`Expr::try_var`] 约束，而不是由 `Display` 本身保证。
     pub fn to_infix(&self) -> String {
         match self {
             Self::Const(v) => v.to_string(),
@@ -175,5 +259,44 @@ mod tests {
         assert_eq!(e.to_infix(), "¬(a)");
         let e2 = Expr::equiv(Expr::Const(Ternary::True), Expr::Var("x".into()));
         assert_eq!(e2.to_infix(), "(1 ≡ x)");
+    }
+
+    #[test]
+    fn try_var_rejects_reserved_and_malformed_names() {
+        assert_eq!(Expr::try_var("a_1").unwrap(), Expr::Var("a_1".into()));
+        assert!(matches!(
+            Expr::try_var("X").unwrap_err(),
+            VarNameError::Reserved(_)
+        ));
+        assert!(matches!(
+            Expr::try_var("a b").unwrap_err(),
+            VarNameError::Invalid(_)
+        ));
+        assert!(matches!(
+            Expr::try_var("").unwrap_err(),
+            VarNameError::Empty
+        ));
+    }
+
+    #[test]
+    fn display_does_not_round_trip_arbitrary_vars() {
+        // 直接构造的 Var("X") 渲染成 X，重新解析会变成常量。
+        let e = Expr::Var("X".into());
+        assert_eq!(e.to_string(), "X");
+        assert!(matches!(
+            crate::parser::Parser::parse(&e.to_string()).unwrap(),
+            Expr::Const(Ternary::Unknown)
+        ));
+    }
+
+    #[test]
+    fn iterative_metrics_match_hand_computed_values() {
+        let e = Expr::and(
+            Expr::Var("a".into()),
+            Expr::implies(Expr::Var("b".into()), Expr::Var("c".into())),
+        );
+        assert_eq!(e.node_count(), 5);
+        assert_eq!(e.depth(), 3);
+        assert_eq!(e.variables(), vec!["a", "b", "c"]);
     }
 }

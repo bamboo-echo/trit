@@ -62,7 +62,7 @@ fn bdd_agrees_with_exhaustive() {
         for (left, right) in pairs {
             let a = parse(left);
             let b = parse(right);
-            let exhaustive = equivalent(&a, &b, alg);
+            let exhaustive = equivalent(&a, &b, alg).expect("穷举不应超出预算");
             let bdd = equivalent_bdd(&a, &b, alg, &HashSet::new()).expect("BDD 不应报错");
             assert_eq!(
                 exhaustive.equivalent, bdd.result.equivalent,

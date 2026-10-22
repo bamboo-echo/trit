@@ -30,34 +30,97 @@ pub struct ShapeError {
     pub right: usize,
 }
 
+/// `TriVec` 构造/访问错误。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TriVecError {
+    /// 位平面字数不足。
+    #[error("位平面不足以覆盖 {len} 位：需要 {need} words，实际 {actual}")]
+    PlaneTooSmall {
+        /// 声明的位数。
+        len: usize,
+        /// 需要的字数。
+        need: usize,
+        /// 实际字数。
+        actual: usize,
+    },
+    /// 元素索引越界。
+    #[error("索引 {index} 越界（len={len}）")]
+    IndexOutOfRange {
+        /// 索引。
+        index: usize,
+        /// 向量长度。
+        len: usize,
+    },
+    /// 字索引越界。
+    #[error("字索引 {word} 越界（words={words}）")]
+    WordOutOfRange {
+        /// 字索引。
+        word: usize,
+        /// 字数。
+        words: usize,
+    },
+}
+
 /// 位切片的三值向量。
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// **相等语义按值**：两个 `TriVec` 只要长度与逐元素取值一致就相等，
+/// 与内部是否分配了全零的 `unknowns` 平面无关。
+#[derive(Debug, Clone)]
 pub struct TriVec {
     len: usize,
     ones: Vec<u64>,
     unknowns: Option<Vec<u64>>,
 }
 
+impl PartialEq for TriVec {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len != other.len {
+            return false;
+        }
+        for (w, ones) in self.ones.iter().enumerate() {
+            let left = self.unknowns.as_ref().map_or(0, |p| p[w]);
+            let right = other.unknowns.as_ref().map_or(0, |p| p[w]);
+            if *ones != other.ones[w] || left != right {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl Eq for TriVec {}
+
 impl TriVec {
     /// 零拷贝接管二进制位平面：`ones` 的位为 1 表示 `True`，0 表示 `False`。
     ///
     /// `ones` 必须至少覆盖 `len` 位；多余字会被截断，末尾多余位会被清零。
-    pub fn from_binary(mut ones: Vec<u64>, len: usize) -> Self {
-        assert!(
-            ones.len() * 64 >= len,
-            "位平面不足以覆盖 {len} 位：{} words",
-            ones.len()
-        );
-        let words = len.div_ceil(64);
-        ones.truncate(words);
+    ///
+    /// # Panics
+    ///
+    /// `ones` 字数不足时 panic；边界输入请用 [`TriVec::try_from_binary`]。
+    pub fn from_binary(ones: Vec<u64>, len: usize) -> Self {
+        Self::try_from_binary(ones, len).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// 同 [`TriVec::from_binary`]，但字数不足时返回错误。
+    pub fn try_from_binary(mut ones: Vec<u64>, len: usize) -> Result<Self, TriVecError> {
+        let need = len.div_ceil(64);
+        if ones.len() < need {
+            return Err(TriVecError::PlaneTooSmall {
+                len,
+                need,
+                actual: ones.len(),
+            });
+        }
+        ones.truncate(need);
         if let Some(last) = ones.last_mut() {
             *last &= last_mask(len);
         }
-        Self {
+        Ok(Self {
             len,
             ones,
             unknowns: None,
-        }
+        })
     }
 
     /// 从 `bool` 切片打包。
@@ -141,36 +204,67 @@ impl TriVec {
     }
 
     /// 取第 `i` 个三值。
+    ///
+    /// # Panics
+    ///
+    /// `i` 越界时 panic；边界输入请用 [`TriVec::try_get`]。
     pub fn get(&self, i: usize) -> Ternary {
-        assert!(i < self.len, "索引 {i} 越界（len={}）", self.len);
+        self.try_get(i).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// 取第 `i` 个三值；越界返回错误。
+    pub fn try_get(&self, i: usize) -> Result<Ternary, TriVecError> {
+        if i >= self.len {
+            return Err(TriVecError::IndexOutOfRange {
+                index: i,
+                len: self.len,
+            });
+        }
         let ones = (self.ones[i / 64] >> (i % 64)) & 1;
         let unknowns = self
             .unknowns
             .as_ref()
             .map_or(0, |planes| (planes[i / 64] >> (i % 64)) & 1);
-        match (ones, unknowns) {
+        Ok(match (ones, unknowns) {
             (1, 0) => Ternary::True,
             (0, 1) => Ternary::Unknown,
             _ => Ternary::False,
-        }
+        })
     }
 
     /// 写第 `i` 个三值；首次写 `Unknown` 时分配 unknown 平面。
+    ///
+    /// # Panics
+    ///
+    /// `i` 越界时 panic；边界输入请用 [`TriVec::try_set`]。
     pub fn set(&mut self, i: usize, value: Ternary) {
-        assert!(i < self.len, "索引 {i} 越界（len={}）", self.len);
+        self.try_set(i, value).unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    /// 写第 `i` 个三值；越界返回错误。
+    pub fn try_set(&mut self, i: usize, value: Ternary) -> Result<(), TriVecError> {
+        if i >= self.len {
+            return Err(TriVecError::IndexOutOfRange {
+                index: i,
+                len: self.len,
+            });
+        }
         let word = i / 64;
         let bit = 1u64 << (i % 64);
+        let mut cleared_last_unknown = false;
         match value {
             Ternary::False => {
                 self.ones[word] &= !bit;
                 if let Some(planes) = &mut self.unknowns {
                     planes[word] &= !bit;
+                    cleared_last_unknown = planes.iter().all(|w| *w == 0);
                 }
             }
             Ternary::True => {
                 self.ones[word] |= bit;
                 if let Some(planes) = &mut self.unknowns {
                     planes[word] &= !bit;
+                    cleared_last_unknown = planes.iter().all(|w| *w == 0);
                 }
             }
             Ternary::Unknown => {
@@ -181,6 +275,10 @@ impl TriVec {
                 self.ones[word] &= !bit;
             }
         }
+        if cleared_last_unknown {
+            self.unknowns = None;
+        }
+        Ok(())
     }
 
     /// `Unknown` 的个数。
@@ -191,14 +289,28 @@ impl TriVec {
     }
 
     /// 取整个字（64 路）的位并行表示。
+    ///
+    /// # Panics
+    ///
+    /// 字索引越界时 panic；边界输入请用 [`TriVec::try_word`]。
     pub fn word(&self, word: usize) -> TriBit {
-        assert!(word < self.ones.len(), "字索引越界");
-        TriBit {
+        self.try_word(word).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// 取整个字的位并行表示；越界返回错误。
+    pub fn try_word(&self, word: usize) -> Result<TriBit, TriVecError> {
+        if word >= self.ones.len() {
+            return Err(TriVecError::WordOutOfRange {
+                word,
+                words: self.ones.len(),
+            });
+        }
+        Ok(TriBit {
             ones: crate::bits::BitPlane(self.ones[word]),
             unknowns: crate::bits::BitPlane(
                 self.unknowns.as_ref().map_or(0, |planes| planes[word]),
             ),
-        }
+        })
     }
 
     /// 原地取反：`True`/`False` 互换，`Unknown` 不变。
@@ -418,5 +530,45 @@ mod tests {
         let mut a = TriVec::from_bools(&[true, false]);
         let b = TriVec::from_bools(&[true]);
         assert!(a.and_assign(&b, Algebra::Kleene).is_err());
+    }
+
+    #[test]
+    fn eq_compares_values_not_storage() {
+        let mut a = TriVec::from_ternary(&[Ternary::Unknown]);
+        assert!(a.unknowns().is_some());
+        a.set(0, Ternary::False);
+        // 清掉最后一个 Unknown 后平面被规范化，表示差异不能影响相等。
+        assert_eq!(a.unknowns(), None);
+        assert_eq!(a, TriVec::from_bools(&[false]));
+        assert_ne!(a, TriVec::from_bools(&[true]));
+        // 未知平面非零时不能与二值零向量相等
+        assert_ne!(
+            TriVec::from_ternary(&[Ternary::Unknown]),
+            TriVec::from_bools(&[false])
+        );
+    }
+
+    #[test]
+    fn fallible_constructors_and_accessors_report_bounds() {
+        assert_eq!(
+            TriVec::try_from_binary(vec![], 1).unwrap_err(),
+            TriVecError::PlaneTooSmall {
+                len: 1,
+                need: 1,
+                actual: 0
+            }
+        );
+        let v = TriVec::from_bools(&[true]);
+        assert_eq!(
+            v.try_get(1).unwrap_err(),
+            TriVecError::IndexOutOfRange { index: 1, len: 1 }
+        );
+        assert_eq!(
+            v.try_word(1).unwrap_err(),
+            TriVecError::WordOutOfRange { word: 1, words: 1 }
+        );
+        let mut w = v.clone();
+        assert!(w.try_set(1, Ternary::False).is_err());
+        assert_eq!(w, v);
     }
 }

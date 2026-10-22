@@ -2,6 +2,29 @@
 
 ## [未发布]
 
+### Changed（评审修复第二批，含 API 变更）
+
+- 解析器在构造期扣预算：右结合蕴含链改为迭代收集再右折，扁平二元链按实际 AST 深度拒绝；
+  新增输入字节上限（1 MiB）与节点预算错误；`Parser::parse_with_limits` 可指定预算。
+- `Evaluator::assignment_count` / `chunk_planes` / `evaluate` 改为可失败（`Result`），
+  `3^n` 用 checked 计算，新增 `Limits::max_rows` 与 `evaluate_within`。
+- `trit_eval::{truth_table, equivalent}`、`trit_belnap::{table, equivalent}`、
+  `Circuit::combination_count` 改为返回 `Result`；`analyze` 在 `3^n` 循环前拒绝 >16 个主输入。
+- `TriVec` 的 `PartialEq/Eq` 改为按值比较（全零 unknown 平面等同 `None`）；写入清除最后一个
+  `Unknown` 时规范化平面；新增 `try_from_binary` / `try_get` / `try_set` / `try_word`。
+- `BitPlane` 的 `with_bit` / `bit` 明确为环绕语义，新增 `checked_with_bit` / `checked_bit` /
+  `TriBit::checked_get`。
+- `Ternary::{is_false,is_true}` 文档改为精确匹配（`X` 两者皆假）；新增 `Expr::try_var` 拒绝
+  保留常量 token/非法标识符，`Display` 不再暗示任意变量可无损往返。
+- 赋值编号：新增 `try_assignment_index` / `try_decode_assignment`（重复变量、超出 `3^n` 域、
+  u64 溢出可区分）；编码不再因末位多余的 `3^n` 计算而过度拒绝。
+- 策略：展开时按节点/深度预算（`ExpandBudget` / `DefinitionDepth`），完整定义图（含未引用环）
+  先预检；`binary` 只允许原始变量，定义名拒绝保留 token，重复 binary 报错；
+  上层错误携带 `LimitError` / `SymbolicError` / `BddError`，不再压成字符串。
+- BDD 预算明确为软限额（每次运算返回后检查，峰值可超）；新增 `Quantified::try_is_valid` /
+  `try_counterexample`；README 说明硬隔离需进程/worker。
+- 策略反例文档改为“完整赋值模型，不做最小化”。
+
 ### Fixed
 
 - 评审修复（第一批）：Verilog 括号倒置不再 panic；多输入 NAND/NOR 改为“先合并再反相”；

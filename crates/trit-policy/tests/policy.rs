@@ -216,3 +216,103 @@ fn bdd_budget_is_enforced_in_verify() {
         .expect_err("1 个节点装不下");
     assert!(matches!(err, PolicyError::Bdd(_)), "{err}");
 }
+
+#[test]
+fn unused_definition_cycle_is_rejected_before_expansion() {
+    let policy = Policy::from_json(
+        r#"{
+          "definitions": { "a": "b", "b": "a" },
+          "assertions": [{ "name": "常量", "expr": "1" }]
+        }"#,
+    )
+    .expect("策略应可解析");
+    let err = policy.verify(Engine::Sat).expect_err("未引用的环也要拒绝");
+    assert!(matches!(err, PolicyError::Cycle(_)), "{err}");
+}
+
+#[test]
+fn exponential_definition_expansion_hits_node_budget() {
+    let mut defs = vec!["\"d0\": \"a\"".to_string()];
+    for i in 1..=20 {
+        defs.push(format!("\"d{i}\": \"d{} & d{}\"", i - 1, i - 1));
+    }
+    let json = format!(
+        r#"{{ "definitions": {{ {} }}, "assertions": [{{ "name": "倍增", "expr": "d20" }}] }}"#,
+        defs.join(",")
+    );
+    let policy = Policy::from_json(&json).expect("策略应可解析");
+    match policy.verify(Engine::Sat) {
+        Err(PolicyError::ExpandBudget { limit }) => assert_eq!(limit, 100_000),
+        other => panic!("期望 ExpandBudget，实际 {other:?}"),
+    }
+}
+
+#[test]
+fn long_definition_alias_chain_is_rejected() {
+    let mut defs = vec!["\"d000\": \"a\"".to_string()];
+    for i in 1..=300 {
+        defs.push(format!("\"d{i:03}\": \"d{:03}\"", i - 1));
+    }
+    let json = format!(
+        r#"{{ "definitions": {{ {} }}, "assertions": [{{ "name": "深链", "expr": "d300" }}] }}"#,
+        defs.join(",")
+    );
+    let policy = Policy::from_json(&json).expect("策略应可解析");
+    let err = policy.verify(Engine::Sat).expect_err("超过引用深度上限");
+    assert!(
+        matches!(err, PolicyError::DefinitionDepth { limit: 256 }),
+        "{err}"
+    );
+}
+
+#[test]
+fn binary_names_must_be_original_variables() {
+    for (json, expect) in [
+        (
+            r#"{ "binary": ["X"], "assertions": [{ "name": "a", "expr": "1" }] }"#,
+            "reserved",
+        ),
+        (
+            r#"{ "binary": ["a b"], "assertions": [{ "name": "a", "expr": "1" }] }"#,
+            "malformed",
+        ),
+        (
+            r#"{ "binary": ["r"], "definitions": { "r": "a" }, "assertions": [{ "name": "a", "expr": "1" }] }"#,
+            "definition",
+        ),
+        (
+            r#"{ "binary": ["a", "a"], "assertions": [{ "name": "a", "expr": "1" }] }"#,
+            "duplicate",
+        ),
+    ] {
+        let policy = Policy::from_json(json).expect("策略应可解析");
+        let err = policy.verify(Engine::Sat).expect_err(expect);
+        match expect {
+            "definition" => assert!(matches!(err, PolicyError::BinaryIsDefinition(_)), "{err}"),
+            "duplicate" => assert!(matches!(err, PolicyError::DuplicateBinary(_)), "{err}"),
+            _ => assert!(
+                matches!(err, PolicyError::InvalidName { kind: "binary", .. }),
+                "{err}"
+            ),
+        }
+    }
+}
+
+#[test]
+fn definition_names_must_not_be_reserved_tokens() {
+    let policy = Policy::from_json(
+        r#"{ "definitions": { "X": "a" }, "assertions": [{ "name": "a", "expr": "1" }] }"#,
+    )
+    .expect("策略应可解析");
+    let err = policy.verify(Engine::Sat).expect_err("保留词不能当定义名");
+    assert!(
+        matches!(
+            err,
+            PolicyError::InvalidName {
+                kind: "definition",
+                ..
+            }
+        ),
+        "{err}"
+    );
+}

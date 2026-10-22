@@ -9,6 +9,7 @@ description = "三值求值、真值表与化简"
 
 [dependencies]
 trit-core.workspace = true
+thiserror = "2.0.21"
 
 [dev-dependencies]
 indoc = "2.0.8"

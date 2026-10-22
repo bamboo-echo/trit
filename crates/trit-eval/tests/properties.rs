@@ -83,7 +83,7 @@ proptest! {
     ) {
         let expr = Parser::parse("(a & b) | (!a & c)").unwrap();
         let vars = expr.variables();
-        let tt = truth_table(&expr, alg_s);
+        let tt = truth_table(&expr, alg_s).unwrap();
         prop_assert_eq!(tt.values.len(), 27);
         let mut asg = Assignment::new();
         asg.set("a", a).set("b", b).set("c", c);
@@ -122,10 +122,10 @@ proptest! {
     fn equivalence_matches_truth_table(alg_s in arb_algebra()) {
         let e1 = Parser::parse("a & b").unwrap();
         let e2 = Parser::parse("b & a").unwrap();
-        let r = trit_eval::eval::equivalent(&e1, &e2, alg_s);
+        let r = trit_eval::eval::equivalent(&e1, &e2, alg_s).unwrap();
         prop_assert!(r.equivalent);
         let e3 = Parser::parse("a & !a").unwrap();
-        let r2 = trit_eval::eval::equivalent(&e1, &e3, alg_s);
+        let r2 = trit_eval::eval::equivalent(&e1, &e3, alg_s).unwrap();
         prop_assert!(!r2.equivalent);
     }
 }

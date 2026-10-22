@@ -29,7 +29,7 @@ use trit_core::ast::Expr;
 use trit_core::limits::Limits;
 use trit_core::parser::Parser as ExprParser;
 use trit_core::value::Ternary;
-use trit_eval::eval::{Assignment, equivalent, equivalent_within, eval, truth_table_within};
+use trit_eval::eval::{Assignment, equivalent_within, eval, truth_table_within};
 use trit_eval::simplify::{SimplifyOptions, simplify_with};
 use trit_policy::{Engine, Policy};
 use trit_sat::symbolic::{
@@ -683,7 +683,12 @@ fn cmd_equiv(
                 max_vars
             );
         }
-        (equivalent(&a, &b, alg), "exhaustive", None)
+        let limits = Limits {
+            max_vars,
+            max_rows: usize::MAX,
+            ..Limits::default()
+        };
+        (equivalent_within(&a, &b, alg, limits)?, "exhaustive", None)
     };
     match format {
         Format::Json => {
@@ -890,15 +895,17 @@ fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> 
             )
         }
     };
+    let valid = result.try_is_valid()?;
     let holds = match kind {
         Quantifier::Exists => result.is_satisfiable(),
-        Quantifier::Forall => result.is_valid(),
+        Quantifier::Forall => valid,
     };
     let witness = (kind == Quantifier::Exists && result.is_satisfiable())
         .then(|| result.witness())
         .flatten();
-    let counterexample = (kind == Quantifier::Forall && !result.is_valid())
-        .then(|| result.counterexample())
+    let counterexample = (kind == Quantifier::Forall && !valid)
+        .then(|| result.try_counterexample())
+        .transpose()?
         .flatten();
     if json {
         let mut obj = serde_json::json!({
@@ -909,7 +916,7 @@ fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> 
             "quantified": quantified,
             "free": result.free_variables(),
             "satisfiable": result.is_satisfiable(),
-            "valid": result.is_valid(),
+            "valid": valid,
             "nodes": result.nodes(),
         });
         if let Some(asg) = &witness {
@@ -1267,7 +1274,7 @@ fn cmd_circuit(
             println!(
                 "输出含未知（X）的组合数：{} / {}",
                 report.unknown_output_combinations,
-                circuit.combination_count()
+                circuit.combination_count()?
             );
             println!("\n输出值域：");
             for (name, domain) in &report.output_domains {
@@ -1774,7 +1781,7 @@ fn cmd_belnap(cmd: BelnapCmd) -> Result<()> {
                     vars.len()
                 );
             }
-            let table = trit_belnap::table(&expr);
+            let table = trit_belnap::table(&expr)?;
             println!("{} | 值", table.vars.join(" "));
             for row in &table.rows {
                 let cells: Vec<String> = row.values.iter().map(|v| v.to_string()).collect();
@@ -1796,7 +1803,7 @@ fn cmd_belnap(cmd: BelnapCmd) -> Result<()> {
                     vars.len()
                 );
             }
-            match trit_belnap::equivalent(&l, &r) {
+            match trit_belnap::equivalent(&l, &r)? {
                 None => println!(
                     "等价（4^{} = {} 组全等）",
                     vars.len(),

@@ -36,7 +36,7 @@ pub enum BddError {
     UnknownVariable(String),
     /// 表达式超出资源预算。
     #[error("表达式超出预算: {0}")]
-    Limit(String),
+    Limit(#[from] trit_core::limits::LimitError),
     /// 单个 BDD 的节点数超出预算。
     #[error("BDD 节点数超过上限 {limit}")]
     BudgetExceeded {
@@ -46,6 +46,10 @@ pub enum BddError {
 }
 
 /// BDD 节点预算。
+///
+/// **这是软限额**：每次运算返回后检查 `Bdd::size()`，因此单次 `apply`／量化
+/// 在内部产生的峰值仍可能超过 `max_nodes`。需要硬内存/CPU 上界时，应把求解
+/// 放进有资源限制的进程或 worker，而不是依赖本结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BddLimits {
     /// 单个 BDD 允许的最大节点数（`Bdd::size`）。
@@ -534,7 +538,7 @@ pub fn equivalent_bdd_best_with_limits(
 
 fn check_pair(a: &Expr, b: &Expr) -> Result<(), BddError> {
     for expr in [a, b] {
-        check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
+        check_expr(expr, Limits::default())?;
     }
     Ok(())
 }
@@ -586,6 +590,7 @@ pub fn satisfiable_bdd(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<Option<Assignment>, BddError> {
+    check_expr(expr, Limits::default())?;
     let vars = expr.variables();
     satisfiable_with_vars(expr, alg, binary_vars, &vars, BddLimits::default())
 }
@@ -597,6 +602,7 @@ pub fn satisfiable_bdd_with_order(
     binary_vars: &HashSet<String>,
     order: &[String],
 ) -> Result<Option<Assignment>, BddError> {
+    check_expr(expr, Limits::default())?;
     let all = expr.variables();
     let vars = merge_order(&all, order);
     satisfiable_with_vars(expr, alg, binary_vars, &vars, BddLimits::default())
@@ -609,6 +615,7 @@ pub fn satisfiable_bdd_with(
     binary_vars: &HashSet<String>,
     request: &BddRequest<'_>,
 ) -> Result<Option<Assignment>, BddError> {
+    check_expr(expr, Limits::default())?;
     let all = expr.variables();
     let vars = match request.order {
         Some(order) => merge_order(&all, order),
@@ -624,7 +631,7 @@ fn satisfiable_with_vars(
     vars: &[String],
     limits: BddLimits,
 ) -> Result<Option<Assignment>, BddError> {
-    check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
+    check_expr(expr, Limits::default())?;
     let enc = Encoder::new(alg, vars, binary_vars, limits)?;
     let node = enc.encode(expr)?;
     // 必须限定在合法三值域内：非法导轨 (1,1) 可能被 table 解释成 False，再被 Not 变成 True。
@@ -659,6 +666,7 @@ pub fn premise_counterexample_bdd(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<PremiseCheck, BddError> {
+    check_pair(premise, assertion)?;
     let vars = union_vars(premise, assertion);
     premise_with_vars(
         premise,
@@ -678,6 +686,7 @@ pub fn premise_counterexample_bdd_with_order(
     binary_vars: &HashSet<String>,
     order: &[String],
 ) -> Result<PremiseCheck, BddError> {
+    check_pair(premise, assertion)?;
     let all = union_vars(premise, assertion);
     let vars = merge_order(&all, order);
     premise_with_vars(
@@ -698,6 +707,7 @@ pub fn premise_counterexample_bdd_with(
     binary_vars: &HashSet<String>,
     request: &BddRequest<'_>,
 ) -> Result<PremiseCheck, BddError> {
+    check_pair(premise, assertion)?;
     let all = union_vars(premise, assertion);
     let vars = match request.order {
         Some(order) => merge_order(&all, order),
@@ -715,7 +725,7 @@ fn premise_with_vars(
     limits: BddLimits,
 ) -> Result<PremiseCheck, BddError> {
     for expr in [premise, assertion] {
-        check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
+        check_expr(expr, Limits::default())?;
     }
     let enc = Encoder::new(alg, vars, binary_vars, limits)?;
     let p = enc.encode(premise)?;
@@ -769,6 +779,7 @@ pub struct Quantified {
     valid_free: Bdd,
     free: Vec<String>,
     varids: HashMap<String, (BddVariable, Option<BddVariable>)>,
+    limits: BddLimits,
 }
 
 impl Quantified {
@@ -778,9 +789,29 @@ impl Quantified {
     }
 
     /// 结果是否恒真（对自由变量的所有合法取值）。
+    ///
+    /// 查询会再做一次 `and/not`，但不检查节点预算；边界输入请用
+    /// [`Quantified::try_is_valid`]。
     pub fn is_valid(&self) -> bool {
         // 结果已经与合法域相交；对布尔全集恒真会把“还有三值自由变量”误判成不恒真。
         self.bdd.not().and(&self.valid_free).is_false()
+    }
+
+    /// 同 [`Quantified::is_valid`]，但查询产生的中间 BDD 也按预算检查。
+    pub fn try_is_valid(&self) -> Result<bool, BddError> {
+        let diff = self.bdd.not().and(&self.valid_free);
+        self.check_budget(&diff)?;
+        Ok(diff.is_false())
+    }
+
+    fn check_budget(&self, bdd: &Bdd) -> Result<(), BddError> {
+        if bdd.size() > self.limits.max_nodes {
+            Err(BddError::BudgetExceeded {
+                limit: self.limits.max_nodes,
+            })
+        } else {
+            Ok(())
+        }
     }
 
     /// 未被量化的变量（按首次出现顺序）。
@@ -800,10 +831,23 @@ impl Quantified {
     }
 
     /// 不全真时给一个自由变量的反例。
+    ///
+    /// 查询会再做一次 `and/not`，但不检查节点预算；边界输入请用
+    /// [`Quantified::try_counterexample`]。
     pub fn counterexample(&self) -> Option<Assignment> {
         let negated = self.bdd.not().and(&self.valid_free);
         let valuation = negated.sat_valuations().next()?;
         Some(self.decode(valuation.as_vector()))
+    }
+
+    /// 同 [`Quantified::counterexample`]，但查询产生的中间 BDD 也按预算检查。
+    pub fn try_counterexample(&self) -> Result<Option<Assignment>, BddError> {
+        let negated = self.bdd.not().and(&self.valid_free);
+        self.check_budget(&negated)?;
+        Ok(negated
+            .sat_valuations()
+            .next()
+            .map(|valuation| self.decode(valuation.as_vector())))
     }
 
     fn decode(&self, bits: &[bool]) -> Assignment {
@@ -837,6 +881,7 @@ pub fn quantify_bdd(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<Quantified, BddError> {
+    check_expr(expr, Limits::default())?;
     let vars = expr.variables();
     quantify_with_vars(
         expr,
@@ -858,6 +903,7 @@ pub fn quantify_bdd_with_order(
     binary_vars: &HashSet<String>,
     order: &[String],
 ) -> Result<Quantified, BddError> {
+    check_expr(expr, Limits::default())?;
     let all = expr.variables();
     let mut vars: Vec<String> = Vec::with_capacity(all.len());
     for name in order {
@@ -890,6 +936,7 @@ pub fn quantify_bdd_with(
     binary_vars: &HashSet<String>,
     request: &BddRequest<'_>,
 ) -> Result<Quantified, BddError> {
+    check_expr(expr, Limits::default())?;
     let all = expr.variables();
     let vars = match request.order {
         Some(order) => merge_order(&all, order),
@@ -933,6 +980,7 @@ pub fn quantify_bdd_best_with_limits(
     binary_vars: &HashSet<String>,
     limits: BddLimits,
 ) -> Result<(Quantified, VarOrder), BddError> {
+    check_expr(expr, Limits::default())?;
     let mut best: Option<(Quantified, VarOrder)> = None;
     for order in [
         VarOrder::Appearance,
@@ -962,7 +1010,7 @@ fn quantify_with_vars(
     vars: &[String],
     limits: BddLimits,
 ) -> Result<Quantified, BddError> {
-    check_expr(expr, Limits::default()).map_err(|e| BddError::Limit(e.to_string()))?;
+    check_expr(expr, Limits::default())?;
     for name in quantified {
         if !vars.iter().any(|v| v == name) {
             return Err(BddError::UnknownVariable(name.clone()));
@@ -1006,5 +1054,6 @@ fn quantify_with_vars(
         valid_free,
         free,
         varids: enc.varids,
+        limits,
     })
 }

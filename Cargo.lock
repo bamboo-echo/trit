@@ -899,6 +899,7 @@ version = "0.8.0"
 dependencies = [
  "indoc",
  "proptest",
+ "thiserror 2.0.21",
  "trit-core",
 ]
 

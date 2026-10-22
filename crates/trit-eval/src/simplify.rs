@@ -43,6 +43,9 @@ impl Default for SimplifyOptions {
 }
 
 /// 按当前语义化简表达式。
+///
+/// 递归重写；要求 AST 深度有界（`Parser` 产出的表达式满足）。手工构造的深树
+/// 请先调用 `check_expr`，否则可能栈溢出。
 pub fn simplify(expr: &Expr, alg: Algebra) -> Expr {
     simplify_with(expr, alg, SimplifyOptions::default())
 }
@@ -64,12 +67,14 @@ pub fn simplify_with(expr: &Expr, alg: Algebra, opts: SimplifyOptions) -> Expr {
 }
 
 /// 判断表达式是否语义常量；是则返回该值。
+///
+/// 枚举超出默认预算时返回 `None`：这只表示“没有证明是常量”，调用方应保留原式。
 pub fn constant_value(expr: &Expr, alg: Algebra) -> Option<Ternary> {
     if expr.variables().is_empty() {
         let asg = crate::eval::Assignment::new();
         return Some(crate::eval::eval(expr, &asg, alg));
     }
-    let tt = truth_table(expr, alg);
+    let tt = truth_table(expr, alg).ok()?;
     let first = *tt.values.first()?;
     if tt.values.iter().all(|v| *v == first) {
         Some(first)
@@ -306,7 +311,10 @@ fn rewrite_equiv(x: Expr, y: Expr, alg: Algebra) -> Expr {
 /// 判定等价请用 [`semantically_equal`]。
 pub fn semantic_fingerprint(expr: &Expr, alg: Algebra) -> u64 {
     let vars = expr.variables();
-    let tt = truth_table(expr, alg);
+    let Ok(tt) = truth_table(expr, alg) else {
+        // 超出预算时不产生指纹；0 只表示“无指纹”，不能当等价证据。
+        return 0;
+    };
     let mut hash = 1469598103934665603u64;
     for v in &vars {
         for b in v.as_bytes() {
@@ -324,8 +332,12 @@ pub fn semantic_fingerprint(expr: &Expr, alg: Algebra) -> u64 {
 }
 
 /// 判断两个表达式在给定语义下语义等价（`3^n` 穷举，变量取并集）。
-pub fn semantically_equal(a: &Expr, b: Expr, alg: Algebra) -> bool {
-    crate::eval::equivalent(a, &b, alg).equivalent
+pub fn semantically_equal(
+    a: &Expr,
+    b: Expr,
+    alg: Algebra,
+) -> Result<bool, trit_core::limits::LimitError> {
+    Ok(crate::eval::equivalent(a, &b, alg)?.equivalent)
 }
 
 /// 未使用的占位，保持 API 公开但标注用途。
@@ -392,7 +404,7 @@ mod tests {
         ] {
             let e = Parser::parse(src).unwrap();
             let s = simplify(&e, Algebra::Kleene);
-            let r = crate::eval::equivalent(&e, &s, Algebra::Kleene);
+            let r = crate::eval::equivalent(&e, &s, Algebra::Kleene).unwrap();
             assert!(r.equivalent, "simplify changed semantics: {src} -> {s}");
         }
     }
@@ -402,7 +414,7 @@ mod tests {
         for src in ["a & b | a", "0 & x", "a | 1", "a & x"] {
             let e = Parser::parse(src).unwrap();
             let s = simplify(&e, Algebra::Bochvar);
-            let r = crate::eval::equivalent(&e, &s, Algebra::Bochvar);
+            let r = crate::eval::equivalent(&e, &s, Algebra::Bochvar).unwrap();
             assert!(
                 r.equivalent,
                 "bochvar simplify changed semantics: {src} -> {s}"
@@ -416,7 +428,9 @@ mod tests {
         let e = Parser::parse("a | (a | b)").unwrap();
         let s = simplify(&e, Algebra::Kleene);
         assert!(
-            crate::eval::equivalent(&e, &s, Algebra::Kleene).equivalent,
+            crate::eval::equivalent(&e, &s, Algebra::Kleene)
+                .unwrap()
+                .equivalent,
             "a | (a | b) -> {s}"
         );
         assert_eq!(simp("a | (a & b)", Algebra::Kleene), "a");
@@ -430,7 +444,9 @@ mod tests {
         let e = Parser::parse("a <=> a").unwrap();
         let s = simplify(&e, Algebra::Kleene);
         assert!(
-            crate::eval::equivalent(&e, &s, Algebra::Kleene).equivalent,
+            crate::eval::equivalent(&e, &s, Algebra::Kleene)
+                .unwrap()
+                .equivalent,
             "a ≡ a -> {s}"
         );
         // Ł3 的自等价恒为 1
@@ -441,14 +457,14 @@ mod tests {
     fn semantically_equal_uses_real_equivalence() {
         let a = Parser::parse("a & b").unwrap();
         let b = Parser::parse("b & a").unwrap();
-        assert!(semantically_equal(&a, b, Algebra::Kleene));
+        assert!(semantically_equal(&a, b, Algebra::Kleene).unwrap());
 
         let a = Parser::parse("a").unwrap();
         let b = Parser::parse("a & (b | 1)").unwrap();
-        assert!(semantically_equal(&a, b, Algebra::Kleene));
+        assert!(semantically_equal(&a, b, Algebra::Kleene).unwrap());
 
         let a = Parser::parse("a | (a | b)").unwrap();
         let b = Parser::parse("a").unwrap();
-        assert!(!semantically_equal(&a, b, Algebra::Kleene));
+        assert!(!semantically_equal(&a, b, Algebra::Kleene).unwrap());
     }
 }

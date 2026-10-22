@@ -203,7 +203,7 @@ mod tests {
 
     fn sample() -> TruthTable {
         let e = Parser::parse("a & b").unwrap();
-        trit_eval::eval::truth_table(&e, Algebra::Kleene)
+        trit_eval::eval::truth_table(&e, Algebra::Kleene).unwrap()
     }
 
     #[test]

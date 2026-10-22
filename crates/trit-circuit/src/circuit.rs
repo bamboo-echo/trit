@@ -16,6 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use trit_core::algebra::Algebra;
+use trit_core::limits::{LimitError, checked_pow3};
 use trit_core::value::Ternary;
 
 /// 电路中的一个信号（节点）。
@@ -274,9 +275,9 @@ impl Circuit {
         self.inputs.len()
     }
 
-    /// 全部输入组合数 `3^n`。
-    pub fn combination_count(&self) -> u64 {
-        3u64.saturating_pow(self.input_count() as u32)
+    /// 全部输入组合数 `3^n`；超出 `u64` 时返回 [`LimitError::CountOverflow`]。
+    pub fn combination_count(&self) -> Result<u64, LimitError> {
+        checked_pow3(self.input_count())
     }
 
     /// 把二进制测试向量（bit i 对应第 i 个主输入）解码成赋值表。
@@ -381,14 +382,21 @@ pub enum CircuitError {
         /// 实际数量。
         actual: usize,
     },
+    /// 枚举容量或资源预算超限。
+    #[error("{0}")]
+    Limit(#[from] LimitError),
 }
 
 /// 对电路做一次完整分析。
 pub fn analyze(circuit: &Circuit, alg: Algebra) -> Result<CircuitReport, CircuitError> {
     validate(circuit)?;
+    // 输出域枚举与故障分析共用同一输入上限：超限时在 3^n 循环之前失败。
+    if circuit.input_count() > 16 {
+        return Err(CircuitError::TooManyInputs(circuit.input_count()));
+    }
     let order = topological_order(circuit)?;
 
-    let total = circuit.combination_count();
+    let total = circuit.combination_count()?;
     let mut unknown_outputs = 0u64;
     let mut output_domains: BTreeMap<String, BTreeSet<Ternary>> = BTreeMap::new();
     for o in &circuit.outputs {
@@ -1113,6 +1121,26 @@ mod tests {
     }
 
     #[test]
+    fn analyze_rejects_too_many_inputs_before_enumeration() {
+        let mut c = Circuit::new("wide");
+        for i in 0..17 {
+            c.add_input(sig(&format!("i{i}")));
+        }
+        assert_eq!(
+            analyze(&c, Algebra::Kleene).unwrap_err(),
+            CircuitError::TooManyInputs(17)
+        );
+        let mut wide = Circuit::new("wider");
+        for i in 0..41 {
+            wide.add_input(sig(&format!("w{i}")));
+        }
+        assert_eq!(
+            wide.combination_count().unwrap_err(),
+            LimitError::CountOverflow { vars: 41 }
+        );
+    }
+
+    #[test]
     fn propagate_masks_x_on_and_then_passes_it() {
         let c = and_circuit();
         let masked = propagate(
@@ -1195,7 +1223,7 @@ mod tests {
         c.add_output(sig("y"));
 
         let order = topological_order(&c).unwrap();
-        for combo in 0..c.combination_count() {
+        for combo in 0..c.combination_count().unwrap() {
             let base = simulate_combo(&c, combo, Algebra::Kleene, &order);
             let assign: BTreeMap<String, Ternary> = c
                 .inputs

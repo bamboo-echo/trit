@@ -46,7 +46,7 @@ fn symbolic_agrees_with_exhaustive_on_small_formulas() {
         for (left, right) in pairs {
             let a = parse(left);
             let b = parse(right);
-            let exhaustive = equivalent(&a, &b, alg);
+            let exhaustive = equivalent(&a, &b, alg).expect("穷举不应超出预算");
             let symbolic = equivalent_symbolic(&a, &b, alg).expect("SAT 不应报错");
             assert_eq!(
                 exhaustive.equivalent, symbolic.equivalent,
@@ -247,7 +247,7 @@ fn binary_fast_path_uses_strong_add_not_xor() {
         let a = parse(left);
         let b = parse(right);
         assert!(
-            equivalent(&a, &b, alg).equivalent,
+            equivalent(&a, &b, alg).unwrap().equivalent,
             "{alg:?}: {left} vs {right} 应当等价"
         );
         let sat = equivalent_symbolic(&a, &b, alg).expect("SAT 编码不应失败");

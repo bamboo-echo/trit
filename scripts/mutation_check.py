@@ -18,8 +18,8 @@ MUTANTS = [
     {
         "name": "core: from_binary 不截断多余字",
         "file": "crates/trit-core/src/bulk.rs",
-        "old": "        ones.truncate(words);",
-        "new": "        let _ = words;",
+        "old": "        ones.truncate(need);",
+        "new": "        let _ = need;",
         "pkg": "trit-core",
         "filter": "from_binary_normalizes"
     },
@@ -114,8 +114,8 @@ MUTANTS = [
     {
         "name": "bdd: 节点预算永不触发",
         "file": "crates/trit-bdd/src/lib.rs",
-        "old": "        if bdd.size() > self.limits.max_nodes {",
-        "new": "        if false {",
+        "old": "    fn guard(&self, bdd: Bdd) -> Result<Bdd, BddError> {\n        if bdd.size() > self.limits.max_nodes {",
+        "new": "    fn guard(&self, bdd: Bdd) -> Result<Bdd, BddError> {\n        if false {",
         "pkg": "trit-bdd",
         "filter": "budget_rejects"
     },
@@ -216,6 +216,102 @@ MUTANTS = [
         "filter": "timing_driven_picks_lower_arrival_implementation"
     },
     {
+        "name": "parser: 二元链不累计深度",
+        "file": "crates/trit-core/src/parser.rs",
+        "old": "        let depth = 1 + left.1.max(right.1);\n",
+        "new": "        let depth = 1;\n",
+        "pkg": "trit-core",
+        "filter": "rejects_long_flat_binary_chain"
+    },
+    {
+        "name": "parser: 解析期节点预算失效",
+        "file": "crates/trit-core/src/parser.rs",
+        "old": "        if self.nodes > self.limits.max_nodes {\n",
+        "new": "        if false {\n",
+        "pkg": "trit-core",
+        "filter": "node_budget_is_enforced_while_parsing"
+    },
+    {
+        "name": "parser: 输入字节上限失效",
+        "file": "crates/trit-core/src/parser.rs",
+        "old": "        if input.len() > MAX_INPUT_BYTES {\n",
+        "new": "        if false {\n",
+        "pkg": "trit-core",
+        "filter": "oversized_input_is_rejected_before_collecting_chars"
+    },
+    {
+        "name": "core: TriVec 相等忽略 unknown 平面",
+        "file": "crates/trit-core/src/bulk.rs",
+        "old": "            if *ones != other.ones[w] || left != right {\n",
+        "new": "            if *ones != other.ones[w] {\n",
+        "pkg": "trit-core",
+        "filter": "eq_compares_values_not_storage"
+    },
+    {
+        "name": "core: TriVec 位平面不足不报错",
+        "file": "crates/trit-core/src/bulk.rs",
+        "old": "        if ones.len() < need {\n",
+        "new": "        if false {\n",
+        "pkg": "trit-core",
+        "filter": "fallible_constructors_and_accessors_report_bounds"
+    },
+    {
+        "name": "core: 清空最后一个 Unknown 不规范化平面",
+        "file": "crates/trit-core/src/bulk.rs",
+        "old": "        if cleared_last_unknown {\n            self.unknowns = None;\n        }\n",
+        "new": "        if false {\n            self.unknowns = None;\n        }\n",
+        "pkg": "trit-core",
+        "filter": "eq_compares_values_not_storage"
+    },
+    {
+        "name": "core: 枚举变量数预算失效",
+        "file": "crates/trit-core/src/bits.rs",
+        "old": "        if self.variables.len() > limits.max_vars {\n",
+        "new": "        if false {\n",
+        "pkg": "trit-core",
+        "filter": "evaluate_within_enforces_var_budget_directly"
+    },
+    {
+        "name": "eval: 解码忽略剩余高位",
+        "file": "crates/trit-eval/src/eval.rs",
+        "old": "    if t != 0 {\n        return Err(AssignmentCodecError::OutOfDomain {\n",
+        "new": "    if false {\n        return Err(AssignmentCodecError::OutOfDomain {\n",
+        "pkg": "trit-eval",
+        "filter": "checked_codec_rejects_out_of_domain_and_duplicates"
+    },
+    {
+        "name": "eval: 编码对高位零也报溢出",
+        "file": "crates/trit-eval/src/eval.rs",
+        "old": "        if digit == 0 {\n            continue;\n        }\n",
+        "new": "        if digit == 0 {\n        }\n",
+        "pkg": "trit-eval",
+        "filter": "assignment_index_does_not_over_reject_high_zero_digits"
+    },
+    {
+        "name": "policy: 未引用环不报错",
+        "file": "crates/trit-policy/src/lib.rs",
+        "old": "                        return Err(PolicyError::Cycle(cycle.join(\" -> \")));\n",
+        "new": "                        let _ = cycle;\n",
+        "pkg": "trit-policy",
+        "filter": "unused_definition_cycle_is_rejected_before_expansion"
+    },
+    {
+        "name": "policy: binary 允许派生定义",
+        "file": "crates/trit-policy/src/lib.rs",
+        "old": "        if definitions.contains_key(name) {\n",
+        "new": "        if false && definitions.contains_key(name) {\n",
+        "pkg": "trit-policy",
+        "filter": "binary_names_must_be_original_variables"
+    },
+    {
+        "name": "circuit: 组合数溢出后饱和",
+        "file": "crates/trit-circuit/src/circuit.rs",
+        "old": "        checked_pow3(self.input_count())\n",
+        "new": "        Ok(checked_pow3(self.input_count()).unwrap_or(u64::MAX))\n",
+        "pkg": "trit-circuit",
+        "filter": "analyze_rejects_too_many_inputs_before_enumeration"
+    },
+    {
         "name": "atpg: X 合并忽略唯一覆盖（保留全部故障）",
         "file": "crates/trit-circuit/src/atpg.rs",
         "old": "                        need.retain(|fault| !detected.contains(fault));",
@@ -238,6 +334,8 @@ def run_tests(pkg: str, test_filter: str) -> subprocess.CompletedProcess[str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
 

@@ -182,7 +182,7 @@ pub fn belnap_table_js(expr: &str) -> Result<String, JsValue> {
     if vars.len() > 6 {
         return Err(js_err("四值真值表最多 6 个变量"));
     }
-    let table = trit_belnap::table(&parsed);
+    let table = trit_belnap::table(&parsed).map_err(|e| js_err(format!("{e}")))?;
     let rows: Vec<Value> = table
         .rows
         .iter()
