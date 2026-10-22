@@ -1,5 +1,7 @@
 //! 三值求值、真值表与化简。
 
+#![forbid(unsafe_code)]
+
 pub mod eval;
 pub mod simplify;
 

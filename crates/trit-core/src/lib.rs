@@ -1,5 +1,7 @@
 //! 三值逻辑核心：值、代数、AST、解析器、位并行表示与二进制互操作。
 
+#![forbid(unsafe_code)]
+
 pub mod algebra;
 pub mod ast;
 pub mod bits;

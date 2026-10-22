@@ -19,6 +19,8 @@
 //! 查询是“前提为 True 且断言不为 True”是否可满足，而不是三值 `premise ⇒ assertion` 恒真
 //! （后者会把 `a=X` 这类不满足前提的赋值也算进去）。
 
+#![forbid(unsafe_code)]
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 

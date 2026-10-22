@@ -20,6 +20,8 @@
 //! assert!(!q.is_valid(), "三值域下 a=X 时 a|!a 不为真");
 //! ```
 
+#![forbid(unsafe_code)]
+
 pub use trit_bdd::{
     BddError, BddLimits, BddVerdict, Quantified, Quantifier, VarOrder, equivalent_bdd,
     equivalent_bdd_best, equivalent_bdd_with_limits, equivalent_bdd_with_order, order_variables,
