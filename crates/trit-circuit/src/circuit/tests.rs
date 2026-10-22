@@ -428,3 +428,57 @@ fn untestable_reasons_classify_three_cases() {
         "zero 引脚的 SA-1 可测"
     );
 }
+
+#[test]
+fn const_gate_without_value_is_rejected() {
+    let mut circuit = Circuit::new("bad");
+    circuit.add_gate(Gate::new(GateKind::Const, Vec::new(), sig("c")));
+    assert_eq!(
+        circuit.validate(),
+        Err(CircuitError::ConstValueMissing("c".to_string()))
+    );
+}
+
+#[test]
+fn non_const_gate_with_value_is_rejected() {
+    let mut circuit = Circuit::new("bad");
+    circuit.add_input(sig("a"));
+    circuit.add_gate(Gate {
+        kind: GateKind::Buf,
+        inputs: vec![sig("a")],
+        output: sig("y"),
+        const_value: Some(Ternary::True),
+    });
+    assert_eq!(
+        circuit.validate(),
+        Err(CircuitError::ConstValueUnexpected("y".to_string()))
+    );
+}
+
+#[test]
+fn empty_signal_name_is_rejected() {
+    let mut circuit = Circuit::new("bad");
+    circuit.add_output(Signal::new(""));
+    assert_eq!(circuit.validate(), Err(CircuitError::EmptySignalName));
+}
+
+#[test]
+fn duplicate_output_is_rejected() {
+    let mut circuit = Circuit::new("bad");
+    circuit.add_input(sig("a"));
+    circuit.add_output(sig("a"));
+    circuit.add_output(sig("a"));
+    assert_eq!(
+        circuit.validate(),
+        Err(CircuitError::DuplicateOutput("a".to_string()))
+    );
+}
+
+#[test]
+fn public_validate_detects_combinational_loop() {
+    let mut circuit = Circuit::new("loop");
+    circuit.add_gate(Gate::new(GateKind::Buf, vec![sig("n2")], sig("n1")));
+    circuit.add_gate(Gate::new(GateKind::Buf, vec![sig("n1")], sig("n2")));
+    circuit.add_output(sig("n2"));
+    assert_eq!(circuit.validate(), Err(CircuitError::CombinationalLoop));
+}

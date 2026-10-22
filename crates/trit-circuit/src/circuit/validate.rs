@@ -20,11 +20,40 @@ pub(crate) fn validate(circuit: &Circuit) -> Result<(), CircuitError> {
                 actual,
             });
         }
+        match (gate.kind, gate.const_value) {
+            (GateKind::Const, None) => {
+                return Err(CircuitError::ConstValueMissing(
+                    gate.output.name().to_string(),
+                ));
+            }
+            (kind, Some(_)) if kind != GateKind::Const => {
+                return Err(CircuitError::ConstValueUnexpected(
+                    gate.output.name().to_string(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    for sig in circuit.inputs.iter().chain(&circuit.outputs) {
+        if sig.name().is_empty() {
+            return Err(CircuitError::EmptySignalName);
+        }
+    }
+    for gate in &circuit.gates {
+        if gate.output.name().is_empty() || gate.inputs.iter().any(|sig| sig.name().is_empty()) {
+            return Err(CircuitError::EmptySignalName);
+        }
     }
     let mut seen_inputs: BTreeSet<&str> = BTreeSet::new();
     for inp in &circuit.inputs {
         if !seen_inputs.insert(inp.name()) {
             return Err(CircuitError::DuplicateInput(inp.name().to_string()));
+        }
+    }
+    let mut seen_outputs: BTreeSet<&str> = BTreeSet::new();
+    for out in &circuit.outputs {
+        if !seen_outputs.insert(out.name()) {
+            return Err(CircuitError::DuplicateOutput(out.name().to_string()));
         }
     }
     let mut drivers: BTreeMap<&str, usize> = circuit.inputs.iter().map(|s| (s.name(), 1)).collect();

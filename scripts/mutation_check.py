@@ -112,6 +112,30 @@ MUTANTS = [
         "filter": "untestable_reasons"
     },
     {
+        "name": "circuit: Const 缺值不再报错",
+        "file": "crates\\trit-circuit\\src\\circuit\\validate.rs",
+        "old": "            (GateKind::Const, None) => {",
+        "new": "            (GateKind::Const, None) if false => {",
+        "pkg": "trit-circuit",
+        "filter": "const_gate_without_value_is_rejected"
+    },
+    {
+        "name": "circuit: 非 Const 带值不再报错",
+        "file": "crates\\trit-circuit\\src\\circuit\\validate.rs",
+        "old": "            (kind, Some(_)) if kind != GateKind::Const => {",
+        "new": "            (_, Some(_)) if false => {",
+        "pkg": "trit-circuit",
+        "filter": "non_const_gate_with_value_is_rejected"
+    },
+    {
+        "name": "circuit: 空信号名不再报错",
+        "file": "crates\\trit-circuit\\src\\circuit\\validate.rs",
+        "old": "        if sig.name().is_empty() {",
+        "new": "        if false {",
+        "pkg": "trit-circuit",
+        "filter": "empty_signal_name_is_rejected"
+    },
+    {
         "name": "netlist: gate 参数计数失效",
         "file": "crates/trit-circuit/src/netlist.rs",
         "old": "                if parts.len() != 5 {",
