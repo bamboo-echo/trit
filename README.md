@@ -99,8 +99,8 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 - SAT / BDD / 策略入口先 `check_expr` 再编码，超限返回专门的 `Limit` 错误；
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-`python scripts/mutation_check.py` 对 23 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 23/23）；`.github/workflows/mutation.yml` 每周跑一次。
+`python scripts/mutation_check.py` 对 24 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 24/24）；`.github/workflows/mutation.yml` 每周跑一次。
 
 ## fuzz 与基准
 
@@ -113,6 +113,7 @@ cargo install cargo-fuzz
 cargo +nightly fuzz run parse_netlist
 cargo +nightly fuzz run parse_verilog
 cargo +nightly fuzz run atpg
+cargo +nightly fuzz run blif
 ```
 
 - 基准：`bash scripts/bench.sh`（release；本机 Windows 一次读数，仅供参考）：
@@ -299,6 +300,10 @@ python -m http.server 8765 --directory playground
 `--format csv` 导出 `pattern,<输入…>,covered`，便于喂给外部仿真器。
 主输入 ≤ 8 且 故障数 × `2^n` ≤ 50000 时会枚举全部向量再做贪心覆盖（`exhaustive`），否则退回每个故障的首个见证。
 故障数 ≤ 64 且向量数 ≤ 256 时再跑精确最小覆盖（`optimal`，DFS + 下界剪枝，10 万节点预算）。
+
+`trit netlist design.blif --from blif --to text` 读 BLIF 组合子集（`.model` / `.inputs` / `.outputs` /
+`.names` cover / `.end`；拒绝 `.latch`）。`--to blif` 反向导出：`AND/OR/NAND/NOR/NOT/BUF/经典 XOR`
+写成 `.names` 真值表，三值强加 `Xor` 与 `X` 常量拒绝。BLIF 是二值格式，往返等价只对 0/1 激励保证。
 
 单向量传播（不枚举 3^n）：`trit circuit examples/and_gate.net --assign "a=X,b=0"`。
 输出每根信号取值、主输出上 `X` 的来源主输入，以及被遮蔽的门（`X & 0 = 0`、`X | 1 = 1`；
