@@ -158,7 +158,7 @@ impl Gate {
     pub fn constant(value: Ternary, output: Signal) -> Self {
         Self {
             kind: GateKind::Const,
-            inputs: vec![output.clone()],
+            inputs: Vec::new(),
             output,
             const_value: Some(value),
         }
@@ -277,6 +277,12 @@ pub enum CircuitError {
     /// 信号既未声明为输入，也没有驱动它的门。
     #[error("信号 {0} 未被任何门驱动，也不是主输入")]
     UndrivenSignal(String),
+    /// 同一个信号被声明了多次主输入。
+    #[error("信号 {0} 被重复声明为主输入")]
+    DuplicateInput(String),
+    /// 同一个信号被多个源驱动（门或主输入）。
+    #[error("信号 {0} 有多个驱动源")]
+    MultipleDrivers(String),
     /// 输入向量缺少主输入。
     #[error("输入向量缺少主输入 {0}")]
     MissingInput(String),
@@ -486,6 +492,19 @@ fn validate(circuit: &Circuit) -> Result<(), CircuitError> {
                 actual,
             });
         }
+    }
+    let mut seen_inputs: BTreeSet<&str> = BTreeSet::new();
+    for inp in &circuit.inputs {
+        if !seen_inputs.insert(inp.name()) {
+            return Err(CircuitError::DuplicateInput(inp.name().to_string()));
+        }
+    }
+    let mut drivers: BTreeMap<&str, usize> = circuit.inputs.iter().map(|s| (s.name(), 1)).collect();
+    for gate in &circuit.gates {
+        *drivers.entry(gate.output.name()).or_insert(0) += 1;
+    }
+    if let Some((signal, _)) = drivers.iter().find(|(_, count)| **count > 1) {
+        return Err(CircuitError::MultipleDrivers((*signal).to_string()));
     }
     // 检查组合环与未驱动信号
     let mut driven: BTreeSet<String> = circuit
@@ -777,7 +796,6 @@ mod tests {
     #[test]
     fn detects_combinational_loop() {
         let mut c = Circuit::new("loop");
-        c.add_input(Signal::new("a"));
         c.add_gate(Gate::new(
             GateKind::Not,
             vec![Signal::new("n")],
@@ -920,5 +938,45 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn const_gate_masks_x_and_is_not_a_loop() {
+        let mut c = Circuit::new("mask");
+        c.add_input(sig("a"));
+        c.add_gate(Gate::constant(Ternary::False, sig("zero")));
+        c.add_gate(Gate::new(
+            GateKind::And,
+            vec![sig("a"), sig("zero")],
+            sig("y"),
+        ));
+        c.add_output(sig("y"));
+
+        let p = propagate(&c, &assignment(&[("a", Ternary::Unknown)]), Algebra::Kleene).unwrap();
+        assert_eq!(p.outputs["y"], Ternary::False);
+        assert_eq!(p.masked, vec!["y".to_string()]);
+        analyze(&c, Algebra::Kleene).expect("Const 门不该被误判成组合环");
+    }
+
+    #[test]
+    fn rejects_duplicate_drivers() {
+        let mut c = Circuit::new("dup-driver");
+        c.add_input(sig("a"));
+        c.add_gate(Gate::new(GateKind::Buf, vec![sig("a")], sig("y")));
+        c.add_gate(Gate::new(GateKind::Not, vec![sig("a")], sig("y")));
+        c.add_output(sig("y"));
+        let err = analyze(&c, Algebra::Kleene).unwrap_err();
+        assert!(matches!(err, CircuitError::MultipleDrivers(ref s) if s == "y"));
+    }
+
+    #[test]
+    fn rejects_duplicate_primary_inputs() {
+        let mut c = Circuit::new("dup-input");
+        c.add_input(sig("a"));
+        c.add_input(sig("a"));
+        c.add_gate(Gate::new(GateKind::Buf, vec![sig("a")], sig("y")));
+        c.add_output(sig("y"));
+        let err = analyze(&c, Algebra::Kleene).unwrap_err();
+        assert!(matches!(err, CircuitError::DuplicateInput(ref s) if s == "a"));
     }
 }
