@@ -217,6 +217,183 @@ fn annotate_dont_care(
     }
 }
 
+/// 压缩时允许的最多 X 位（填充搜索是启发式的，超过就放弃合并）。
+const MAX_MERGE_FREE_BITS: usize = 8;
+/// 超过这个向量数就不做合并搜索，避免平方级的模拟开销。
+const MAX_MERGE_PATTERNS: usize = 32;
+
+/// X 合并压缩的工作集：索引化仿真器 + 信号/门查找表。
+struct CompactContext<'a> {
+    names: Vec<String>,
+    gate_of: BTreeMap<&'a str, usize>,
+    simulator: crate::circuit::Simulator<'a>,
+    outputs: Vec<usize>,
+}
+
+impl<'a> CompactContext<'a> {
+    fn new(circuit: &'a Circuit, alg: Algebra) -> Option<Self> {
+        let simulator = crate::circuit::Simulator::new(circuit, alg).ok()?;
+        let outputs = simulator.output_indices().to_vec();
+        let gate_of = circuit
+            .gates
+            .iter()
+            .enumerate()
+            .map(|(index, gate)| (gate.output.name(), index))
+            .collect();
+        let names = circuit
+            .inputs
+            .iter()
+            .map(|signal| signal.name().to_string())
+            .collect();
+        Some(Self {
+            names,
+            gate_of,
+            simulator,
+            outputs,
+        })
+    }
+
+    /// 向量的具体二进制位（X 位也保留它在 `inputs` 里的填充值）。
+    fn concrete_mask(&self, pattern: &TestPattern) -> u64 {
+        let mut mask = 0u64;
+        for (bit, name) in self.names.iter().enumerate() {
+            if pattern.inputs.get(name) == Some(&Ternary::True) {
+                mask |= 1 << bit;
+            }
+        }
+        mask
+    }
+
+    /// 只看具体位：返回 `(care, ones)`；X 位不进 `care`，可参与合并。
+    fn partial(&self, pattern: &TestPattern) -> (u64, u64) {
+        let mut care = 0u64;
+        let mut ones = 0u64;
+        for (bit, name) in self.names.iter().enumerate() {
+            if pattern.dont_care.contains(name) {
+                continue;
+            }
+            care |= 1 << bit;
+            if pattern.inputs.get(name) == Some(&Ternary::True) {
+                ones |= 1 << bit;
+            }
+        }
+        (care, ones)
+    }
+
+    /// 给定具体向量，实际模拟它能否检出 `candidates` 里的每个故障。
+    fn detected(&mut self, faults: &[Fault], mask: u64, candidates: &[usize]) -> Vec<usize> {
+        let values = self.simulator.eval_binary(mask, None);
+        let good: Vec<Ternary> = self.outputs.iter().map(|&index| values[index]).collect();
+        let mut detected = Vec::new();
+        for &index in candidates {
+            let fault = &faults[index];
+            let Some(&gate_index) = self.gate_of.get(fault.gate.as_str()) else {
+                continue;
+            };
+            let bad = self
+                .simulator
+                .eval_binary(mask, Some((gate_index, fault.input_index, fault.stuck_at)));
+            if self
+                .outputs
+                .iter()
+                .enumerate()
+                .any(|(slot, &signal)| bad[signal] != good[slot])
+            {
+                detected.push(index);
+            }
+        }
+        detected
+    }
+
+    fn build(&self, mask: u64, free: &[usize], covers: Vec<usize>) -> TestPattern {
+        let inputs = self
+            .names
+            .iter()
+            .enumerate()
+            .map(|(bit, name)| {
+                let value = if (mask >> bit) & 1 == 1 {
+                    Ternary::True
+                } else {
+                    Ternary::False
+                };
+                (name.clone(), value)
+            })
+            .collect();
+        let dont_care = free.iter().map(|&bit| self.names[bit].clone()).collect();
+        TestPattern {
+            inputs,
+            covers,
+            dont_care,
+        }
+    }
+
+    /// 尝试把两个向量合并成一个 X 向量；只有存在一种填充能覆盖 `need` 才接受。
+    fn try_merge(
+        &mut self,
+        faults: &[Fault],
+        left: &TestPattern,
+        right: &TestPattern,
+        need: &[usize],
+    ) -> Option<TestPattern> {
+        let (care_a, ones_a) = self.partial(left);
+        let (care_b, ones_b) = self.partial(right);
+        let mut care = 0u64;
+        let mut ones = 0u64;
+        for bit in 0..self.names.len() {
+            let a = (care_a >> bit) & 1 == 1;
+            let b = (care_b >> bit) & 1 == 1;
+            let av = if a {
+                Some((ones_a >> bit) & 1 == 1)
+            } else {
+                None
+            };
+            let bv = if b {
+                Some((ones_b >> bit) & 1 == 1)
+            } else {
+                None
+            };
+            match (av, bv) {
+                (Some(x), Some(y)) if x != y => {}
+                (Some(value), _) | (_, Some(value)) => {
+                    care |= 1 << bit;
+                    if value {
+                        ones |= 1 << bit;
+                    }
+                }
+                (None, None) => {}
+            }
+        }
+        let free: Vec<usize> = (0..self.names.len())
+            .filter(|bit| (care >> bit) & 1 == 0)
+            .collect();
+        if free.len() > MAX_MERGE_FREE_BITS {
+            return None;
+        }
+        if need.is_empty() {
+            return None;
+        }
+
+        // 自由位不超过 8 个，直接枚举全部填充；命中的第一个就完整模拟校验过。
+        let mut mask = (ones & care) | (self.concrete_mask(left) & !care);
+        let free_mask = free.iter().fold(0u64, |acc, &bit| acc | (1 << bit));
+        mask &= !free_mask;
+        for fill in 0..(1u64 << free.len()) {
+            let mut candidate = mask;
+            for (slot, &bit) in free.iter().enumerate() {
+                if (fill >> slot) & 1 == 1 {
+                    candidate |= 1 << bit;
+                }
+            }
+            let detected = self.detected(faults, candidate, need);
+            if need.iter().all(|fault| detected.contains(fault)) {
+                return Some(self.build(candidate, &free, detected));
+            }
+        }
+        None
+    }
+}
+
+/// 反复合并任意两个可合并的向量，返回省下的向量数。
 fn compact_patterns(
     circuit: &Circuit,
     alg: Algebra,
@@ -368,7 +545,7 @@ fn greedy_patterns(
     circuit: &Circuit,
     by_mask: &BTreeMap<u64, Vec<usize>>,
     faults: &[Fault],
-) -> Vec<TestPattern> {
+) -> Result<Vec<TestPattern>, CircuitError> {
     let mut uncovered: Vec<bool> = faults.iter().map(|f| f.observable).collect();
     let mut patterns: Vec<TestPattern> = Vec::new();
     loop {
@@ -399,12 +576,12 @@ fn greedy_patterns(
             }
         }
         patterns.push(TestPattern {
-            inputs: circuit.decode_binary(mask),
+            inputs: circuit.decode_binary(mask)?,
             covers,
             dont_care: Vec::new(),
         });
     }
-    patterns
+    Ok(patterns)
 }
 
 /// 生成 stuck-at 测试向量。
@@ -448,7 +625,7 @@ pub fn generate_tests(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, Cir
                     }
                 }
                 patterns.push(TestPattern {
-                    inputs: circuit.decode_binary(mask),
+                    inputs: circuit.decode_binary(mask)?,
                     covers,
                     dont_care: Vec::new(),
                 });
@@ -456,7 +633,7 @@ pub fn generate_tests(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, Cir
         }
     }
     if !optimal {
-        patterns = greedy_patterns(circuit, &by_mask, &faults);
+        patterns = greedy_patterns(circuit, &by_mask, &faults)?;
     }
     annotate_dont_care(circuit, alg, &faults, &mut patterns);
     let merged = compact_patterns(circuit, alg, &faults, &mut patterns);
@@ -845,6 +1022,45 @@ mod tests {
     }
 
     #[test]
+    fn dont_care_bits_are_jointly_fillable() {
+        // 检出条件 c=0 且 (a|b)=1：a、b 单独可翻，但同时翻 0 就丢检测。
+        let mut c = Circuit::new("joint");
+        c.add_input(sig("a"));
+        c.add_input(sig("b"));
+        c.add_input(sig("c"));
+        c.add_gate(Gate::new(GateKind::Or, vec![sig("a"), sig("b")], sig("s")));
+        c.add_gate(Gate::new(GateKind::Buf, vec![sig("c")], sig("n")));
+        c.add_gate(Gate::new(
+            GateKind::And,
+            vec![sig("n"), sig("s")],
+            sig("out"),
+        ));
+        c.add_output(sig("out"));
+        let faults = analyze_faults(&c, Algebra::Kleene).unwrap();
+        let index = faults
+            .iter()
+            .position(|f| f.gate == "n" && f.input == "c" && f.stuck_at == Ternary::True)
+            .unwrap();
+        let mut inputs = BTreeMap::new();
+        inputs.insert("a".to_string(), Ternary::True);
+        inputs.insert("b".to_string(), Ternary::True);
+        inputs.insert("c".to_string(), Ternary::False);
+        let mut patterns = vec![TestPattern {
+            inputs,
+            covers: vec![index],
+            dont_care: Vec::new(),
+        }];
+        annotate_dont_care(&c, Algebra::Kleene, &faults, &mut patterns);
+        let marked = &patterns[0].dont_care;
+        let free_ab = marked
+            .iter()
+            .filter(|name| *name == "a" || *name == "b")
+            .count();
+        assert!(free_ab <= 1, "a/b 不能同时标成可任意填：{marked:?}");
+        assert!(!marked.contains(&"c".to_string()), "c 是检出必需位");
+    }
+
+    #[test]
     fn exhausted_budget_is_not_reported_as_optimal() {
         let sets = vec![(1u64, 0b11u64), (2u64, 0b01u64)];
         let (_, proven) = minimum_cover(&sets, 0b11, 1);
@@ -871,7 +1087,8 @@ mod tests {
             if full == 0 || sets.len() > 10 {
                 continue;
             }
-            let cover = minimum_cover(&sets, full, 100_000).expect("小实例应有解");
+            let (cover, _) = minimum_cover(&sets, full, 100_000);
+            let cover = cover.expect("小实例应有解");
             let union = cover.iter().fold(0u64, |acc, mask| {
                 acc | sets.iter().find(|(m, _)| m == mask).unwrap().1
             });

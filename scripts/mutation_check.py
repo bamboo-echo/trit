@@ -1,3 +1,19 @@
+#!/usr/bin/env python3
+"""变异门：对关键规则做单点文本变异，跑对应回归；测试必须变红。
+
+用法：python scripts/mutation_check.py
+每个变异都会在 finally 里恢复原文件；退出码 1 表示有 mutant 存活（测试没抓住）。
+"""
+
+from __future__ import annotations
+
+import pathlib
+import re
+import subprocess
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
 MUTANTS = [
     {
         "name": "core: K3 strong_add 用 OR 代替 AND",
