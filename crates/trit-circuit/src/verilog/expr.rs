@@ -14,6 +14,11 @@ const MAX_RHS_DEPTH: usize = 256;
 pub(super) enum VExpr {
     Var(String),
     Const(Ternary),
+    /// 带位宽的常量；`bits[0]` 是最低位。
+    ConstBits {
+        width: usize,
+        bits: Vec<Ternary>,
+    },
     Not(Box<VExpr>),
     And(Box<VExpr>, Box<VExpr>),
     Or(Box<VExpr>, Box<VExpr>),
@@ -187,7 +192,7 @@ impl RhsParser {
             Some(ch) if ch.is_ascii_digit() => {
                 let start = self.pos;
                 while let Some(ch) = self.peek() {
-                    if ch.is_ascii_alphanumeric() || ch == '\'' {
+                    if ch.is_ascii_alphanumeric() || ch == '\'' || ch == '_' {
                         self.pos += 1;
                     } else {
                         break;
@@ -234,17 +239,108 @@ impl RhsParser {
 
 fn parse_literal(text: &str) -> Result<VExpr, VerilogError> {
     let lowered = text.to_ascii_lowercase();
+    if let Some((width_text, rest)) = lowered.split_once('\'') {
+        return parse_sized_literal(text, width_text, rest);
+    }
     let value = match lowered.as_str() {
-        "0" | "1'b0" => Ternary::False,
-        "1" | "1'b1" => Ternary::True,
-        "x" | "z" | "1'bx" | "1'bz" => Ternary::Unknown,
+        "0" => Ternary::False,
+        "1" => Ternary::True,
+        "x" | "z" => Ternary::Unknown,
         _ => {
             return Err(VerilogError::unsupported(format!(
-                "暂不支持常量 {text:?}（只接受 0/1/X/Z 或 1'b0/1'b1/1'bX/1'bZ）"
+                "暂不支持常量 {text:?}（只接受 0/1/X/Z 或 <width>'<b|o|d|h><digits>）"
             )));
         }
     };
     Ok(VExpr::Const(value))
+}
+
+fn parse_sized_literal(
+    original: &str,
+    width_text: &str,
+    rest: &str,
+) -> Result<VExpr, VerilogError> {
+    let width: usize = width_text
+        .parse()
+        .map_err(|_| message(format!("常量 {original:?} 的位宽不是数字")))?;
+    if width == 0 || width > super::MAX_VECTOR_WIDTH {
+        return Err(VerilogError::limit(format!(
+            "常量 {original:?} 的位宽 {width} 超过上限 {}",
+            super::MAX_VECTOR_WIDTH
+        )));
+    }
+    let mut chars = rest.chars();
+    let base = chars
+        .next()
+        .ok_or_else(|| message(format!("常量 {original:?} 缺少进制")))?;
+    let digits: String = chars.collect::<String>().replace('_', "");
+    if digits.is_empty() {
+        return Err(message(format!("常量 {original:?} 缺少数字")));
+    }
+    let mut bits: Vec<Ternary> = Vec::with_capacity(width);
+    match base {
+        'b' => {
+            for ch in digits.chars().rev() {
+                bits.push(match ch {
+                    '0' => Ternary::False,
+                    '1' => Ternary::True,
+                    'x' | 'z' => Ternary::Unknown,
+                    _ => {
+                        return Err(message(format!(
+                            "常量 {original:?} 含非法二进制数字 {ch:?}"
+                        )));
+                    }
+                });
+            }
+        }
+        'o' => expand_radix(&digits, 3, &mut bits)?,
+        'h' => expand_radix(&digits, 4, &mut bits)?,
+        'd' => {
+            let value: u128 = digits.parse().map_err(|_| {
+                VerilogError::unsupported(format!(
+                    "十进制常量 {original:?} 含非法字符或超过 128 位，请改用 b/o/h"
+                ))
+            })?;
+            for index in 0..width {
+                let set = index < 128 && ((value >> index) & 1) == 1;
+                bits.push(if set { Ternary::True } else { Ternary::False });
+            }
+        }
+        other => {
+            return Err(VerilogError::unsupported(format!(
+                "常量 {original:?} 的进制 {other:?} 不支持（只支持 b/o/d/h）"
+            )));
+        }
+    }
+    // Verilog 规则：数字不足高位补 0，超出则截断高位。
+    bits.resize(width, Ternary::False);
+    if width == 1 {
+        Ok(VExpr::Const(bits[0]))
+    } else {
+        Ok(VExpr::ConstBits { width, bits })
+    }
+}
+
+fn expand_radix(digits: &str, group: usize, bits: &mut Vec<Ternary>) -> Result<(), VerilogError> {
+    for ch in digits.chars().rev() {
+        if ch == 'x' || ch == 'z' {
+            for _ in 0..group {
+                bits.push(Ternary::Unknown);
+            }
+            continue;
+        }
+        let value = ch
+            .to_digit(1u32 << group)
+            .ok_or_else(|| message(format!("非法数字 {ch:?}")))?;
+        for bit in 0..group {
+            bits.push(if (value >> bit) & 1 == 1 {
+                Ternary::True
+            } else {
+                Ternary::False
+            });
+        }
+    }
+    Ok(())
 }
 
 /// 表达式位宽（标量 1；向量按声明位宽；拼接为各段之和）。
@@ -252,6 +348,7 @@ pub(super) fn expr_width(expr: &VExpr, widths: &BTreeMap<String, usize>) -> usiz
     match expr {
         VExpr::Var(name) => widths.get(name).copied().unwrap_or(1),
         VExpr::Const(_) => 1,
+        VExpr::ConstBits { width, .. } => *width,
         VExpr::Not(inner) => expr_width(inner, widths),
         VExpr::And(a, b) | VExpr::Or(a, b) | VExpr::Xor(a, b) => {
             expr_width(a, widths).max(expr_width(b, widths))
@@ -287,6 +384,9 @@ pub(super) fn bit_expr(
         } else {
             Ternary::False
         })),
+        VExpr::ConstBits { bits, .. } => Ok(VExpr::Const(
+            bits.get(index).copied().unwrap_or(Ternary::False),
+        )),
         VExpr::Not(inner) => Ok(VExpr::Not(Box::new(bit_expr(inner, index, widths)?))),
         VExpr::And(a, b) => Ok(VExpr::And(
             Box::new(bit_expr(a, index, widths)?),

@@ -8,6 +8,9 @@
   Verilog 解析填充，导出优先按声明宽度重组（允许只建模部分位），JSON 往返保留；
   空映射不序列化，旧 JSON 可直接读取。`CircuitError` 新增 `InvalidBus` / `BusNameConflict`。
   注：`Circuit` 新增公开字段，外部结构体字面量需补 `..Default::default()`。
+- **Verilog 尺寸常量**：`<width>'<b|o|d|h><digits>`，支持 `_` 分隔与 b/o/h 的 `x`/`z`，
+  不足高位补 0、超出截断高位；十进制常量限 128 位。尺寸常量可参与拼接与按位运算。
+  变异门 59 → 61。
 
 ## [0.8.2] - 2026-10-23
 
