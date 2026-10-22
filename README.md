@@ -99,8 +99,32 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 - SAT / BDD / 策略入口先 `check_expr` 再编码，超限返回专门的 `Limit` 错误；
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-`python scripts/mutation_check.py` 对 21 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 21/21）；`.github/workflows/mutation.yml` 每周跑一次。
+`python scripts/mutation_check.py` 对 23 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 23/23）；`.github/workflows/mutation.yml` 每周跑一次。
+
+## fuzz 与基准
+
+- 稳定版 smoke（CI 每次跑）：`cargo test -p trit-circuit --test fuzz_smoke`
+  —— 固定种子变异输入的解析往返、随机电路 ATPG 覆盖不变量。
+- 覆盖率引导 fuzz（需要 nightly + cargo-fuzz）：
+
+```bash
+cargo install cargo-fuzz
+cargo +nightly fuzz run parse_netlist
+cargo +nightly fuzz run parse_verilog
+cargo +nightly fuzz run atpg
+```
+
+- 基准：`bash scripts/bench.sh`（release；本机 Windows 一次读数，仅供参考）：
+
+| 项目 | 迭代 | per iter |
+|---|---|---|
+| netlist parse（32 门链） | 2000 | 7.3 µs |
+| verilog parse（32 级 assign） | 2000 | 20.8 µs |
+| timing analyze | 2000 | 43.7 µs |
+| map nand-only | 500 | 73.1 µs |
+| map timing-driven | 500 | 65.7 µs |
+| atpg（6 输入链） | 50 | 81.1 µs |
 
 ## 符号化等价（SAT）
 
@@ -140,6 +164,7 @@ trit map design.net --to verilog
 ```bash
 trit map design.net --cells cells.json --to verilog
 trit map design.v --from verilog --cells cells.json --area-first
+trit map design.net --cells cells.json --load-delay 2   # 扇出按负载延迟参与选实现
 ```
 
 `cells.json` 是「门类型 → 延迟」的扁平对象；没列出的类型视为库里没有该单元
@@ -169,7 +194,8 @@ trit timing design.net --clock 10
 trit timing design.v --from verilog --delay 2 --format json
 ```
 
-`--library cells.json` 可按门类型给延迟（`{"default_delay":1,"delays":{"AND":2}}`），优先于 `--delay`。
+`--library cells.json` 可按门类型给延迟（`{"default_delay":1,"delays":{"AND":2}}`），优先于 `--delay`；
+库里也可写 `"load_delay": N`，或直接用 CLI `--load-delay N`：每个扇出（门输入引用）追加 N 周期。
 `--paths N` 列出最慢的 N 条路径（信号序列 + 延迟）；JSON 里是 `paths`。
 
 ## BDD 引擎（`--bdd`）
@@ -279,7 +305,7 @@ python -m http.server 8765 --directory playground
 Ł3 的 `X ⊕ X = 1` 也算“确定”）。`--assign` 必须给全所有主输入，缺一个直接报错。
 
 同一套解析在库里：`trit_circuit::netlist::parse_netlist` / `to_netlist`（可往返）。
-结构化 Verilog 子集：`trit netlist design.v --from verilog --to text`（单比特、原语 + `assign` 的 `~ & |`；`xor`/`xnor` 原语支持，`assign` 里的 `^` 暂不支持；拒绝时序/多比特）。
+结构化 Verilog 子集：`trit netlist design.v --from verilog --to text`（单比特、原语 + `assign` 的 `~ & | ^` 与 `~^`/`^~`；`assign` 里的 `^` 按 Verilog 语义映射为经典异或；仍是单比特组合子集，拒绝时序/多比特）。
 格式互转：`trit netlist design.net`（text → JSON），`trit netlist design.json --from json --to text`。
 网表指令：`input` / `output` / `gate <AND|OR|XOR|NAND|NOR> <a> <b> <out>` / `not <a> <out>` /
 `buf <a> <out>` / `const <0|1|X> <out>`。`examples/x_mask.net` 是 `X & 0`、`X | 1` 遮蔽的最小例子。

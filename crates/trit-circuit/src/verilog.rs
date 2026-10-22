@@ -2,8 +2,6 @@
 
 use std::collections::HashSet;
 
-use trit_core::ast::Expr;
-use trit_core::parser::Parser;
 use trit_core::value::Ternary;
 
 use crate::circuit::{Circuit, Gate, GateKind, Signal};
@@ -77,42 +75,39 @@ impl Builder<'_> {
         ));
     }
 
-    fn synth(&mut self, expr: &Expr, target: &str) -> Result<(), VerilogError> {
+    fn synth_v(&mut self, expr: &VExpr, target: &str) -> Result<(), VerilogError> {
         match expr {
-            Expr::Var(name) => {
+            VExpr::Var(name) => {
                 if name != target {
                     self.add_gate(GateKind::Buf, vec![name.clone()], target);
                 }
             }
-            Expr::Const(value) => {
+            VExpr::Const(value) => {
                 self.circuit
                     .add_gate(Gate::constant(*value, Signal::new(target)));
             }
-            Expr::Not(inner) => {
-                let source = self.synth_temp(inner)?;
+            VExpr::Not(inner) => {
+                let source = self.temp_v(inner)?;
                 self.add_gate(GateKind::Not, vec![source], target);
             }
-            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => {
-                let left = self.synth_temp(a)?;
-                let right = self.synth_temp(b)?;
+            VExpr::And(a, b) | VExpr::Or(a, b) | VExpr::Xor(a, b) => {
+                let left = self.temp_v(a)?;
+                let right = self.temp_v(b)?;
                 let kind = match expr {
-                    Expr::And(..) => GateKind::And,
-                    Expr::Or(..) => GateKind::Or,
-                    _ => GateKind::Xor,
+                    VExpr::And(..) => GateKind::And,
+                    VExpr::Or(..) => GateKind::Or,
+                    _ => GateKind::XorClassic,
                 };
                 self.add_gate(kind, vec![left, right], target);
-            }
-            Expr::Implies(..) | Expr::Equiv(..) => {
-                return Err(message("assign 里暂不支持 => / <=>"));
             }
         }
         Ok(())
     }
 
-    fn synth_temp(&mut self, expr: &Expr) -> Result<String, VerilogError> {
+    fn temp_v(&mut self, expr: &VExpr) -> Result<String, VerilogError> {
         match expr {
-            Expr::Var(name) => Ok(name.clone()),
-            Expr::Const(value) => {
+            VExpr::Var(name) => Ok(name.clone()),
+            VExpr::Const(value) => {
                 let name = self.fresh();
                 self.circuit
                     .add_gate(Gate::constant(*value, Signal::new(name.clone())));
@@ -120,29 +115,188 @@ impl Builder<'_> {
             }
             _ => {
                 let name = self.fresh();
-                self.synth(expr, &name)?;
+                self.synth_v(expr, &name)?;
                 Ok(name)
             }
         }
     }
 }
 
-fn translate_assign(rhs: &str) -> Result<String, VerilogError> {
-    if rhs.contains('^') {
-        return Err(message("assign 里暂不支持 ^；请用 xor 原语（经典异或）"));
+/// `assign` 右值的小型表达式树（Verilog 语义：`^` 是经典异或）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VExpr {
+    Var(String),
+    Const(Ternary),
+    Not(Box<VExpr>),
+    And(Box<VExpr>, Box<VExpr>),
+    Or(Box<VExpr>, Box<VExpr>),
+    Xor(Box<VExpr>, Box<VExpr>),
+}
+
+struct RhsParser {
+    chars: Vec<char>,
+    pos: usize,
+}
+
+impl RhsParser {
+    fn new(text: &str) -> Self {
+        Self {
+            chars: text.chars().collect(),
+            pos: 0,
+        }
     }
-    let mut text = rhs.replace("&&", "&").replace("||", "|");
-    for (from, to) in [
-        ("1'b0", "0"),
-        ("1'b1", "1"),
-        ("1'bx", "X"),
-        ("1'bX", "X"),
-        ("1'bz", "X"),
-        ("1'bZ", "X"),
-    ] {
-        text = text.replace(from, to);
+
+    fn skip_ws(&mut self) {
+        while self.pos < self.chars.len() && self.chars[self.pos].is_whitespace() {
+            self.pos += 1;
+        }
     }
-    Ok(text)
+
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.pos).copied()
+    }
+
+    fn bump(&mut self) -> Option<char> {
+        let ch = self.peek()?;
+        self.pos += 1;
+        Some(ch)
+    }
+
+    fn parse(mut self) -> Result<VExpr, VerilogError> {
+        let expr = self.parse_or()?;
+        self.skip_ws();
+        if self.pos != self.chars.len() {
+            return Err(message(format!(
+                "assign 表达式在位置 {} 处有多余字符",
+                self.pos
+            )));
+        }
+        Ok(expr)
+    }
+
+    fn parse_or(&mut self) -> Result<VExpr, VerilogError> {
+        let mut left = self.parse_xor()?;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('|') {
+                self.pos += 1;
+                if self.peek() == Some('|') {
+                    self.pos += 1;
+                }
+                let right = self.parse_xor()?;
+                left = VExpr::Or(Box::new(left), Box::new(right));
+            } else {
+                return Ok(left);
+            }
+        }
+    }
+
+    fn parse_xor(&mut self) -> Result<VExpr, VerilogError> {
+        let mut left = self.parse_and()?;
+        loop {
+            self.skip_ws();
+            let negated = match (self.peek(), self.chars.get(self.pos + 1).copied()) {
+                (Some('~'), Some('^')) | (Some('^'), Some('~')) => {
+                    self.pos += 2;
+                    true
+                }
+                (Some('^'), _) => {
+                    self.pos += 1;
+                    false
+                }
+                _ => return Ok(left),
+            };
+            let right = self.parse_and()?;
+            let mut expr = VExpr::Xor(Box::new(left), Box::new(right));
+            if negated {
+                expr = VExpr::Not(Box::new(expr));
+            }
+            left = expr;
+        }
+    }
+
+    fn parse_and(&mut self) -> Result<VExpr, VerilogError> {
+        let mut left = self.parse_unary()?;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('&') {
+                self.pos += 1;
+                if self.peek() == Some('&') {
+                    self.pos += 1;
+                }
+                let right = self.parse_unary()?;
+                left = VExpr::And(Box::new(left), Box::new(right));
+            } else {
+                return Ok(left);
+            }
+        }
+    }
+
+    fn parse_unary(&mut self) -> Result<VExpr, VerilogError> {
+        self.skip_ws();
+        match self.peek() {
+            Some('~') | Some('!') => {
+                self.pos += 1;
+                Ok(VExpr::Not(Box::new(self.parse_unary()?)))
+            }
+            _ => self.parse_primary(),
+        }
+    }
+
+    fn parse_primary(&mut self) -> Result<VExpr, VerilogError> {
+        self.skip_ws();
+        match self.peek() {
+            Some('(') => {
+                self.pos += 1;
+                let expr = self.parse_or()?;
+                self.skip_ws();
+                if self.bump() != Some(')') {
+                    return Err(message("assign 表达式缺少 ')'"));
+                }
+                Ok(expr)
+            }
+            Some(ch) if ch.is_ascii_digit() => {
+                let start = self.pos;
+                while let Some(ch) = self.peek() {
+                    if ch.is_ascii_alphanumeric() || ch == '\'' {
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let literal: String = self.chars[start..self.pos].iter().collect();
+                parse_literal(&literal)
+            }
+            Some(ch) if ch.is_ascii_alphabetic() || ch == '_' || ch == '$' => {
+                let start = self.pos;
+                while let Some(ch) = self.peek() {
+                    if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
+                }
+                Ok(VExpr::Var(self.chars[start..self.pos].iter().collect()))
+            }
+            Some(ch) => Err(message(format!("assign 表达式里出现意外字符 {ch:?}"))),
+            None => Err(message("assign 表达式不完整")),
+        }
+    }
+}
+
+fn parse_literal(text: &str) -> Result<VExpr, VerilogError> {
+    let lowered = text.to_ascii_lowercase();
+    let value = match lowered.as_str() {
+        "0" | "1'b0" => Ternary::False,
+        "1" | "1'b1" => Ternary::True,
+        "x" | "z" | "1'bx" | "1'bz" => Ternary::Unknown,
+        _ => {
+            return Err(message(format!(
+                "暂不支持常量 {text:?}（只接受 0/1/X/Z 或 1'b0/1'b1/1'bX/1'bZ）"
+            )));
+        }
+    };
+    Ok(VExpr::Const(value))
 }
 
 fn split_list(text: &str) -> Vec<String> {
@@ -282,8 +436,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                 if !is_identifier(lhs) {
                     return Err(message(format!("非法 assign 目标 {lhs:?}")));
                 }
-                let expr = Parser::parse(&translate_assign(rhs.trim())?)
-                    .map_err(|e| message(format!("assign 表达式解析失败：{e}")))?;
+                let expr = RhsParser::new(rhs.trim()).parse()?;
                 let mut builder = Builder {
                     circuit: &mut circuit,
                     used: declared
@@ -293,7 +446,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
                         .collect(),
                     counter: 0,
                 };
-                builder.synth(&expr, lhs)?;
+                builder.synth_v(&expr, lhs)?;
             }
             "and" | "or" | "nand" | "nor" | "xor" | "xnor" | "not" | "buf" => {
                 let normalized = statement
@@ -503,6 +656,86 @@ endmodule
         let right = propagate(&again, &assignment, Algebra::Kleene).unwrap();
         assert_eq!(left.signals.get("y"), Some(&Ternary::False));
         assert_eq!(right.signals.get("y"), Some(&Ternary::False));
+    }
+
+    fn eval_assign(rhs: &str, values: &[(&str, Ternary)]) -> Ternary {
+        eval_assign_with(rhs, values, Algebra::Kleene)
+    }
+
+    fn eval_assign_with(rhs: &str, values: &[(&str, Ternary)], alg: Algebra) -> Ternary {
+        use crate::circuit::propagate;
+        use std::collections::BTreeMap;
+        let text = format!(
+            "module m(input a, input b, input c, output y);
+  assign y = {rhs};
+endmodule
+"
+        );
+        let circuit = parse_verilog(&text).unwrap();
+        let mut assignment: BTreeMap<String, Ternary> = circuit
+            .inputs
+            .iter()
+            .map(|signal| (signal.name().to_string(), Ternary::False))
+            .collect();
+        for (name, value) in values {
+            assignment.insert(name.to_string(), *value);
+        }
+        let result = propagate(&circuit, &assignment, alg).unwrap();
+        *result.signals.get("y").unwrap()
+    }
+
+    #[test]
+    fn assign_xor_is_classic_xor() {
+        use trit_core::value::Ternary::*;
+        assert_eq!(eval_assign("a ^ b", &[("a", True), ("b", True)]), False);
+        assert_eq!(eval_assign("a ^ b", &[("a", True), ("b", False)]), True);
+        assert_eq!(eval_assign("a ~^ b", &[("a", True), ("b", True)]), True);
+        assert_eq!(eval_assign("a ^~ b", &[("a", False), ("b", False)]), True);
+        assert_eq!(
+            eval_assign("a ^ b", &[("a", Unknown), ("b", True)]),
+            Unknown
+        );
+        assert!(eval_assign("a ^ b", &[("a", Unknown), ("b", False)]).is_unknown());
+    }
+
+    #[test]
+    fn assign_xor_is_not_lukasiewicz_strong_sum() {
+        use trit_core::value::Ternary::*;
+        // Ł3 的强加 1 ⊕ 1 = 1，经典异或必须是 0。
+        assert_eq!(
+            eval_assign_with("a ^ b", &[("a", True), ("b", True)], Algebra::Lukasiewicz),
+            False
+        );
+    }
+
+    #[test]
+    fn assign_precedence_matches_verilog() {
+        use trit_core::value::Ternary::*;
+        // & 高于 ^ 高于 |
+        assert_eq!(
+            eval_assign("a ^ b & c", &[("a", True), ("b", True), ("c", False)]),
+            True
+        );
+        assert_eq!(
+            eval_assign("a & b | c", &[("a", True), ("b", False), ("c", False)]),
+            False
+        );
+        assert_eq!(
+            eval_assign("~(a | b) & c", &[("a", False), ("b", False), ("c", True)]),
+            True
+        );
+    }
+
+    #[test]
+    fn assign_literals_and_parentheses() {
+        use trit_core::value::Ternary::*;
+        assert_eq!(eval_assign("1'b1", &[]), True);
+        assert_eq!(eval_assign("1'b0 | a", &[("a", False)]), False);
+        assert_eq!(eval_assign("1'bx & a", &[("a", True)]), Unknown);
+        assert_eq!(
+            eval_assign("(a | b) & !c", &[("a", False), ("b", True), ("c", False)]),
+            True
+        );
     }
 
     #[test]

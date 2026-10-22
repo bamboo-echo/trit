@@ -133,6 +133,19 @@ pub fn to_cells(
     library: &CellLibrary,
     strategy: MapStrategy,
 ) -> Result<Circuit, MapError> {
+    to_cells_with_load(circuit, library, strategy, 0)
+}
+
+/// 同 [`to_cells`]，但把每个扇出（门输入引用）额外算 `load_delay` 个周期的负载延迟。
+///
+/// 直接单元按输出净的扇出计负载；NAND 展开的内部节点按展开内部扇出计，
+/// 最后一级再加上原输出净的扇出。
+pub fn to_cells_with_load(
+    circuit: &Circuit,
+    library: &CellLibrary,
+    strategy: MapStrategy,
+    load_delay: u32,
+) -> Result<Circuit, MapError> {
     validate(circuit)?;
     let order = topological_order(circuit)?;
     let mut mapped = Circuit::new(format!("{}_mapped", circuit.name));
@@ -158,6 +171,7 @@ pub fn to_cells(
         }
     };
 
+    let fanouts = crate::circuit::fanout_counts(circuit);
     let mut arrival: BTreeMap<String, u32> = circuit
         .inputs
         .iter()
@@ -185,8 +199,9 @@ pub fn to_cells(
 
         let mut candidates: Vec<Implementation> = Vec::new();
         if let Some(delay) = library.delay(gate.kind) {
+            let load = load_delay.saturating_mul(fanouts.get(&output).copied().unwrap_or(0) as u32);
             candidates.push(Implementation {
-                arrival: start.saturating_add(delay),
+                arrival: start.saturating_add(delay).saturating_add(load),
                 cells: 1,
                 direct: true,
                 ops: None,
@@ -195,7 +210,8 @@ pub fn to_cells(
         if library.has(GateKind::Nand) {
             let nand_delay = library.delay(GateKind::Nand).unwrap_or(0);
             if let Some(ops) = nand_expand(gate.kind, a, b, &output, &mut fresh) {
-                let arrival = expansion_arrival(&ops, &arrival, nand_delay);
+                let fanout = fanouts.get(&output).copied().unwrap_or(0);
+                let arrival = expansion_arrival(&ops, &arrival, nand_delay, load_delay, fanout);
                 candidates.push(Implementation {
                     arrival,
                     cells: ops.len(),
@@ -247,9 +263,15 @@ pub fn to_nand_only(circuit: &Circuit) -> Result<Circuit, MapError> {
 }
 
 /// 按 NAND 展开计算输出到达时间（只依赖展开本身，不修改全局表）。
-fn expansion_arrival(ops: &[NandOp], arrival: &BTreeMap<String, u32>, delay: u32) -> u32 {
+fn expansion_arrival(
+    ops: &[NandOp],
+    arrival: &BTreeMap<String, u32>,
+    delay: u32,
+    load_delay: u32,
+    final_fanout: usize,
+) -> u32 {
     let mut produced: Vec<(&str, u32)> = Vec::with_capacity(ops.len());
-    for (a, b, out) in ops {
+    for (index, (a, b, out)) in ops.iter().enumerate() {
         let lookup = |name: &str| {
             produced
                 .iter()
@@ -258,7 +280,15 @@ fn expansion_arrival(ops: &[NandOp], arrival: &BTreeMap<String, u32>, delay: u32
                 .or_else(|| arrival.get(name).copied())
                 .unwrap_or(0)
         };
-        let at = lookup(a).max(lookup(b)).saturating_add(delay);
+        let internal: usize = ops[index + 1..]
+            .iter()
+            .map(|(x, y, _)| usize::from(x == out) + usize::from(y == out))
+            .sum();
+        let load = load_delay.saturating_mul((internal + final_fanout) as u32);
+        let at = lookup(a)
+            .max(lookup(b))
+            .saturating_add(delay)
+            .saturating_add(load);
         produced.push((out, at));
     }
     produced.last().map(|(_, at)| *at).unwrap_or(0)
@@ -333,6 +363,7 @@ mod tests {
         TimingModel {
             default_delay: library.cells.values().copied().max().unwrap_or(1),
             delays: library.cells.clone(),
+            load_delay: 0,
         }
     }
 
@@ -470,6 +501,19 @@ mod tests {
                 .critical_path,
             5
         );
+    }
+
+    #[test]
+    fn load_delay_flips_choice_to_direct_cell() {
+        let circuit = single(GateKind::And, &["a", "b"], "y");
+        let library = CellLibrary::new([(GateKind::And, 3), (GateKind::Nand, 1)]);
+        // 无负载：两级 NAND 到达 2 < AND 3。
+        let fast = to_cells_with_load(&circuit, &library, MapStrategy::Timing, 0).unwrap();
+        assert_eq!(fast.gates.len(), 2);
+        // 每扇出 +2：NAND 第一级内部扇出 1，合计 1+2+1=4 > AND 3。
+        let loaded = to_cells_with_load(&circuit, &library, MapStrategy::Timing, 2).unwrap();
+        assert_eq!(loaded.gates.len(), 1);
+        assert_eq!(loaded.gates[0].kind, GateKind::And);
     }
 
     #[test]

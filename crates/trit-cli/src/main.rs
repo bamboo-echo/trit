@@ -193,6 +193,9 @@ enum Commands {
         /// 门延迟（单位周期）；被 --library 覆盖。
         #[arg(long, default_value_t = 1)]
         delay: u32,
+        /// 每个扇出（门输入引用）追加的延迟；0 = 不看负载。
+        #[arg(long, value_name = "N")]
+        load_delay: Option<u32>,
         /// 时序库 JSON（`default_delay` + `delays`），形如 `{"default_delay":1,"delays":{"AND":2}}`。
         #[arg(long, value_name = "FILE")]
         library: Option<std::path::PathBuf>,
@@ -219,6 +222,9 @@ enum Commands {
         /// 面积优先（最少单元），平手再看延迟；需配合 `--cells`。
         #[arg(long)]
         area_first: bool,
+        /// 每个扇出（门输入引用）追加的延迟；0 = 不看负载。
+        #[arg(long, default_value_t = 0, value_name = "N")]
+        load_delay: u32,
     },
     /// 设计检查：结构 + 时序 + X 传播 + ATPG 覆盖率（一条命令）。
     Check {
@@ -233,6 +239,9 @@ enum Commands {
         /// 门延迟（单位周期）；被 --library 覆盖。
         #[arg(long, default_value_t = 1)]
         delay: u32,
+        /// 每个扇出（门输入引用）追加的延迟；0 = 不看负载。
+        #[arg(long, value_name = "N")]
+        load_delay: Option<u32>,
         /// 时序库 JSON。
         #[arg(long, value_name = "FILE")]
         library: Option<std::path::PathBuf>,
@@ -384,6 +393,7 @@ fn main() -> Result<()> {
             from,
             clock,
             delay,
+            load_delay,
             library,
             paths,
             format,
@@ -392,6 +402,7 @@ fn main() -> Result<()> {
             &from,
             clock,
             delay,
+            load_delay,
             library.as_deref(),
             paths,
             format,
@@ -402,12 +413,14 @@ fn main() -> Result<()> {
             to,
             cells,
             area_first,
-        } => cmd_map(&path, &from, &to, cells.as_deref(), area_first),
+            load_delay,
+        } => cmd_map(&path, &from, &to, cells.as_deref(), area_first, load_delay),
         Commands::Check {
             path,
             from,
             clock,
             delay,
+            load_delay,
             library,
             min_coverage,
             format,
@@ -416,6 +429,7 @@ fn main() -> Result<()> {
             &from,
             clock,
             delay,
+            load_delay,
             library.as_deref(),
             min_coverage,
             format,
@@ -1293,6 +1307,7 @@ fn cmd_map(
     to: &str,
     cells: Option<&std::path::Path>,
     area_first: bool,
+    load_delay: u32,
 ) -> Result<()> {
     let circuit = load_circuit(path, from)?;
     let mapped = match cells {
@@ -1306,7 +1321,7 @@ fn cmd_map(
             } else {
                 trit_circuit::MapStrategy::Timing
             };
-            trit_circuit::to_cells(&circuit, &library, strategy)
+            trit_circuit::to_cells_with_load(&circuit, &library, strategy, load_delay)
         }
         None if area_first => bail!("--area-first 需要配合 --cells 使用"),
         None => trit_circuit::to_nand_only(&circuit),
@@ -1328,6 +1343,7 @@ fn cmd_check(
     from: &str,
     clock: Option<u32>,
     delay: u32,
+    load_delay: Option<u32>,
     library: Option<&std::path::Path>,
     min_coverage: f64,
     format: Format,
@@ -1335,7 +1351,7 @@ fn cmd_check(
 ) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
     let circuit = load_circuit(path, from)?;
-    let model = timing_model(library, delay)?;
+    let model = timing_model(library, delay, load_delay)?;
     let timing = trit_circuit::timing::analyze_timing(&circuit, model, clock)?;
     let atpg = (circuit.input_count() <= 10)
         .then(|| trit_circuit::generate_tests(&circuit, alg))
@@ -1428,35 +1444,42 @@ fn cmd_check(
 fn timing_model(
     library: Option<&std::path::Path>,
     delay: u32,
+    load_delay: Option<u32>,
 ) -> Result<trit_circuit::timing::TimingModel> {
-    match library {
+    let mut model = match library {
         Some(library) => {
             let text = std::fs::read_to_string(library)
                 .with_context(|| format!("无法读取时序库 {}", library.display()))?;
             trit_circuit::timing::TimingModel::from_json(&text)
-                .with_context(|| format!("时序库解析失败：{}", library.display()))
+                .with_context(|| format!("时序库解析失败：{}", library.display()))?
         }
-        None => Ok(trit_circuit::timing::TimingModel {
+        None => trit_circuit::timing::TimingModel {
             default_delay: delay,
             ..Default::default()
-        }),
+        },
+    };
+    if let Some(load) = load_delay {
+        model.load_delay = load;
     }
+    Ok(model)
 }
 
 /// `timing` 子命令：组合时序估算。
+#[allow(clippy::too_many_arguments)]
 fn cmd_timing(
     path: &std::path::Path,
     from: &str,
     clock: Option<u32>,
     delay: u32,
+    load_delay: Option<u32>,
     library: Option<&std::path::Path>,
     paths: usize,
     format: Format,
 ) -> Result<()> {
     let circuit = load_circuit(path, from)?;
-    let model = timing_model(library, delay)?;
+    let model = timing_model(library, delay, load_delay)?;
     let report = trit_circuit::timing::analyze_timing(&circuit, model.clone(), clock)?;
-    let paths = trit_circuit::timing::critical_paths(&circuit, model, paths)?;
+    let paths = trit_circuit::timing::critical_paths(&circuit, model.clone(), paths)?;
     match format {
         Format::Json => {
             let obj = serde_json::json!({
@@ -1464,6 +1487,7 @@ fn cmd_timing(
                 "critical_path": report.critical_path,
                 "clock": report.clock,
                 "violations": report.violations,
+                "load_delay": model.load_delay,
                 "outputs": report.outputs.iter().map(|output| serde_json::json!({
                     "name": output.name,
                     "arrival": output.arrival,
@@ -1479,6 +1503,9 @@ fn cmd_timing(
             println!("{}", serde_json::to_string_pretty(&obj)?);
         }
         _ => {
+            if model.load_delay > 0 {
+                println!("负载模型：每扇出 +{} 周期", model.load_delay);
+            }
             println!(
                 "关键路径 {} 周期，时钟 {}，违例 {} 个",
                 report.critical_path, report.clock, report.violations

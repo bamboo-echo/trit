@@ -1,0 +1,9 @@
+input a
+input b
+gate AND a b n
+buf n y1
+buf n y2
+buf n y3
+output y1
+output y2
+output y3

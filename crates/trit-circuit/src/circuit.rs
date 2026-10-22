@@ -898,6 +898,17 @@ fn detect_faults(circuit: &Circuit, alg: Algebra) -> Result<FaultReport, Circuit
 ///
 /// 电路已通过 `validate` 校验（无组合环），故排序一定成功；
 /// 若出现异常则退化为原始顺序。
+/// 每个信号被门输入引用的次数（主输出不计负载）。
+pub(crate) fn fanout_counts(circuit: &Circuit) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for gate in &circuit.gates {
+        for input in &gate.inputs {
+            *counts.entry(input.name().to_string()).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
 pub(crate) fn topological_order(circuit: &Circuit) -> Result<Vec<usize>, CircuitError> {
     let driven: BTreeSet<String> = circuit
         .gates
