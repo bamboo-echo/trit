@@ -253,7 +253,11 @@ pub fn atpg_js(netlist: &str, algebra: &str) -> Result<String, JsValue> {
                 .iter()
                 .map(|(name, value)| (name.clone(), Value::String(value.as_char().to_string())))
                 .collect();
-            json!({ "inputs": inputs, "covers": pattern.covers })
+            json!({
+                "inputs": inputs,
+                "covers": pattern.covers,
+                "dont_care": pattern.dont_care,
+            })
         })
         .collect();
     Ok(json!({
@@ -262,6 +266,9 @@ pub fn atpg_js(netlist: &str, algebra: &str) -> Result<String, JsValue> {
         "total": report.faults.len(),
         "optimal": report.optimal,
         "exhaustive": report.exhaustive,
+        "x_coverage": report.x_coverage,
+        "merged": report.merged,
+        "dont_care_bits": report.dont_care_bits,
         "patterns": patterns,
         "untestable": report.untestable.len(),
     })

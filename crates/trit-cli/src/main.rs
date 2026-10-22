@@ -1550,6 +1550,8 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str, from: &str) 
                 "coverage": report.coverage,
                 "dont_care_bits": report.dont_care_bits,
                 "input_bits": report.input_bits,
+                "x_coverage": report.x_coverage,
+                "merged": report.merged,
                 "exhaustive": report.exhaustive,
                 "optimal": report.optimal,
                 "by_gate_kind": report
@@ -1645,6 +1647,23 @@ fn cmd_atpg(path: &std::path::Path, format: Format, alg_name: &str, from: &str) 
                 .join("，");
             if !kinds.is_empty() {
                 println!("按门类型：{kinds}");
+            }
+            let x_faults: usize = report
+                .patterns
+                .iter()
+                .filter(|pattern| !pattern.dont_care.is_empty())
+                .map(|pattern| pattern.covers.len())
+                .sum();
+            println!(
+                "X 覆盖率 {:.1}%（{} / {} 个可测故障由含 X 向量覆盖），X 位 {}，压缩省 {} 个向量",
+                report.x_coverage * 100.0,
+                x_faults,
+                report.testable,
+                report.dont_care_bits,
+                report.merged
+            );
+            if report.dont_care_bits > 0 {
+                println!("注：X 为压缩/可翻转位；CSV 导出已按向量内的具体 0/1 填充。");
             }
             for (i, pattern) in report.patterns.iter().enumerate() {
                 let inputs = pattern

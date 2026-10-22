@@ -99,8 +99,8 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 - SAT / BDD / 策略入口先 `check_expr` 再编码，超限返回专门的 `Limit` 错误；
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-`python scripts/mutation_check.py` 对 20 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 20/20）；`.github/workflows/mutation.yml` 每周跑一次。
+`python scripts/mutation_check.py` 对 21 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 21/21）；`.github/workflows/mutation.yml` 每周跑一次。
 
 ## 符号化等价（SAT）
 
@@ -265,8 +265,10 @@ python -m http.server 8765 --directory playground
 输出覆盖率、向量数与不可测故障。可测性判定基于 `2^n` 二进制向量；`X` 输入不是物理测试向量，不计入。
 不可测故障会标注原因：`redundant`（固定该引脚不改变门输出）、`unobserved`（到不了主输出）、
 `masked`（到得了但被遮蔽）。
-每个向量还标出 X（don't-care）位：翻转这些输入不会丢掉该向量已覆盖的任何故障；
-JSON 里是 `dont_care` / `dont_care_bits` / `input_bits`，table 里显示为 `b=X`。
+每个向量标出可压缩为 X 的输入位，并按 X 合并压缩：两个向量若存在一种填充能覆盖“删掉它们后会失去”的故障，
+就合成一个。`inputs` 始终是选定的具体填充，`--format csv` 导出也用这组 0/1；table 里的 `b=X` 只是压缩位，
+不能任意重填。JSON 里是 `dont_care` / `dont_care_bits` / `input_bits` / `merged` / `x_coverage`，
+其中 `x_coverage` 是“由含 X 向量覆盖的可测故障 / 可测故障”。
 覆盖率同时按门类型拆分（`按门类型：AND 4/4（100.0%）…`），JSON 里是 `by_gate_kind`。
 `--format csv` 导出 `pattern,<输入…>,covered`，便于喂给外部仿真器。
 主输入 ≤ 8 且 故障数 × `2^n` ≤ 50000 时会枚举全部向量再做贪心覆盖（`exhaustive`），否则退回每个故障的首个见证。
