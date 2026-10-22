@@ -4,6 +4,8 @@
 
 ### Changed（评审修复第二批，含 API 变更）
 
+- **拆掉 circuit 模块环**：`validate` 独立到 `circuit/validate.rs`，`sim` 不再依赖 `analyze`；
+  `sim → validate → graph`、`analyze → sim/validate/graph` 单向依赖。
 - **ATPG 去上帝模块**：`atpg.rs`（1042 行）拆成 `atpg/{mod,compact}.rs` + `tests.rs`；
   `generate_tests` / `AtpgReport` / `CoverageStat` / `TestPattern` 公开路径不变。
 - **Circuit 去上帝模块**：`circuit.rs`（1493 行）拆成 `circuit/{types,sim,analyze,graph}.rs`
