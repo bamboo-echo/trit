@@ -48,6 +48,8 @@ use sansheng::{equivalent_symbolic, Algebra, Parser};
 
 CLI 仍是 `trit`（`cargo install trit-cli` 或下载 Release 二进制）。
 
+API 文档：<https://docs.rs/sansheng>。
+
 ## 快速开始
 
 ```bash
