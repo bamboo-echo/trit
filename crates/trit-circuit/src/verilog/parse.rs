@@ -7,12 +7,10 @@ use trit_core::value::Ternary;
 use crate::circuit::{Bus, Circuit, Gate, GateKind, Signal};
 
 use super::expr::{RhsParser, VExpr, bit_expr, expr_width};
-use super::{VerilogError, is_identifier, is_signal_ref, message};
+use super::{MAX_VECTOR_WIDTH, VerilogError, is_identifier, is_signal_ref, message};
 
 /// 输入文本上限：在切分/展开之前拒绝超大文件。
 pub(super) const MAX_VERILOG_BYTES: usize = 1 << 20;
-/// 单个向量端口/线网的位宽上限。
-const MAX_VECTOR_WIDTH: usize = 4096;
 /// 声明出来的总网络数上限。
 const MAX_NETS: usize = 100_000;
 /// 生成的门数上限。
@@ -119,6 +117,10 @@ impl Builder<'_> {
             VExpr::Const(value) => {
                 self.add_const(*value, target)?;
             }
+            VExpr::ConstBits { bits, .. } => {
+                let value = bits.first().copied().unwrap_or(Ternary::False);
+                self.add_const(value, target)?;
+            }
             VExpr::Not(inner) => {
                 let source = self.temp_v(inner)?;
                 self.add_gate(GateKind::Not, vec![source], target)?;
@@ -146,6 +148,11 @@ impl Builder<'_> {
             VExpr::Const(value) => {
                 let name = self.fresh();
                 self.add_const(*value, &name)?;
+                Ok(name)
+            }
+            VExpr::ConstBits { bits, .. } => {
+                let name = self.fresh();
+                self.add_const(bits.first().copied().unwrap_or(Ternary::False), &name)?;
                 Ok(name)
             }
             VExpr::Concat(_) => Err(VerilogError::unsupported("拼接只能用于向量化 assign")),

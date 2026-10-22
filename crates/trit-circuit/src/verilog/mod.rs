@@ -2,6 +2,9 @@
 //!
 //! 子模块：`expr`（右值）、`parse`（模块/端口/语句）、`export`（导出与向量重组）。
 
+/// 单个向量声明或常量字面量的位宽上限。
+const MAX_VECTOR_WIDTH: usize = 4096;
+
 /// Verilog 错误类别，调用方可以按根因分类，不必解析错误文本。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerilogErrorKind {

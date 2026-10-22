@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::circuit::{Bus, Circuit, Gate, GateKind, Signal};
 use trit_core::value::Ternary;
 
@@ -466,6 +468,89 @@ fn bus_metadata_survives_json_round_trip() {
     let json = to_json(&circuit).unwrap();
     let back = from_json(&json).unwrap();
     assert_eq!(back, circuit);
+}
+
+fn output_domains(text: &str, outputs: &[(&str, bool)]) {
+    let circuit = parse_verilog(text).unwrap();
+    let report = analyze(&circuit, Algebra::Kleene).unwrap();
+    for (name, expected) in outputs {
+        let expected = if *expected {
+            Ternary::True
+        } else {
+            Ternary::False
+        };
+        assert_eq!(
+            report.output_domains[*name],
+            BTreeSet::from([expected]),
+            "{name}: {text}"
+        );
+    }
+}
+
+#[test]
+fn sized_literals_preserve_bit_order() {
+    output_domains(
+        "module m(input a, output [3:0] y);\nassign y = 4'b1010;\nendmodule\n",
+        &[
+            ("y[0]", false),
+            ("y[1]", true),
+            ("y[2]", false),
+            ("y[3]", true),
+        ],
+    );
+}
+
+#[test]
+fn hex_decimal_and_underscored_literals() {
+    output_domains(
+        "module m(input a, output [3:0] y);\nassign y = 4'hA;\nendmodule\n",
+        &[
+            ("y[0]", false),
+            ("y[1]", true),
+            ("y[2]", false),
+            ("y[3]", true),
+        ],
+    );
+    output_domains(
+        "module m(input a, output [3:0] y);\nassign y = 4'd9;\nendmodule\n",
+        &[
+            ("y[0]", true),
+            ("y[1]", false),
+            ("y[2]", false),
+            ("y[3]", true),
+        ],
+    );
+    // 8 位二进制：截断到低 4 位 = 0110。
+    output_domains(
+        "module m(input a, output [3:0] y);\nassign y = 4'b1010_0110;\nendmodule\n",
+        &[
+            ("y[0]", false),
+            ("y[1]", true),
+            ("y[2]", true),
+            ("y[3]", false),
+        ],
+    );
+}
+
+#[test]
+fn sized_literal_zero_extends_to_wider_vector() {
+    output_domains(
+        "module m(input a, output [7:0] y);\nassign y = 8'hA;\nendmodule\n",
+        &[
+            ("y[0]", false),
+            ("y[1]", true),
+            ("y[2]", false),
+            ("y[3]", true),
+            ("y[7]", false),
+        ],
+    );
+}
+
+#[test]
+fn unsupported_literal_base_is_reported() {
+    let err =
+        parse_verilog("module m(input a, output y);\nassign y = 4'sd3;\nendmodule\n").unwrap_err();
+    assert_eq!(err.kind, VerilogErrorKind::Unsupported, "{err:?}");
 }
 
 #[test]

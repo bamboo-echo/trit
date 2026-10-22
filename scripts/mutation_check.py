@@ -160,6 +160,22 @@ MUTANTS = [
         "filter": "zero_width_bus_is_rejected"
     },
     {
+        "name": "verilog: 尺寸常量位序反转",
+        "file": "crates/trit-circuit/src/verilog/expr.rs",
+        "old": "        'b' => {\n            for ch in digits.chars().rev() {",
+        "new": "        'b' => {\n            for ch in digits.chars() {",
+        "pkg": "trit-circuit",
+        "filter": "sized_literals_preserve_bit_order"
+    },
+    {
+        "name": "verilog: 尺寸常量零扩展成 X",
+        "file": "crates/trit-circuit/src/verilog/expr.rs",
+        "old": "    bits.resize(width, Ternary::False);",
+        "new": "    bits.resize(width, Ternary::Unknown);",
+        "pkg": "trit-circuit",
+        "filter": "sized_literal_zero_extends_to_wider_vector"
+    },
+    {
         "name": "netlist: gate 参数计数失效",
         "file": "crates/trit-circuit/src/netlist.rs",
         "old": "                if parts.len() != 5 {",
