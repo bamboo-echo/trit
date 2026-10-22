@@ -114,8 +114,16 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 
 ## fuzz 与基准
 
-- 稳定版 smoke（CI 每次跑）：`cargo test -p trit-circuit --test fuzz_smoke`
-  —— 固定种子变异输入的解析往返、随机电路 ATPG 覆盖不变量。
+- 结构生成属性测试（CI 每次跑）：`cargo test -p trit-core --test structure`
+  —— 任意 AST 经 `to_infix` 往返后结构/深度不变；扁平链与右结合蕴含链在深度预算边界精确接受/拒绝；
+  任意文本只返回 `Ok/Err`。策略侧另有 `expand_budget_is_exact_*` / `expand_depth_is_enforced`。
+- 稳定版 smoke（CI 每次跑）：
+  - `cargo test -p trit-circuit --test fuzz_smoke` —— 网表/Verilog/BLIF/AIGER/JSON 变异输入的解析往返、
+    坏电路导出不 panic、随机电路 ATPG 覆盖不变量；
+  - `cargo test -p trit-policy --test fuzz_smoke` —— 随机 JSON 与结构生成策略只返回 Ok/分类错误。
+- 覆盖率引导 fuzz（`fuzz/`，cargo-fuzz，需要 nightly）：`parse_netlist` / `parse_verilog` /
+  `atpg` / `blif` / `aiger` / `expr` / `policy` / `netlist_json`。
+  Windows 上需要 clang-cl + MSVC 才能链接 libFuzzer；CI 不构建这一层。
 - 覆盖率引导 fuzz（需要 nightly + cargo-fuzz）：
 
 ```bash

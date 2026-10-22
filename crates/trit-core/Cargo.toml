@@ -10,3 +10,6 @@ description = "三值逻辑核心：Kleene / Łukasiewicz / Bochvar 语义、AST
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
+
+[dev-dependencies]
+proptest = "1.12.0"

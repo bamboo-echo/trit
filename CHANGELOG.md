@@ -39,6 +39,14 @@
   `inputs` 仍给出具体 0/1 填充，CSV 导出即用该填充。
 - `AtpgReport::x_coverage`（含 X 向量覆盖的可测故障比例）与 `merged`（压缩省下的向量数）；
   表格、JSON、WASM 同步输出。
+- 复审测试缺口（§3.3）：`trit-core/tests/structure.rs` 用 proptest 生成不同形状的 AST，
+  验证 `to_infix → parse` 的结构/深度/节点数守恒、扁平链与右结合蕴含链的深度边界、
+  任意文本不 panic；`trit-policy` 新增展开预算精确性/深度单测与稳定 smoke。
+- fuzz 目标补到 8 个：新增 `expr`（解析往返）、`policy`（小策略验证）、`netlist_json`
+  （JSON 往返 + 坏电路导出）；`fuzz/Cargo.toml` 的 `trit-circuit` 依赖路径修正为
+  `../crates/trit-circuit`。
+- ATPG 端到端回归：用 `generate_tests` 实际产出的覆盖向量验证 don't-care 的每个联合填充
+  仍检出故障，补上报告 §3.1 指出的“只证明 helper”缺口。
 - AIGER ASCII 子集读写：`parse_aiger` / `to_aiger`（`L = 0` 组合逻辑，AND + 取反编码）；
   CLI `netlist --from/--to aiger`；0/1 激励上的往返等价。
 - BLIF 子集读写：`parse_blif` / `to_blif`（`.model/.inputs/.outputs/.names`，拒绝 `.latch`）；

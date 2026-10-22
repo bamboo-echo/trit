@@ -769,6 +769,89 @@ mod tests {
     }
 
     #[test]
+    fn generated_patterns_survive_every_joint_fill_end_to_end() {
+        // 复审报告 §3.1 点名的端到端回归：用 generate_tests 实际选出的向量，
+        // 而不是手工构造的输入，验证每个联合 X 填充仍覆盖该故障。
+        let mut c = Circuit::new("joint-e2e");
+        c.add_input(sig("a"));
+        c.add_input(sig("b"));
+        c.add_input(sig("c"));
+        c.add_gate(Gate::new(GateKind::Or, vec![sig("a"), sig("b")], sig("s")));
+        c.add_gate(Gate::new(GateKind::Buf, vec![sig("c")], sig("n")));
+        c.add_gate(Gate::new(
+            GateKind::And,
+            vec![sig("n"), sig("s")],
+            sig("out"),
+        ));
+        c.add_output(sig("out"));
+
+        let report = generate_tests(&c, Algebra::Kleene).unwrap();
+        let fault = report
+            .faults
+            .iter()
+            .position(|f| f.gate == "n" && f.input == "c" && f.stuck_at == Ternary::True)
+            .unwrap();
+        let mut simulator = crate::circuit::Simulator::new(&c, Algebra::Kleene).unwrap();
+        let outputs = simulator.output_indices().to_vec();
+        let names: Vec<String> = c.inputs.iter().map(|s| s.name().to_string()).collect();
+        let gate_of: BTreeMap<&str, usize> = c
+            .gates
+            .iter()
+            .enumerate()
+            .map(|(index, gate)| (gate.output.name(), index))
+            .collect();
+        let mut seen = 0usize;
+        for pattern in &report.patterns {
+            if !pattern.covers.contains(&fault) {
+                continue;
+            }
+            seen += 1;
+            // 该故障的检出条件是 c=0；生成器必须满足。
+            assert_eq!(
+                pattern.inputs.get("c"),
+                Some(&Ternary::False),
+                "覆盖 SA1(c) 的向量必须把 c 置 0"
+            );
+            let mut base = 0u64;
+            for (bit, name) in names.iter().enumerate() {
+                if pattern.inputs.get(name) == Some(&Ternary::True) {
+                    base |= 1 << bit;
+                }
+            }
+            for xname in &pattern.dont_care {
+                assert!(names.contains(xname), "don't-care 位必须是主输入");
+            }
+            let xbits: Vec<usize> = pattern
+                .dont_care
+                .iter()
+                .map(|name| names.iter().position(|n| n == name).unwrap())
+                .collect();
+            assert!(
+                keeps_cover_under_all_fills(
+                    &mut simulator,
+                    &outputs,
+                    &gate_of,
+                    &report.faults,
+                    base,
+                    &xbits,
+                    &[fault],
+                ),
+                "向量 {:?} 的 X 位 {:?} 存在丢失覆盖的联合填充",
+                pattern.inputs,
+                pattern.dont_care
+            );
+        }
+        assert!(seen > 0, "generate_tests 应至少给出一条覆盖 SA1(c) 的向量");
+    }
+
+    #[test]
+    fn exhausted_budget_is_not_reported_as_optimal() {
+        let sets = vec![(1u64, 0b11u64), (2u64, 0b01u64)];
+        let (_, proven) = minimum_cover(&sets, 0b11, 1);
+        assert!(!proven, "预算耗尽不能宣称已证明最优");
+    }
+
+    #[test]
     fn minimum_cover_matches_bruteforce() {
         let mut state = 0x1234_5678u64;
         let mut checked = 0;

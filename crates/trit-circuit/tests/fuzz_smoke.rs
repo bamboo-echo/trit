@@ -118,6 +118,29 @@ fn aiger_parser_round_trips_or_rejects() {
     assert!(parsed > 0, "变异种子应至少解析成功一次");
 }
 
+#[test]
+fn netlist_json_round_trips_or_rejects() {
+    let mut state = 0x1357_9bdf_2468_ace0u64;
+    let seed =
+        trit_circuit::netlist::to_json(&random_circuit(&mut state)).expect("随机电路应能序列化");
+    let mut parsed = 0usize;
+    for round in 0..400 {
+        let text = mutate(&mut state, &seed, round % 5 + 1);
+        if let Ok(circuit) = trit_circuit::netlist::from_json(&text) {
+            parsed += 1;
+            let rendered =
+                trit_circuit::netlist::to_json(&circuit).expect("serde 应能写回同一结构");
+            let again =
+                trit_circuit::netlist::from_json(&rendered).expect("to_json 输出必须可解析");
+            assert_eq!(circuit, again);
+            // 坏电路导出必须 Err 而不是 panic（报告 M-02）。
+            let _ = trit_circuit::netlist::to_netlist(&circuit);
+            let _ = trit_circuit::to_verilog(&circuit);
+        }
+    }
+    assert!(parsed > 0, "变异种子应至少解析成功一次");
+}
+
 fn random_circuit(state: &mut u64) -> Circuit {
     let mut circuit = Circuit::new("fuzz");
     let mut signals: Vec<String> = Vec::new();

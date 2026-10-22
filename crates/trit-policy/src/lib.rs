@@ -539,3 +539,48 @@ fn expand_with_limits(
     let mut expander = Expander::new(definitions, limits);
     Ok(expander.expand(expr)?.0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn defs(pairs: &[(&str, &str)]) -> BTreeMap<String, Expr> {
+        pairs
+            .iter()
+            .map(|(name, src)| (name.to_string(), Parser::parse(src).unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn expand_budget_is_exact_and_fails_before_growth() {
+        let definitions = defs(&[("d0", "a"), ("d1", "d0 & d0")]);
+        let expr = Parser::parse("d1").unwrap();
+        let exact = Limits {
+            max_nodes: 3,
+            ..Limits::default()
+        };
+        assert!(expand_with_limits(&expr, &definitions, exact).is_ok());
+        let tight = Limits {
+            max_nodes: 2,
+            ..Limits::default()
+        };
+        assert!(matches!(
+            expand_with_limits(&expr, &definitions, tight),
+            Err(PolicyError::ExpandBudget { limit: 2 })
+        ));
+    }
+
+    #[test]
+    fn expand_depth_is_enforced() {
+        let definitions = defs(&[("d0", "a"), ("d1", "d0"), ("d2", "d1"), ("d3", "d2")]);
+        let expr = Parser::parse("d3").unwrap();
+        let limits = Limits {
+            max_depth: 3,
+            ..Limits::default()
+        };
+        assert!(matches!(
+            expand_with_limits(&expr, &definitions, limits),
+            Err(PolicyError::DefinitionDepth { limit: 3 })
+        ));
+    }
+}
