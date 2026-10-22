@@ -11,10 +11,13 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 
 [dependencies.trit-circuit]
-path = ".."
+path = "../crates/trit-circuit"
 
 [dependencies.trit-core]
 path = "../crates/trit-core"
+
+[dependencies.trit-policy]
+path = "../crates/trit-policy"
 
 [[bin]]
 name = "parse_netlist"
@@ -47,6 +50,27 @@ bench = false
 [[bin]]
 name = "aiger"
 path = "fuzz_targets/aiger.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "expr"
+path = "fuzz_targets/expr.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "policy"
+path = "fuzz_targets/policy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "netlist_json"
+path = "fuzz_targets/netlist_json.rs"
 test = false
 doc = false
 bench = false

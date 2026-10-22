@@ -1,0 +1,14 @@
+input a0
+input a1
+input a2
+input a3
+input a4
+input a5
+input a6
+input a7
+input a8
+input a9
+input a10
+buf a0 out
+gate AND a1 a2 dead
+output out

@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 
 use trit_core::ast::Expr;
+use trit_core::limits::{LimitError, Limits, check_expr};
 use trit_core::value::Ternary;
 
 /// Belnap 四值。
@@ -164,10 +165,34 @@ pub struct Table {
     pub rows: Vec<Row>,
 }
 
-/// 生成 4^n 真值表。`n` 较大时行数爆炸，调用方应先限制变量数。
-pub fn table(expr: &Expr) -> Table {
+/// 生成 4^n 真值表（默认预算）。
+///
+/// 变量数、`4^n` 容量与行数都在分配前按 [`Limits`] 检查；超出时返回错误。
+pub fn table(expr: &Expr) -> Result<Table, LimitError> {
+    table_within(expr, Limits::default())
+}
+
+/// 同 [`table`]，但可指定预算。
+pub fn table_within(expr: &Expr, limits: Limits) -> Result<Table, LimitError> {
+    check_expr(expr, limits)?;
     let vars = expr.variables();
-    let count = 4usize.saturating_pow(vars.len() as u32);
+    if vars.len() > limits.max_vars {
+        return Err(LimitError::Vars {
+            limit: limits.max_vars,
+        });
+    }
+    let exp = u32::try_from(vars.len()).unwrap_or(u32::MAX);
+    let count = 4u64
+        .checked_pow(exp)
+        .ok_or(LimitError::CountOverflow { vars: vars.len() })?;
+    if count > limits.max_rows as u64 {
+        return Err(LimitError::Rows {
+            limit: limits.max_rows,
+        });
+    }
+    let count = usize::try_from(count).map_err(|_| LimitError::Rows {
+        limit: limits.max_rows,
+    })?;
     let mut rows = Vec::with_capacity(count.min(1 << 16));
     for combo in 0..count {
         let mut index = combo;
@@ -189,20 +214,47 @@ pub fn table(expr: &Expr) -> Table {
             value: eval(expr, &assignment),
         });
     }
-    Table { vars, rows }
+    Ok(Table { vars, rows })
 }
 
-/// 在全部 `4^n` 赋值上判定两个表达式是否逐点相等。
+/// 在全部 `4^n` 赋值上判定两个表达式是否逐点相等（默认预算）。
 ///
-/// `None` 表示等价；`Some(assignment)` 是一个反例。
-pub fn equivalent(left: &Expr, right: &Expr) -> Option<BTreeMap<String, B4>> {
+/// `None` 表示等价；`Some(assignment)` 是一个反例。超出预算时返回错误。
+pub fn equivalent(left: &Expr, right: &Expr) -> Result<Option<BTreeMap<String, B4>>, LimitError> {
+    equivalent_within(left, right, Limits::default())
+}
+
+/// 同 [`equivalent`]，但可指定预算。
+pub fn equivalent_within(
+    left: &Expr,
+    right: &Expr,
+    limits: Limits,
+) -> Result<Option<BTreeMap<String, B4>>, LimitError> {
+    check_expr(left, limits)?;
+    check_expr(right, limits)?;
     let mut vars = left.variables();
     for var in right.variables() {
         if !vars.contains(&var) {
             vars.push(var);
         }
     }
-    let count = 4usize.saturating_pow(vars.len() as u32);
+    if vars.len() > limits.max_vars {
+        return Err(LimitError::Vars {
+            limit: limits.max_vars,
+        });
+    }
+    let exp = u32::try_from(vars.len()).unwrap_or(u32::MAX);
+    let count = 4u64
+        .checked_pow(exp)
+        .ok_or(LimitError::CountOverflow { vars: vars.len() })?;
+    if count > limits.max_rows as u64 {
+        return Err(LimitError::Rows {
+            limit: limits.max_rows,
+        });
+    }
+    let count = usize::try_from(count).map_err(|_| LimitError::Rows {
+        limit: limits.max_rows,
+    })?;
     for combo in 0..count {
         let mut index = combo;
         let mut assignment = BTreeMap::new();
@@ -217,10 +269,10 @@ pub fn equivalent(left: &Expr, right: &Expr) -> Option<BTreeMap<String, B4>> {
             assignment.insert(var.clone(), value);
         }
         if eval(left, &assignment) != eval(right, &assignment) {
-            return Some(assignment);
+            return Ok(Some(assignment));
         }
     }
-    None
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -259,22 +311,49 @@ mod tests {
     fn de_morgan_holds_on_all_sixteen_assignments() {
         let left = p("!(a & b)");
         let right = p("!a | !b");
-        assert!(equivalent(&left, &right).is_none());
+        assert!(equivalent(&left, &right).unwrap().is_none());
     }
 
     #[test]
     fn paraconsistent_pair_is_not_constant() {
         // a ∧ ¬a 在 a=B 时为 B、在 a=N 时为 N，所以与 0 不等价。
-        let counterexample = equivalent(&p("a & !a"), &p("0")).expect("应当有反例");
+        let counterexample = equivalent(&p("a & !a"), &p("0"))
+            .unwrap()
+            .expect("应当有反例");
         assert!(matches!(counterexample["a"], B4::N | B4::B));
         assert_eq!(B4::B.and(B4::B.not()), B4::B);
     }
 
     #[test]
     fn table_enumerates_four_to_the_n() {
-        let t = table(&p("a & b"));
+        let t = table(&p("a & b")).unwrap();
         assert_eq!(t.vars, vec!["a".to_string(), "b".to_string()]);
         assert_eq!(t.rows.len(), 16);
+    }
+
+    #[test]
+    fn budgets_are_enforced_before_enumeration() {
+        let two_vars = p("a & b");
+        let row_limited = Limits {
+            max_rows: 15,
+            ..Limits::default()
+        };
+        assert!(matches!(
+            table_within(&two_vars, row_limited),
+            Err(LimitError::Rows { limit: 15 })
+        ));
+        let var_limited = Limits {
+            max_vars: 1,
+            ..Limits::default()
+        };
+        assert!(matches!(
+            table_within(&two_vars, var_limited),
+            Err(LimitError::Vars { limit: 1 })
+        ));
+        assert!(matches!(
+            equivalent_within(&two_vars, &p("b & a"), var_limited),
+            Err(LimitError::Vars { limit: 1 })
+        ));
     }
 
     #[test]

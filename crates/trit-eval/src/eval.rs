@@ -1,11 +1,11 @@
 //! 表达式求值：把 [`Expr`] 在给定赋值或全部赋值上求值。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
 use trit_core::bits::{Evaluator, TriBit, TruthTable};
-use trit_core::limits::{LimitError, Limits, check_expr, check_vars};
+use trit_core::limits::{LimitError, Limits, check_expr};
 use trit_core::value::Ternary;
 
 /// 变量赋值：一组 `变量名 → 取值`。
@@ -56,7 +56,9 @@ impl Assignment {
 
 /// 单点求值：按赋值计算表达式值。
 ///
-/// 未在赋值中出现的变量视为 `X`（未知）。
+/// 未在赋值中出现的变量视为 `X`（未知）。递归实现，要求 AST 深度有界
+/// （经 [`Parser`](trit_core::parser::Parser) 解析的表达式满足这一点；
+/// 手工构造的深树请先调用 `check_expr`）。
 pub fn eval(expr: &Expr, assignment: &Assignment, alg: Algebra) -> Ternary {
     match expr {
         Expr::Const(v) => *v,
@@ -131,13 +133,12 @@ fn evaluator_for(vars: &[String], alg: Algebra) -> (Evaluator, VarMap) {
     (ev, map)
 }
 
-/// 全真值表求值。
+/// 全真值表求值（默认预算）。
 ///
-/// 变量顺序取自 [`Expr::variables`]（首次出现顺序）。
-pub fn truth_table(expr: &Expr, alg: Algebra) -> TruthTable {
-    let vars = expr.variables();
-    let (ev, map) = evaluator_for(&vars, alg);
-    ev.evaluate(|planes| eval_bitwise(expr, planes, &map, alg))
+/// 变量顺序取自 [`Expr::variables`]（首次出现顺序）。默认预算限制为
+/// [`Limits::default`] 的变量数与行数，超出时返回错误而不是尝试分配。
+pub fn truth_table(expr: &Expr, alg: Algebra) -> Result<TruthTable, LimitError> {
+    truth_table_within(expr, alg, Limits::default())
 }
 
 /// 两个表达式在给定语义下是否等价（真值表完全相同）。
@@ -153,63 +154,182 @@ pub struct EquivalenceResult {
     pub variable_count: usize,
 }
 
-/// 判断两个表达式在给定语义下是否逻辑等价。
-pub fn equivalent(a: &Expr, b: &Expr, alg: Algebra) -> EquivalenceResult {
+/// 判断两个表达式在给定语义下是否逻辑等价（默认预算）。
+pub fn equivalent(a: &Expr, b: &Expr, alg: Algebra) -> Result<EquivalenceResult, LimitError> {
+    let limits = Limits::default();
+    check_expr(a, limits)?;
+    check_expr(b, limits)?;
     // 变量取并集，保证两边在同一组赋值上比较
+    let vars = union_vars(a, b);
+    equivalent_with_vars(a, b, alg, &vars, limits)
+}
+
+fn union_vars(a: &Expr, b: &Expr) -> Vec<String> {
     let mut vars = a.variables();
     for v in b.variables() {
         if !vars.contains(&v) {
             vars.push(v);
         }
     }
-    let (ev, map) = evaluator_for(&vars, alg);
-    let total = ev.assignment_count();
+    vars
+}
+
+fn equivalent_with_vars(
+    a: &Expr,
+    b: &Expr,
+    alg: Algebra,
+    vars: &[String],
+    limits: Limits,
+) -> Result<EquivalenceResult, LimitError> {
+    if vars.len() > limits.max_vars {
+        return Err(LimitError::Vars {
+            limit: limits.max_vars,
+        });
+    }
+    let (ev, map) = evaluator_for(vars, alg);
+    let total = ev.assignment_count()?;
+    if total > limits.max_rows as u64 {
+        return Err(LimitError::Rows {
+            limit: limits.max_rows,
+        });
+    }
     let mut base = 0u64;
     while base < total {
-        let planes = ev.chunk_planes(base);
+        let planes = ev.chunk_planes(base)?;
         let va = eval_bitwise(a, &planes, &map, alg);
         let vb = eval_bitwise(b, &planes, &map, alg);
         let take = (total - base).min(64) as u32;
         for bit in 0..take {
             if va.get(bit) != vb.get(bit) {
                 let index = base + bit as u64;
-                return EquivalenceResult {
+                return Ok(EquivalenceResult {
                     equivalent: false,
                     counterexample: Some(index),
-                    counterexample_assignment: Some(decode_assignment(index, &vars)),
+                    counterexample_assignment: Some(decode_assignment(index, vars)),
                     variable_count: vars.len(),
-                };
+                });
             }
         }
         base += 64;
     }
-    EquivalenceResult {
+    Ok(EquivalenceResult {
         equivalent: true,
         counterexample: None,
         counterexample_assignment: None,
         variable_count: vars.len(),
-    }
+    })
 }
 
-/// 把赋值编码成编号；变量多到超出 `u64` 时返回 `None`。
+/// 赋值编号编解码错误。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AssignmentCodecError {
+    /// 具体编号超出 `u64`。
+    #[error("变量数 {vars} 的赋值编号超出 u64 可表示范围")]
+    Overflow {
+        /// 变量数。
+        vars: usize,
+    },
+    /// 编号超出该变量域。
+    #[error("赋值编号 {index} 超出 {vars} 个变量的有效域 3^{vars}")]
+    OutOfDomain {
+        /// 编号。
+        index: u64,
+        /// 变量数。
+        vars: usize,
+    },
+    /// 变量名重复，编码不是双射。
+    #[error("变量名重复：{0}")]
+    DuplicateVariable(String),
+}
+
+/// 把赋值编码成编号；无效域返回可分类的错误。
 ///
-/// 编号约定与 [`decode_assignment`] 一致：False=0、True=1、Unknown=2。
-pub fn assignment_index(assignment: &Assignment, vars: &[String]) -> Option<u64> {
+/// 编号约定：False=0、True=1、Unknown=2；变量 `i` 占第 `i` 个三进制位。
+pub fn try_assignment_index(
+    assignment: &Assignment,
+    vars: &[String],
+) -> Result<u64, AssignmentCodecError> {
+    let mut seen = HashSet::new();
     let mut index = 0u64;
     let mut power = 1u64;
-    for name in vars {
+    let mut power_overflow = false;
+    for (i, name) in vars.iter().enumerate() {
+        if !seen.insert(name.as_str()) {
+            return Err(AssignmentCodecError::DuplicateVariable(name.clone()));
+        }
+        if i > 0 {
+            match power.checked_mul(3) {
+                Some(next) => power = next,
+                None => power_overflow = true,
+            }
+        }
         let digit = match assignment.get(name).unwrap_or(Ternary::Unknown) {
             Ternary::False => 0u64,
             Ternary::True => 1u64,
             Ternary::Unknown => 2u64,
         };
-        index = index.checked_add(digit.checked_mul(power)?)?;
-        power = power.checked_mul(3)?;
+        if digit == 0 {
+            continue;
+        }
+        if power_overflow {
+            return Err(AssignmentCodecError::Overflow { vars: vars.len() });
+        }
+        let term = digit
+            .checked_mul(power)
+            .ok_or(AssignmentCodecError::Overflow { vars: vars.len() })?;
+        index = index
+            .checked_add(term)
+            .ok_or(AssignmentCodecError::Overflow { vars: vars.len() })?;
     }
-    Some(index)
+    Ok(index)
+}
+
+/// 把赋值编码成编号；无效域返回 `None`。
+///
+/// 这是 [`try_assignment_index`] 的便捷包装；需要区分溢出与重复变量时用后者。
+pub fn assignment_index(assignment: &Assignment, vars: &[String]) -> Option<u64> {
+    try_assignment_index(assignment, vars).ok()
+}
+
+/// 把三进制赋值编号解码为各变量的取值；编号超出变量域时返回错误。
+///
+/// 与 [`decode_assignment`] 不同：拒绝重复变量名，并要求消费完 `vars.len()`
+/// 个三进制位后高位为 0。
+pub fn try_decode_assignment(
+    index: u64,
+    vars: &[String],
+) -> Result<Assignment, AssignmentCodecError> {
+    let mut seen = HashSet::new();
+    for name in vars {
+        if !seen.insert(name.as_str()) {
+            return Err(AssignmentCodecError::DuplicateVariable(name.clone()));
+        }
+    }
+    let mut asg = Assignment::new();
+    let mut t = index;
+    for name in vars {
+        let digit = t % 3;
+        t /= 3;
+        let v = match digit {
+            0 => Ternary::False,
+            1 => Ternary::True,
+            _ => Ternary::Unknown,
+        };
+        asg.set(name.clone(), v);
+    }
+    if t != 0 {
+        return Err(AssignmentCodecError::OutOfDomain {
+            index,
+            vars: vars.len(),
+        });
+    }
+    Ok(asg)
 }
 
 /// 把三进制赋值编号解码为各变量的取值。
+///
+/// **不检查有效域**：高位被忽略、重复变量名会覆盖前值。边界输入请用
+/// [`try_decode_assignment`]。
 pub fn decode_assignment(index: u64, vars: &[String]) -> Assignment {
     let mut asg = Assignment::new();
     let mut t = index;
@@ -237,15 +357,21 @@ pub fn eval_within(
     Ok(eval(expr, assignment, alg))
 }
 
-/// 带预算的真值表（限制 AST 深度/节点数与变量数）。
+/// 带预算的真值表（限制 AST 深度/节点数、变量数与行数）。
 pub fn truth_table_within(
     expr: &Expr,
     alg: Algebra,
     limits: Limits,
 ) -> Result<TruthTable, LimitError> {
     check_expr(expr, limits)?;
-    check_vars(expr, limits)?;
-    Ok(truth_table(expr, alg))
+    let vars = expr.variables();
+    if vars.len() > limits.max_vars {
+        return Err(LimitError::Vars {
+            limit: limits.max_vars,
+        });
+    }
+    let (ev, map) = evaluator_for(&vars, alg);
+    ev.evaluate_within(|planes| eval_bitwise(expr, planes, &map, alg), limits)
 }
 
 /// 带预算的穷举等价。
@@ -257,18 +383,8 @@ pub fn equivalent_within(
 ) -> Result<EquivalenceResult, LimitError> {
     check_expr(a, limits)?;
     check_expr(b, limits)?;
-    let mut vars = a.variables();
-    for v in b.variables() {
-        if !vars.contains(&v) {
-            vars.push(v);
-        }
-    }
-    if vars.len() > limits.max_vars {
-        return Err(LimitError::Vars {
-            limit: limits.max_vars,
-        });
-    }
-    Ok(equivalent(a, b, alg))
+    let vars = union_vars(a, b);
+    equivalent_with_vars(a, b, alg, &vars, limits)
 }
 
 #[cfg(test)]
@@ -296,7 +412,7 @@ mod tests {
     #[test]
     fn truth_table_covers_all_rows() {
         let e = Parser::parse("a | b").unwrap();
-        let tt = truth_table(&e, Algebra::Kleene);
+        let tt = truth_table(&e, Algebra::Kleene).unwrap();
         assert_eq!(tt.variables.len(), 2);
         assert_eq!(tt.values.len(), 9);
     }
@@ -305,7 +421,7 @@ mod tests {
     fn truth_table_matches_scalar_evaluation() {
         let e = Parser::parse("(a & b) | (!a & c)").unwrap();
         let vars = e.variables();
-        let tt = truth_table(&e, Algebra::Kleene);
+        let tt = truth_table(&e, Algebra::Kleene).unwrap();
         for (i, expected) in tt.values.iter().enumerate() {
             let asg = decode_assignment(i as u64, &vars);
             assert_eq!(eval(&e, &asg, Algebra::Kleene), *expected, "row {i}");
@@ -313,10 +429,25 @@ mod tests {
     }
 
     #[test]
+    fn truth_table_refuses_unbudgeted_variable_count() {
+        let e = Parser::parse(
+            &(0..13)
+                .map(|i| format!("v{i}"))
+                .collect::<Vec<_>>()
+                .join(" & "),
+        )
+        .unwrap();
+        assert_eq!(
+            truth_table(&e, Algebra::Kleene).unwrap_err(),
+            LimitError::Vars { limit: 12 }
+        );
+    }
+
+    #[test]
     fn equivalent_detects_equal_expressions() {
         let a = Parser::parse("a & b").unwrap();
         let b = Parser::parse("b & a").unwrap();
-        let r = equivalent(&a, &b, Algebra::Kleene);
+        let r = equivalent(&a, &b, Algebra::Kleene).unwrap();
         assert!(r.equivalent);
         assert!(r.counterexample.is_none());
     }
@@ -325,7 +456,7 @@ mod tests {
     fn equivalent_finds_counterexample() {
         let a = Parser::parse("a & b").unwrap();
         let b = Parser::parse("a | b").unwrap();
-        let r = equivalent(&a, &b, Algebra::Kleene);
+        let r = equivalent(&a, &b, Algebra::Kleene).unwrap();
         assert!(!r.equivalent);
         assert!(r.counterexample.is_some());
     }
@@ -340,5 +471,47 @@ mod tests {
         // 变量 0 取最低三进制位：5 = 2 + 1*3 → a=2(unknown), b=1(true)
         assert_eq!(asg.get("a"), Some(Ternary::Unknown));
         assert_eq!(asg.get("b"), Some(Ternary::True));
+    }
+
+    #[test]
+    fn checked_codec_rejects_out_of_domain_and_duplicates() {
+        let one = vec!["a".to_string()];
+        assert_eq!(
+            try_decode_assignment(3, &one).unwrap_err(),
+            AssignmentCodecError::OutOfDomain { index: 3, vars: 1 }
+        );
+        assert!(try_decode_assignment(2, &one).is_ok());
+        let dup = vec!["a".to_string(), "a".to_string()];
+        assert!(matches!(
+            try_decode_assignment(0, &dup).unwrap_err(),
+            AssignmentCodecError::DuplicateVariable(_)
+        ));
+        let mut asg = Assignment::new();
+        asg.set("a", Ternary::False);
+        assert!(matches!(
+            try_assignment_index(&asg, &dup).unwrap_err(),
+            AssignmentCodecError::DuplicateVariable(_)
+        ));
+    }
+
+    #[test]
+    fn assignment_index_does_not_over_reject_high_zero_digits() {
+        // 42 个变量全 False：编号仍是 0，不应因 3^42 溢出而拒绝。
+        let vars: Vec<String> = (0..42).map(|i| format!("v{i}")).collect();
+        let mut all_false = Assignment::new();
+        for name in &vars {
+            all_false.set(name.clone(), Ternary::False);
+        }
+        assert_eq!(assignment_index(&all_false, &vars), Some(0));
+        // 3^40 仍可表示；3^41 起才真正溢出。
+        let mut high = all_false.clone();
+        high.set("v40", Ternary::True);
+        assert_eq!(assignment_index(&high, &vars), Some(3u64.pow(40)));
+        let mut over = all_false;
+        over.set("v41", Ternary::True);
+        assert!(matches!(
+            try_assignment_index(&over, &vars).unwrap_err(),
+            AssignmentCodecError::Overflow { .. }
+        ));
     }
 }

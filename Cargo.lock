@@ -889,6 +889,7 @@ dependencies = [
 name = "trit-core"
 version = "0.8.0"
 dependencies = [
+ "proptest",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -899,6 +900,7 @@ version = "0.8.0"
 dependencies = [
  "indoc",
  "proptest",
+ "thiserror 2.0.21",
  "trit-core",
 ]
 

@@ -4,6 +4,17 @@ use std::collections::BTreeMap;
 
 use crate::circuit::{Circuit, CircuitError, GateKind, fanout_counts, topological_order, validate};
 
+/// 时序计算失败。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TimingError {
+    /// 到达时间或路径延迟超出 `u32` 可表示范围。
+    #[error("时序累计超出 u32 范围（不允许饱和后继续比较）")]
+    Overflow,
+    /// 电路结构不合法。
+    #[error(transparent)]
+    Circuit(#[from] CircuitError),
+}
+
 /// 时序模型：每类门一个延迟；未列出的用 `default_delay`（常量门恒为 0）。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -38,10 +49,9 @@ impl TimingModel {
             .unwrap_or(self.default_delay)
     }
 
-    /// 某类门在给定扇出下的延迟：单元延迟 + `load_delay × fanout`。
-    pub fn gate_delay(&self, kind: GateKind, fanout: usize) -> u32 {
-        self.delay_for(kind)
-            .saturating_add(self.load_delay.saturating_mul(fanout as u32))
+    /// 某类门在给定扇出下的延迟：单元延迟 + `load_delay × fanout`（u64，避免静默饱和）。
+    pub fn gate_delay(&self, kind: GateKind, fanout: usize) -> u64 {
+        u64::from(self.delay_for(kind)) + u64::from(self.load_delay) * fanout as u64
     }
 
     /// 从 JSON 读取（形如 `{"default_delay":1,"delays":{"AND":2}}`）。
@@ -97,7 +107,7 @@ pub fn critical_paths(
     circuit: &Circuit,
     model: TimingModel,
     limit: usize,
-) -> Result<Vec<TimingPath>, CircuitError> {
+) -> Result<Vec<TimingPath>, TimingError> {
     if limit == 0 {
         return Ok(Vec::new());
     }
@@ -124,7 +134,9 @@ pub fn critical_paths(
                     for (path_delay, signals) in paths {
                         let mut path = signals.clone();
                         path.push(output.clone());
-                        candidates.push((path_delay.saturating_add(delay), path));
+                        let next = u64::from(*path_delay) + delay;
+                        let next = u32::try_from(next).map_err(|_| TimingError::Overflow)?;
+                        candidates.push((next, path));
                     }
                 }
             }
@@ -158,7 +170,7 @@ pub fn analyze_timing(
     circuit: &Circuit,
     model: TimingModel,
     clock: Option<u32>,
-) -> Result<TimingReport, CircuitError> {
+) -> Result<TimingReport, TimingError> {
     validate(circuit)?;
     let order = topological_order(circuit)?;
     let fanouts = fanout_counts(circuit);
@@ -176,10 +188,9 @@ pub fn analyze_timing(
             .max()
             .unwrap_or(0);
         let fanout = fanouts.get(gate.output.name()).copied().unwrap_or(0);
-        arrival.insert(
-            gate.output.name().to_string(),
-            start.saturating_add(model.gate_delay(gate.kind, fanout)),
-        );
+        let next = u64::from(start) + model.gate_delay(gate.kind, fanout);
+        let next = u32::try_from(next).map_err(|_| TimingError::Overflow)?;
+        arrival.insert(gate.output.name().to_string(), next);
     }
     let critical_path = circuit
         .outputs
@@ -197,7 +208,9 @@ pub fn analyze_timing(
         let gate = &circuit.gates[index];
         let output_required = required.get(gate.output.name()).copied().unwrap_or(clock);
         let fanout = fanouts.get(gate.output.name()).copied().unwrap_or(0);
-        let input_required = output_required.saturating_sub(model.gate_delay(gate.kind, fanout));
+        let delay = model.gate_delay(gate.kind, fanout);
+        let delay = u32::try_from(delay).unwrap_or(u32::MAX);
+        let input_required = output_required.saturating_sub(delay);
         for input in &gate.inputs {
             let entry = required
                 .entry(input.name().to_string())
@@ -328,6 +341,31 @@ output y3
         let json = model.to_json().unwrap();
         let again = TimingModel::from_json(&json).unwrap();
         assert_eq!(again.load_delay, 2);
+    }
+
+    #[test]
+    fn delay_overflow_is_an_error_not_a_pass() {
+        let circuit = parse_netlist(
+            "input a
+input b
+gate AND a b n
+gate AND n a y
+output y
+",
+        )
+        .unwrap();
+        let model = TimingModel {
+            default_delay: u32::MAX,
+            ..Default::default()
+        };
+        assert_eq!(
+            analyze_timing(&circuit, model.clone(), Some(u32::MAX)).unwrap_err(),
+            TimingError::Overflow
+        );
+        assert_eq!(
+            critical_paths(&circuit, model, 3).unwrap_err(),
+            TimingError::Overflow
+        );
     }
 
     #[test]

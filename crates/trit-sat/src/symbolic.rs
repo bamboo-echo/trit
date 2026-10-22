@@ -28,7 +28,7 @@ pub enum SymbolicError {
     Solver(String),
     /// 表达式超出资源预算。
     #[error("表达式超出预算: {0}")]
-    Limit(String),
+    Limit(#[from] trit_core::limits::LimitError),
 }
 
 /// 编码规模（变量数 / 子句数），用于验证二值快速路径的收益。
@@ -441,7 +441,7 @@ pub fn equivalent_symbolic_with(
     binary_vars: &HashSet<String>,
 ) -> Result<EquivalenceResult, SymbolicError> {
     for expr in [a, b] {
-        check_expr(expr, Limits::default()).map_err(|e| SymbolicError::Limit(e.to_string()))?;
+        check_expr(expr, Limits::default())?;
     }
     let (mut enc, vars) = build(a, b, alg, binary_vars);
     let sat = enc
@@ -507,7 +507,7 @@ pub fn minimal_counterexample(
     binary_vars: &HashSet<String>,
 ) -> Result<Option<Assignment>, SymbolicError> {
     for expr in [a, b] {
-        check_expr(expr, Limits::default()).map_err(|e| SymbolicError::Limit(e.to_string()))?;
+        check_expr(expr, Limits::default())?;
     }
     let (mut enc, vars) = build(a, b, alg, binary_vars);
     let sat = enc
@@ -609,7 +609,7 @@ pub fn satisfiable(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<Option<Assignment>, SymbolicError> {
-    check_expr(expr, Limits::default()).map_err(|e| SymbolicError::Limit(e.to_string()))?;
+    check_expr(expr, Limits::default())?;
     let vars = expr.variables();
     let mut enc = Encoder::new(alg, binary_vars);
     let node = enc.encode(expr);
@@ -657,7 +657,7 @@ pub fn premise_counterexample(
     binary_vars: &HashSet<String>,
 ) -> Result<Option<Assignment>, SymbolicError> {
     for expr in [premise, assertion] {
-        check_expr(expr, Limits::default()).map_err(|e| SymbolicError::Limit(e.to_string()))?;
+        check_expr(expr, Limits::default())?;
     }
     let mut vars = premise.variables();
     for v in assertion.variables() {
@@ -709,6 +709,9 @@ pub fn encoding_size(
     alg: Algebra,
     binary_vars: &HashSet<String>,
 ) -> Result<EncodingSize, SymbolicError> {
+    for expr in [a, b] {
+        check_expr(expr, Limits::default())?;
+    }
     let (enc, _vars) = build(a, b, alg, binary_vars);
     Ok(EncodingSize {
         variables: enc.next,

@@ -19,7 +19,7 @@
 //! 查询是“前提为 True 且断言不为 True”是否可满足，而不是三值 `premise ⇒ assertion` 恒真
 //! （后者会把 `a=X` 这类不满足前提的赋值也算进去）。
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use serde::Deserialize;
@@ -31,7 +31,7 @@ use trit_bdd::{
 };
 use trit_core::algebra::Algebra;
 use trit_core::ast::Expr;
-use trit_core::limits::{Limits, check_expr};
+use trit_core::limits::{LimitError, Limits, check_expr};
 use trit_core::parser::Parser;
 use trit_core::value::Ternary;
 use trit_eval::Assignment;
@@ -40,7 +40,7 @@ use trit_sat::{SymbolicError, premise_counterexample, satisfiable};
 /// 验证引擎。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
-    /// SAT + 最小反例。
+    /// SAT；失败时返回完整模型（不做最小化）。
     Sat,
     /// canonical BDD。
     Bdd,
@@ -106,7 +106,7 @@ pub struct AssertionResult {
     pub name: String,
     /// 是否恒真。
     pub holds: bool,
-    /// 失败时的反例（SAT 为充分部分赋值，BDD 为完整赋值）。
+    /// 失败时的反例（两个引擎都返回完整赋值模型，不做最小化）。
     pub counterexample: Option<Assignment>,
     /// BDD 路径的差集节点数。
     pub nodes: Option<usize>,
@@ -125,12 +125,12 @@ pub enum PolicyError {
     #[error("未知语义: {0}（可选 kleene / lukasiewicz / bochvar）")]
     Algebra(String),
     /// 表达式解析失败。
-    #[error("{what} 解析失败: {message}")]
+    #[error("{what} 解析失败: {error}")]
     Parse {
         /// 出错的表达式名。
         what: String,
-        /// 解析器消息。
-        message: String,
+        /// 解析器错误（含行列位置）。
+        error: trit_core::parser::ParseError,
     },
     /// 定义循环。
     #[error("定义循环: {0}")]
@@ -141,15 +141,43 @@ pub enum PolicyError {
     /// 策略没有任何断言。
     #[error("策略没有断言：拒绝作为门禁运行")]
     NoAssertions,
+    /// 名称不合法。
+    #[error("{kind} 名称 {name:?} 不合法：{reason}")]
+    InvalidName {
+        /// 名称类别（`definition` / `binary`）。
+        kind: &'static str,
+        /// 原始名称。
+        name: String,
+        /// 原因。
+        reason: String,
+    },
+    /// 二值变量指向了派生定义。
+    #[error("binary 里的 {0:?} 是派生定义；binary 只允许原始变量")]
+    BinaryIsDefinition(String),
+    /// 二值变量重复。
+    #[error("binary 列表重复：{0}")]
+    DuplicateBinary(String),
+    /// 定义展开超出节点预算。
+    #[error("定义展开超过节点预算 {limit}")]
+    ExpandBudget {
+        /// 上限。
+        limit: usize,
+    },
+    /// 定义引用链过深。
+    #[error("定义引用深度超过 {limit}")]
+    DefinitionDepth {
+        /// 上限。
+        limit: usize,
+    },
     /// SAT 引擎错误。
     #[error("SAT 错误: {0}")]
-    Sat(String),
+    Sat(#[from] SymbolicError),
     /// BDD 引擎错误。
     #[error("BDD 错误: {0}")]
-    Bdd(String),
+    Bdd(#[from] BddError),
     /// 表达式超出资源预算。
     #[error("表达式超出预算: {0}")]
-    Limit(String),
+    Limit(#[from] LimitError),
 }
 
 impl From<serde_json::Error> for PolicyError {
@@ -197,34 +225,39 @@ impl Policy {
         }
         let alg = Algebra::parse(&self.algebra)
             .ok_or_else(|| PolicyError::Algebra(self.algebra.clone()))?;
-        let binary: HashSet<String> = self.binary.iter().cloned().collect();
+        let binary = validate_binary(&self.binary, &self.definitions)?;
         let mut definitions = BTreeMap::new();
         for (name, src) in &self.definitions {
+            Expr::try_var(name.clone()).map_err(|e| PolicyError::InvalidName {
+                kind: "definition",
+                name: name.clone(),
+                reason: e.to_string(),
+            })?;
             definitions.insert(name.clone(), parse_expr(name, src)?);
         }
-        let truth = Expr::Const(Ternary::True);
-        let mut assumptions = Vec::with_capacity(self.assumptions.len());
-        for (i, src) in self.assumptions.iter().enumerate() {
-            let raw = parse_expr(&format!("assumption[{i}]"), src)?;
-            assumptions.push(expand(&raw, &definitions, &mut Vec::new())?);
-        }
-        let premise = assumptions.into_iter().fold(truth.clone(), Expr::and);
         let limits = Limits {
             max_vars: usize::MAX,
             ..Limits::default()
         };
-        check_expr(&premise, limits).map_err(|e| PolicyError::Limit(e.to_string()))?;
+        // 先检查完整定义图（含未被引用的循环），再开始任何展开分配。
+        validate_definition_graph(&definitions, limits)?;
+        let truth = Expr::Const(Ternary::True);
+        let mut assumptions = Vec::with_capacity(self.assumptions.len());
+        for (i, src) in self.assumptions.iter().enumerate() {
+            let raw = parse_expr(&format!("assumption[{i}]"), src)?;
+            assumptions.push(expand_with_limits(&raw, &definitions, limits)?);
+        }
+        let premise = assumptions.into_iter().fold(truth.clone(), Expr::and);
+        check_expr(&premise, limits)?;
         let satisfiable_premise = match engine {
-            Engine::Sat => satisfiable(&premise, alg, &binary)
-                .map_err(|e: SymbolicError| PolicyError::Sat(e.to_string()))?,
+            Engine::Sat => satisfiable(&premise, alg, &binary)?,
             Engine::Bdd => {
                 let vars = bdd_order.map(|order| order_variables(&premise, &premise, order));
                 let request = BddRequest {
                     order: vars.as_deref(),
                     limits: bdd_limits,
                 };
-                satisfiable_bdd_with(&premise, alg, &binary, &request)
-                    .map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?
+                satisfiable_bdd_with(&premise, alg, &binary, &request)?
             }
         };
         if satisfiable_premise.is_none() {
@@ -234,12 +267,11 @@ impl Policy {
         let mut results = Vec::with_capacity(self.assertions.len());
         for assertion in &self.assertions {
             let raw = parse_expr(&assertion.name, &assertion.expr)?;
-            let expr = expand(&raw, &definitions, &mut Vec::new())?;
-            check_expr(&expr, limits).map_err(|e| PolicyError::Limit(e.to_string()))?;
+            let expr = expand_with_limits(&raw, &definitions, limits)?;
+            check_expr(&expr, limits)?;
             match engine {
                 Engine::Sat => {
-                    let witness = premise_counterexample(&premise, &expr, alg, &binary)
-                        .map_err(|e: SymbolicError| PolicyError::Sat(e.to_string()))?;
+                    let witness = premise_counterexample(&premise, &expr, alg, &binary)?;
                     results.push(AssertionResult {
                         name: assertion.name.clone(),
                         holds: witness.is_none(),
@@ -254,8 +286,7 @@ impl Policy {
                         limits: bdd_limits,
                     };
                     let check =
-                        premise_counterexample_bdd_with(&premise, &expr, alg, &binary, &request)
-                            .map_err(|e: BddError| PolicyError::Bdd(e.to_string()))?;
+                        premise_counterexample_bdd_with(&premise, &expr, alg, &binary, &request)?;
                     results.push(AssertionResult {
                         name: assertion.name.clone(),
                         holds: check.counterexample.is_none(),
@@ -270,53 +301,286 @@ impl Policy {
 }
 
 fn parse_expr(what: &str, src: &str) -> Result<Expr, PolicyError> {
-    Parser::parse(src).map_err(|e| PolicyError::Parse {
+    Parser::parse(src).map_err(|error| PolicyError::Parse {
         what: what.to_string(),
-        message: e.to_string(),
+        error,
     })
 }
 
-fn expand(
+/// 校验 `binary` 列表：只允许原始变量，且不能与派生定义重名。
+fn validate_binary(
+    list: &[String],
+    definitions: &BTreeMap<String, String>,
+) -> Result<HashSet<String>, PolicyError> {
+    let mut set = HashSet::new();
+    for name in list {
+        let reason = match Parser::parse(name) {
+            Ok(Expr::Var(parsed)) if parsed == *name => None,
+            Ok(Expr::Const(_)) => Some("是保留常量 token".to_string()),
+            Ok(_) => Some("不是单个标识符".to_string()),
+            Err(e) => Some(e.to_string()),
+        };
+        if let Some(reason) = reason {
+            return Err(PolicyError::InvalidName {
+                kind: "binary",
+                name: name.clone(),
+                reason,
+            });
+        }
+        if definitions.contains_key(name) {
+            return Err(PolicyError::BinaryIsDefinition(name.clone()));
+        }
+        if !set.insert(name.clone()) {
+            return Err(PolicyError::DuplicateBinary(name.clone()));
+        }
+    }
+    Ok(set)
+}
+
+/// 定义表达式中指向其它定义的自由变量。
+fn definition_deps<'a>(definitions: &'a BTreeMap<String, Expr>, expr: &Expr) -> Vec<&'a str> {
+    expr.variables()
+        .into_iter()
+        .filter_map(|name| {
+            definitions
+                .get_key_value(&name)
+                .map(|(key, _)| key.as_str())
+        })
+        .collect()
+}
+
+/// 迭代 DFS 检查完整定义图（含未被引用的定义）是否有环、引用链是否过深。
+fn validate_definition_graph(
+    definitions: &BTreeMap<String, Expr>,
+    limits: Limits,
+) -> Result<(), PolicyError> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        New,
+        Visiting,
+        Done,
+    }
+
+    struct Frame<'a> {
+        name: &'a str,
+        children: Vec<&'a str>,
+        next: usize,
+    }
+
+    let mut state: HashMap<&str, State> = definitions
+        .keys()
+        .map(|name| (name.as_str(), State::New))
+        .collect();
+    for root in definitions.keys() {
+        let root = root.as_str();
+        if state.get(root).copied() != Some(State::New) {
+            continue;
+        }
+        state.insert(root, State::Visiting);
+        let mut stack = vec![Frame {
+            name: root,
+            children: definition_deps(definitions, &definitions[root]),
+            next: 0,
+        }];
+        while !stack.is_empty() {
+            let top = stack.len() - 1;
+            if stack[top].next < stack[top].children.len() {
+                let child = stack[top].children[stack[top].next];
+                stack[top].next += 1;
+                match state.get(child).copied().unwrap_or(State::New) {
+                    State::New => {
+                        if stack.len() + 1 > limits.max_depth {
+                            return Err(PolicyError::DefinitionDepth {
+                                limit: limits.max_depth,
+                            });
+                        }
+                        state.insert(child, State::Visiting);
+                        stack.push(Frame {
+                            name: child,
+                            children: definition_deps(definitions, &definitions[child]),
+                            next: 0,
+                        });
+                    }
+                    State::Visiting => {
+                        let mut cycle: Vec<&str> = stack.iter().map(|frame| frame.name).collect();
+                        cycle.push(child);
+                        return Err(PolicyError::Cycle(cycle.join(" -> ")));
+                    }
+                    State::Done => {}
+                }
+            } else {
+                let name = stack[top].name;
+                stack.pop();
+                state.insert(name, State::Done);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 带节点/深度预算的展开器。
+struct Expander<'a> {
+    definitions: &'a BTreeMap<String, Expr>,
+    stack: Vec<String>,
+    nodes_left: usize,
+    node_limit: usize,
+    max_depth: usize,
+}
+
+impl<'a> Expander<'a> {
+    fn new(definitions: &'a BTreeMap<String, Expr>, limits: Limits) -> Self {
+        Self {
+            definitions,
+            stack: Vec::new(),
+            nodes_left: limits.max_nodes,
+            node_limit: limits.max_nodes,
+            max_depth: limits.max_depth,
+        }
+    }
+
+    fn take_node(&mut self) -> Result<(), PolicyError> {
+        if self.nodes_left == 0 {
+            return Err(PolicyError::ExpandBudget {
+                limit: self.node_limit,
+            });
+        }
+        self.nodes_left -= 1;
+        Ok(())
+    }
+
+    fn check_depth(&self, depth: usize) -> Result<(), PolicyError> {
+        if depth > self.max_depth {
+            return Err(PolicyError::Limit(LimitError::Depth {
+                limit: self.max_depth,
+            }));
+        }
+        Ok(())
+    }
+
+    fn join(
+        &mut self,
+        left: (Expr, usize),
+        right: (Expr, usize),
+        f: impl FnOnce(Expr, Expr) -> Expr,
+    ) -> Result<(Expr, usize), PolicyError> {
+        let depth = 1 + left.1.max(right.1);
+        self.check_depth(depth)?;
+        self.take_node()?;
+        Ok((f(left.0, right.0), depth))
+    }
+
+    fn expand(&mut self, expr: &Expr) -> Result<(Expr, usize), PolicyError> {
+        match expr {
+            Expr::Const(_) => {
+                self.take_node()?;
+                Ok((expr.clone(), 1))
+            }
+            Expr::Var(name) => {
+                let Some(definition) = self.definitions.get(name) else {
+                    self.take_node()?;
+                    return Ok((expr.clone(), 1));
+                };
+                if self.stack.len() >= self.max_depth {
+                    return Err(PolicyError::DefinitionDepth {
+                        limit: self.max_depth,
+                    });
+                }
+                if self.stack.iter().any(|n| n == name) {
+                    let mut cycle = self.stack.clone();
+                    cycle.push(name.clone());
+                    return Err(PolicyError::Cycle(cycle.join(" -> ")));
+                }
+                self.stack.push(name.clone());
+                let expanded = self.expand(definition);
+                self.stack.pop();
+                expanded
+            }
+            Expr::Not(inner) => {
+                let (inner, depth) = self.expand(inner)?;
+                let depth = 1 + depth;
+                self.check_depth(depth)?;
+                self.take_node()?;
+                Ok((Expr::logical_not(inner), depth))
+            }
+            Expr::And(a, b) => {
+                let a = self.expand(a)?;
+                let b = self.expand(b)?;
+                self.join(a, b, Expr::and)
+            }
+            Expr::Or(a, b) => {
+                let a = self.expand(a)?;
+                let b = self.expand(b)?;
+                self.join(a, b, Expr::or)
+            }
+            Expr::Xor(a, b) => {
+                let a = self.expand(a)?;
+                let b = self.expand(b)?;
+                self.join(a, b, Expr::xor)
+            }
+            Expr::Implies(a, b) => {
+                let a = self.expand(a)?;
+                let b = self.expand(b)?;
+                self.join(a, b, Expr::implies)
+            }
+            Expr::Equiv(a, b) => {
+                let a = self.expand(a)?;
+                let b = self.expand(b)?;
+                self.join(a, b, Expr::equiv)
+            }
+        }
+    }
+}
+
+fn expand_with_limits(
     expr: &Expr,
     definitions: &BTreeMap<String, Expr>,
-    stack: &mut Vec<String>,
+    limits: Limits,
 ) -> Result<Expr, PolicyError> {
-    match expr {
-        Expr::Const(_) => Ok(expr.clone()),
-        Expr::Var(name) => {
-            let Some(definition) = definitions.get(name) else {
-                return Ok(expr.clone());
-            };
-            if stack.iter().any(|n| n == name) {
-                let mut cycle = stack.clone();
-                cycle.push(name.clone());
-                return Err(PolicyError::Cycle(cycle.join(" -> ")));
-            }
-            stack.push(name.clone());
-            let expanded = expand(definition, definitions, stack);
-            stack.pop();
-            expanded
-        }
-        Expr::Not(a) => Ok(Expr::logical_not(expand(a, definitions, stack)?)),
-        Expr::And(a, b) => Ok(Expr::and(
-            expand(a, definitions, stack)?,
-            expand(b, definitions, stack)?,
-        )),
-        Expr::Or(a, b) => Ok(Expr::or(
-            expand(a, definitions, stack)?,
-            expand(b, definitions, stack)?,
-        )),
-        Expr::Xor(a, b) => Ok(Expr::xor(
-            expand(a, definitions, stack)?,
-            expand(b, definitions, stack)?,
-        )),
-        Expr::Implies(a, b) => Ok(Expr::implies(
-            expand(a, definitions, stack)?,
-            expand(b, definitions, stack)?,
-        )),
-        Expr::Equiv(a, b) => Ok(Expr::equiv(
-            expand(a, definitions, stack)?,
-            expand(b, definitions, stack)?,
-        )),
+    let mut expander = Expander::new(definitions, limits);
+    Ok(expander.expand(expr)?.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn defs(pairs: &[(&str, &str)]) -> BTreeMap<String, Expr> {
+        pairs
+            .iter()
+            .map(|(name, src)| (name.to_string(), Parser::parse(src).unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn expand_budget_is_exact_and_fails_before_growth() {
+        let definitions = defs(&[("d0", "a"), ("d1", "d0 & d0")]);
+        let expr = Parser::parse("d1").unwrap();
+        let exact = Limits {
+            max_nodes: 3,
+            ..Limits::default()
+        };
+        assert!(expand_with_limits(&expr, &definitions, exact).is_ok());
+        let tight = Limits {
+            max_nodes: 2,
+            ..Limits::default()
+        };
+        assert!(matches!(
+            expand_with_limits(&expr, &definitions, tight),
+            Err(PolicyError::ExpandBudget { limit: 2 })
+        ));
+    }
+
+    #[test]
+    fn expand_depth_is_enforced() {
+        let definitions = defs(&[("d0", "a"), ("d1", "d0"), ("d2", "d1"), ("d3", "d2")]);
+        let expr = Parser::parse("d3").unwrap();
+        let limits = Limits {
+            max_depth: 3,
+            ..Limits::default()
+        };
+        assert!(matches!(
+            expand_with_limits(&expr, &definitions, limits),
+            Err(PolicyError::DefinitionDepth { limit: 3 })
+        ));
     }
 }

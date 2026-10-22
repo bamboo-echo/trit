@@ -42,7 +42,9 @@ fn netlist_parser_round_trips_or_rejects() {
         let text = mutate(&mut state, seed, round % 4 + 1);
         if let Ok(circuit) = parse_netlist(&text) {
             parsed += 1;
-            let rendered = trit_circuit::netlist::to_netlist(&circuit);
+            let Ok(rendered) = trit_circuit::netlist::to_netlist(&circuit) else {
+                continue;
+            };
             let again = parse_netlist(&rendered).expect("to_netlist 输出必须可解析");
             assert_eq!(circuit, again);
         }
@@ -59,7 +61,9 @@ fn verilog_parser_round_trips_or_rejects() {
         let text = mutate(&mut state, seed, round % 4 + 1);
         if let Ok(circuit) = parse_verilog(&text) {
             parsed += 1;
-            let rendered = trit_circuit::to_verilog(&circuit);
+            let Ok(rendered) = trit_circuit::to_verilog(&circuit) else {
+                continue;
+            };
             let again = parse_verilog(&rendered).expect("to_verilog 输出必须可解析");
             assert_eq!(circuit.outputs.len(), again.outputs.len());
         }
@@ -109,6 +113,29 @@ fn aiger_parser_round_trips_or_rejects() {
             let again = parse_aiger(&rendered).expect("to_aiger 输出必须可解析");
             assert_eq!(circuit.inputs.len(), again.inputs.len());
             assert_eq!(circuit.outputs.len(), again.outputs.len());
+        }
+    }
+    assert!(parsed > 0, "变异种子应至少解析成功一次");
+}
+
+#[test]
+fn netlist_json_round_trips_or_rejects() {
+    let mut state = 0x1357_9bdf_2468_ace0u64;
+    let seed =
+        trit_circuit::netlist::to_json(&random_circuit(&mut state)).expect("随机电路应能序列化");
+    let mut parsed = 0usize;
+    for round in 0..400 {
+        let text = mutate(&mut state, &seed, round % 5 + 1);
+        if let Ok(circuit) = trit_circuit::netlist::from_json(&text) {
+            parsed += 1;
+            let rendered =
+                trit_circuit::netlist::to_json(&circuit).expect("serde 应能写回同一结构");
+            let again =
+                trit_circuit::netlist::from_json(&rendered).expect("to_json 输出必须可解析");
+            assert_eq!(circuit, again);
+            // 坏电路导出必须 Err 而不是 panic（报告 M-02）。
+            let _ = trit_circuit::netlist::to_netlist(&circuit);
+            let _ = trit_circuit::to_verilog(&circuit);
         }
     }
     assert!(parsed > 0, "变异种子应至少解析成功一次");

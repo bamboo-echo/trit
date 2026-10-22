@@ -14,6 +14,8 @@ pub struct Limits {
     pub max_nodes: usize,
     /// 允许做 `3^n` 枚举的变量数上限。
     pub max_vars: usize,
+    /// 一次枚举允许生成的最大行数。
+    pub max_rows: usize,
 }
 
 impl Default for Limits {
@@ -22,6 +24,7 @@ impl Default for Limits {
             max_depth: 256,
             max_nodes: 100_000,
             max_vars: 12,
+            max_rows: 1_000_000,
         }
     }
 }
@@ -47,6 +50,31 @@ pub enum LimitError {
         /// 上限。
         limit: usize,
     },
+    /// 赋值空间 `3^n` 超出 `u64` 可表示范围。
+    #[error("赋值空间 3^{vars} 超出 u64 容量")]
+    CountOverflow {
+        /// 变量数。
+        vars: usize,
+    },
+    /// 枚举行数超出预算。
+    #[error("枚举行数超过 {limit}")]
+    Rows {
+        /// 上限。
+        limit: usize,
+    },
+    /// 分块基址非法：必须是 64 的倍数，且 `base + 63` 不溢出。
+    #[error("分块基址 {base} 非法：必须为 64 的倍数且不溢出")]
+    ChunkBase {
+        /// 实际基址。
+        base: u64,
+    },
+}
+
+/// 计算 `3^n`；溢出返回 [`LimitError::CountOverflow`]。
+pub fn checked_pow3(n: usize) -> Result<u64, LimitError> {
+    let exp = u32::try_from(n).unwrap_or(u32::MAX);
+    3u64.checked_pow(exp)
+        .ok_or(LimitError::CountOverflow { vars: n })
 }
 
 /// 迭代遍历 AST，检查深度与节点数（不递归，避免自身爆栈）。

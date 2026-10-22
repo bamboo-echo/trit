@@ -1,6 +1,6 @@
 //! 网表文本格式：`input` / `output` / `gate` / `not` / `buf` / `const`。
 
-use crate::circuit::{Circuit, Gate, GateKind, Signal};
+use crate::circuit::{Circuit, CircuitError, Gate, GateKind, Signal, validate};
 use trit_core::value::Ternary;
 
 /// 网表解析错误。
@@ -122,7 +122,8 @@ pub fn from_json(text: &str) -> Result<Circuit, serde_json::Error> {
 }
 
 /// 把电路序列化回网表文本（`parse_netlist` 的逆操作）。
-pub fn to_netlist(circuit: &Circuit) -> String {
+pub fn to_netlist(circuit: &Circuit) -> Result<String, CircuitError> {
+    validate(circuit)?;
     let mut out = String::new();
     for input in &circuit.inputs {
         out.push_str(&format!("input {}\n", input.name()));
@@ -147,7 +148,7 @@ pub fn to_netlist(circuit: &Circuit) -> String {
     for output in &circuit.outputs {
         out.push_str(&format!("output {}\n", output.name()));
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -164,6 +165,15 @@ mod tests {
         assert_eq!(circuit.input_count(), 2);
         assert_eq!(circuit.outputs.len(), 1);
         assert_eq!(circuit.gates[0].kind, GateKind::And);
+    }
+
+    #[test]
+    fn export_rejects_structurally_bad_circuit() {
+        let mut circuit = Circuit::new("bad");
+        circuit.add_input(Signal::new("a"));
+        circuit.add_gate(Gate::new(GateKind::Not, vec![], Signal::new("y")));
+        circuit.add_output(Signal::new("y"));
+        assert!(to_netlist(&circuit).is_err(), "非法元数不能直接导出");
     }
 
     #[test]
@@ -200,7 +210,7 @@ mod tests {
         let text =
             "input a\ninput b\nconst 1 one\nnot a na\ngate AND na b n\ngate OR n one y\noutput y\n";
         let circuit = parse_netlist(text).unwrap();
-        let again = parse_netlist(&to_netlist(&circuit)).unwrap();
+        let again = parse_netlist(&to_netlist(&circuit).unwrap()).unwrap();
         assert_eq!(circuit, again);
         assert_eq!(
             analyze(&circuit, Algebra::Kleene).unwrap().faults,

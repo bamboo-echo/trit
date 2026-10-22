@@ -2,12 +2,51 @@
 
 ## [未发布]
 
+### Changed（评审修复第二批，含 API 变更）
+
+- 解析器在构造期扣预算：右结合蕴含链改为迭代收集再右折，扁平二元链按实际 AST 深度拒绝；
+  新增输入字节上限（1 MiB）与节点预算错误；`Parser::parse_with_limits` 可指定预算。
+- `Evaluator::assignment_count` / `chunk_planes` / `evaluate` 改为可失败（`Result`），
+  `3^n` 用 checked 计算，新增 `Limits::max_rows` 与 `evaluate_within`。
+- `trit_eval::{truth_table, equivalent}`、`trit_belnap::{table, equivalent}`、
+  `Circuit::combination_count` 改为返回 `Result`；`analyze` 在 `3^n` 循环前拒绝 >16 个主输入。
+- `TriVec` 的 `PartialEq/Eq` 改为按值比较（全零 unknown 平面等同 `None`）；写入清除最后一个
+  `Unknown` 时规范化平面；新增 `try_from_binary` / `try_get` / `try_set` / `try_word`。
+- `BitPlane` 的 `with_bit` / `bit` 明确为环绕语义，新增 `checked_with_bit` / `checked_bit` /
+  `TriBit::checked_get`。
+- `Ternary::{is_false,is_true}` 文档改为精确匹配（`X` 两者皆假）；新增 `Expr::try_var` 拒绝
+  保留常量 token/非法标识符，`Display` 不再暗示任意变量可无损往返。
+- 赋值编号：新增 `try_assignment_index` / `try_decode_assignment`（重复变量、超出 `3^n` 域、
+  u64 溢出可区分）；编码不再因末位多余的 `3^n` 计算而过度拒绝。
+- 策略：展开时按节点/深度预算（`ExpandBudget` / `DefinitionDepth`），完整定义图（含未引用环）
+  先预检；`binary` 只允许原始变量，定义名拒绝保留 token，重复 binary 报错；
+  上层错误携带 `LimitError` / `SymbolicError` / `BddError`，不再压成字符串。
+- BDD 预算明确为软限额（每次运算返回后检查，峰值可超）；新增 `Quantified::try_is_valid` /
+  `try_counterexample`；README 说明硬隔离需进程/worker。
+- 策略反例文档改为“完整赋值模型，不做最小化”。
+
+### Fixed
+
+- 评审修复（第一批）：Verilog 括号倒置不再 panic；多输入 NAND/NOR 改为“先合并再反相”；
+  XNOR 不再双驱动；临时信号名全模块唯一；强加 `Xor` 导出 Verilog 明确拒绝；
+  `check` 无法执行覆盖率检查且用户指定阈值时 FAIL；单元库键规范化并拒绝重复；
+  时序/映射累计改用 u64 检查，溢出返回错误；ATPG X 位改为联合填充验证；
+  `minimum_cover` 预算耗尽不再宣称最优；`decode_binary` 超过 64 输入返回错误。
+
 ### Added
 
 - ATPG X 合并压缩：两个向量若存在一种填充能覆盖“删掉它们后会失去”的唯一故障，就合成一个；
   `inputs` 仍给出具体 0/1 填充，CSV 导出即用该填充。
 - `AtpgReport::x_coverage`（含 X 向量覆盖的可测故障比例）与 `merged`（压缩省下的向量数）；
   表格、JSON、WASM 同步输出。
+- 复审测试缺口（§3.3）：`trit-core/tests/structure.rs` 用 proptest 生成不同形状的 AST，
+  验证 `to_infix → parse` 的结构/深度/节点数守恒、扁平链与右结合蕴含链的深度边界、
+  任意文本不 panic；`trit-policy` 新增展开预算精确性/深度单测与稳定 smoke。
+- fuzz 目标补到 8 个：新增 `expr`（解析往返）、`policy`（小策略验证）、`netlist_json`
+  （JSON 往返 + 坏电路导出）；`fuzz/Cargo.toml` 的 `trit-circuit` 依赖路径修正为
+  `../crates/trit-circuit`。
+- ATPG 端到端回归：用 `generate_tests` 实际产出的覆盖向量验证 don't-care 的每个联合填充
+  仍检出故障，补上报告 §3.1 指出的“只证明 helper”缺口。
 - AIGER ASCII 子集读写：`parse_aiger` / `to_aiger`（`L = 0` 组合逻辑，AND + 取反编码）；
   CLI `netlist --from/--to aiger`；0/1 激励上的往返等价。
 - BLIF 子集读写：`parse_blif` / `to_blif`（`.model/.inputs/.outputs/.names`，拒绝 `.latch`）；

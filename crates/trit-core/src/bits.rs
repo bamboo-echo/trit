@@ -11,6 +11,7 @@
 //! `(0,0) → 0`、`(1,0) → 1`、`(0,1) → X`，`(1,1)` 为非法组合（不会出现）。
 
 use crate::algebra::Algebra;
+use crate::limits::{LimitError, Limits, checked_pow3};
 use crate::value::Ternary;
 
 /// 一个位平面的真值向量。
@@ -24,13 +25,36 @@ impl BitPlane {
     pub const ONES: Self = Self(u64::MAX);
 
     /// 构造指定位为 1 的平面。
+    ///
+    /// **环绕语义**：位号按 `bit % 64` 取模，`with_bit(64)` 等价于 `with_bit(0)`。
+    /// 需要拒绝越界位号时用 [`checked_with_bit`](Self::checked_with_bit)。
     pub const fn with_bit(bit: u32) -> Self {
         Self(1u64 << (bit % 64))
     }
 
+    /// 构造指定位为 1 的平面；`bit >= 64` 返回 `None`。
+    pub const fn checked_with_bit(bit: u32) -> Option<Self> {
+        if bit < 64 {
+            Some(Self(1u64 << bit))
+        } else {
+            None
+        }
+    }
+
     /// 该平面第 `bit` 位是否为 1。
+    ///
+    /// **环绕语义**：位号按 `bit % 64` 取模，`bit(64)` 读的是第 0 位。
     pub const fn bit(self, bit: u32) -> bool {
         (self.0 >> (bit % 64)) & 1 == 1
+    }
+
+    /// 读取第 `bit` 位；`bit >= 64` 返回 `None`。
+    pub const fn checked_bit(self, bit: u32) -> Option<bool> {
+        if bit < 64 {
+            Some((self.0 >> bit) & 1 == 1)
+        } else {
+            None
+        }
     }
 
     /// 平面内 1 的个数（popcount）。
@@ -98,7 +122,7 @@ impl TriBit {
         }
     }
 
-    /// 读出第 `bit` 组的取值。
+    /// 读出第 `bit` 组的取值（环绕语义，见 [`BitPlane::bit`]）。
     pub const fn get(self, bit: u32) -> Ternary {
         if self.unknowns.bit(bit) {
             Ternary::Unknown
@@ -107,6 +131,22 @@ impl TriBit {
         } else {
             Ternary::False
         }
+    }
+
+    /// 读出第 `bit` 组的取值；`bit >= 64` 返回 `None`。
+    pub const fn checked_get(self, bit: u32) -> Option<Ternary> {
+        if bit >= 64 {
+            return None;
+        }
+        let ones = (self.ones.0 >> bit) & 1 == 1;
+        let unknowns = (self.unknowns.0 >> bit) & 1 == 1;
+        Some(if unknowns {
+            Ternary::Unknown
+        } else if ones {
+            Ternary::True
+        } else {
+            Ternary::False
+        })
     }
 
     /// 该平面代表的“确定真”位数（ones 且非 unknown）。
@@ -405,22 +445,26 @@ impl Evaluator {
         self.variables.len() - 1
     }
 
-    /// 赋值总数 `3^n`。
-    pub fn assignment_count(&self) -> u64 {
-        3u64.saturating_pow(self.variables.len() as u32)
+    /// 赋值总数 `3^n`；`3^n` 超出 `u64` 时返回 [`LimitError::CountOverflow`]。
+    pub fn assignment_count(&self) -> Result<u64, LimitError> {
+        checked_pow3(self.variables.len())
     }
 
     /// 构造一个 64 组分块中各变量的位平面。
     ///
-    /// `base` 是该分块首个赋值的编号（必为 64 的倍数）。
-    /// 变量 `i` 的取值由赋值编号的第 `i` 个三进制位决定
-    /// （`0 → 0`，`1 → 1`，`2 → X`）。
-    pub fn chunk_planes(&self, base: u64) -> Vec<TriBit> {
+    /// `base` 是该分块首个赋值的编号，必须是 64 的倍数且 `base + 63` 不溢出；
+    /// 否则返回 [`LimitError::ChunkBase`]。变量 `i` 的取值由赋值编号的第 `i`
+    /// 个三进制位决定（`0 → 0`，`1 → 1`，`2 → X`）。
+    pub fn chunk_planes(&self, base: u64) -> Result<Vec<TriBit>, LimitError> {
+        if !base.is_multiple_of(64) {
+            return Err(LimitError::ChunkBase { base });
+        }
+        base.checked_add(63).ok_or(LimitError::ChunkBase { base })?;
         let mut planes = Vec::with_capacity(self.variables.len());
         for i in 0..self.variables.len() {
+            let pow = checked_pow3(i)?;
             let mut ones = 0u64;
             let mut unknowns = 0u64;
-            let pow = 3u64.saturating_pow(i as u32);
             for bit in 0..64u32 {
                 let group = base + bit as u64;
                 let digit = (group / pow) % 3;
@@ -435,21 +479,45 @@ impl Evaluator {
                 unknowns: BitPlane(unknowns),
             });
         }
-        planes
+        Ok(planes)
     }
 
-    /// 在全部 `3^n` 组赋值上求值。
+    /// 在全部 `3^n` 组赋值上求值（默认预算）。
     ///
     /// 内部按 64 组一块做位并行计算，再展开为逐组结果。
-    pub fn evaluate<F>(&self, f: F) -> TruthTable
+    pub fn evaluate<F>(&self, f: F) -> Result<TruthTable, LimitError>
     where
         F: Fn(&[TriBit]) -> TriBit,
     {
-        let total = self.assignment_count();
-        let mut values = Vec::with_capacity(total as usize);
+        self.evaluate_within(f, Limits::default())
+    }
+
+    /// 同 [`Evaluator::evaluate`]，但可指定变量数与行数预算。
+    ///
+    /// 预算在分配结果表之前检查：`3^n` 用 checked 计算，行数先与
+    /// [`Limits::max_rows`] 比较，再做可失败转换与分配。
+    pub fn evaluate_within<F>(&self, f: F, limits: Limits) -> Result<TruthTable, LimitError>
+    where
+        F: Fn(&[TriBit]) -> TriBit,
+    {
+        if self.variables.len() > limits.max_vars {
+            return Err(LimitError::Vars {
+                limit: limits.max_vars,
+            });
+        }
+        let total = self.assignment_count()?;
+        if total > limits.max_rows as u64 {
+            return Err(LimitError::Rows {
+                limit: limits.max_rows,
+            });
+        }
+        let capacity = usize::try_from(total).map_err(|_| LimitError::Rows {
+            limit: limits.max_rows,
+        })?;
+        let mut values = Vec::with_capacity(capacity);
         let mut base = 0u64;
         while base < total {
-            let planes = self.chunk_planes(base);
+            let planes = self.chunk_planes(base)?;
             let res = f(&planes);
             let take = (total - base).min(64) as u32;
             for bit in 0..take {
@@ -457,10 +525,10 @@ impl Evaluator {
             }
             base += 64;
         }
-        TruthTable {
+        Ok(TruthTable {
             variables: self.variables.clone(),
             values,
-        }
+        })
     }
 }
 
@@ -609,8 +677,8 @@ mod tests {
         let mut ev = Evaluator::new(Algebra::Kleene);
         ev.declare("a");
         ev.declare("b");
-        assert_eq!(ev.assignment_count(), 9);
-        let tt = ev.evaluate(|p| p[0]);
+        assert_eq!(ev.assignment_count().unwrap(), 9);
+        let tt = ev.evaluate(|p| p[0]).unwrap();
         assert_eq!(tt.values.len(), 9);
         // 三进制混合序：第 0 组 a=0，第 1 组 a=1，第 2 组 a=X
         assert_eq!(tt.value_at(0), Some(Ternary::False));
@@ -620,14 +688,105 @@ mod tests {
     }
 
     #[test]
+    fn assignment_count_is_checked_not_saturated() {
+        let mut ev = Evaluator::new(Algebra::Kleene);
+        for i in 0..41 {
+            ev.declare(format!("v{i}"));
+        }
+        assert_eq!(
+            ev.assignment_count().unwrap_err(),
+            LimitError::CountOverflow { vars: 41 }
+        );
+    }
+
+    #[test]
+    fn chunk_base_must_be_aligned_and_not_overflow() {
+        let mut ev = Evaluator::new(Algebra::Kleene);
+        ev.declare("a");
+        assert_eq!(
+            ev.chunk_planes(1).unwrap_err(),
+            LimitError::ChunkBase { base: 1 }
+        );
+        assert!(matches!(
+            ev.chunk_planes(u64::MAX - 1).unwrap_err(),
+            LimitError::ChunkBase { .. }
+        ));
+        assert!(ev.chunk_planes(0).is_ok());
+    }
+
+    #[test]
+    fn evaluate_enforces_row_budget_before_allocating() {
+        let mut ev = Evaluator::new(Algebra::Kleene);
+        ev.declare("a");
+        let limits = Limits {
+            max_rows: 2,
+            ..Limits::default()
+        };
+        assert_eq!(
+            ev.evaluate_within(|p| p[0], limits).unwrap_err(),
+            LimitError::Rows { limit: 2 }
+        );
+    }
+
+    #[test]
+    fn evaluate_within_enforces_var_budget_directly() {
+        let mut ev = Evaluator::new(Algebra::Kleene);
+        for i in 0..13 {
+            ev.declare(format!("v{i}"));
+        }
+        let limits = Limits {
+            max_vars: 12,
+            ..Limits::default()
+        };
+        assert_eq!(
+            ev.evaluate_within(|_| TriBit::FALSE, limits).unwrap_err(),
+            LimitError::Vars { limit: 12 }
+        );
+    }
+
+    #[test]
+    fn bit_plane_checked_access_rejects_lane_overflow() {
+        let plane = BitPlane::with_bit(3);
+        assert_eq!(BitPlane::checked_with_bit(64), None);
+        assert_eq!(plane.checked_bit(3), Some(true));
+        assert_eq!(plane.checked_bit(64), None);
+        // 环绕语义保留在未检查版本里
+        assert_eq!(BitPlane::with_bit(64), BitPlane::with_bit(0));
+        let tri = TriBit::from_binary(0b1);
+        assert_eq!(tri.checked_get(0), Some(Ternary::True));
+        assert_eq!(tri.checked_get(64), None);
+    }
+
+    #[test]
+    fn checked_bit_access_covers_all_boundaries() {
+        for bit in [0u32, 63] {
+            assert_eq!(BitPlane::checked_with_bit(bit), Some(BitPlane(1u64 << bit)));
+        }
+        for bit in [64u32, 65, u32::MAX] {
+            assert_eq!(BitPlane::checked_with_bit(bit), None);
+            assert_eq!(BitPlane::ONES.checked_bit(bit), None);
+        }
+        assert_eq!(BitPlane::ONES.checked_bit(63), Some(true));
+    }
+
+    #[test]
+    fn evaluator_with_zero_variables_has_one_row() {
+        let ev = Evaluator::new(Algebra::Kleene);
+        assert_eq!(ev.assignment_count().unwrap(), 1);
+        let tt = ev.evaluate(|_| TriBit::TRUE).unwrap();
+        assert!(tt.variables.is_empty());
+        assert_eq!(tt.values, vec![Ternary::True]);
+    }
+
+    #[test]
     fn evaluator_spans_multiple_chunks() {
         // 4 个变量 → 81 组赋值，跨越 64 组边界
         let mut ev = Evaluator::new(Algebra::Kleene);
         for name in ["a", "b", "c", "d"] {
             ev.declare(name);
         }
-        assert_eq!(ev.assignment_count(), 81);
-        let tt = ev.evaluate(|p| p[3]);
+        assert_eq!(ev.assignment_count().unwrap(), 81);
+        let tt = ev.evaluate(|p| p[3]).unwrap();
         assert_eq!(tt.values.len(), 81);
         for (i, v) in tt.values.iter().enumerate() {
             let digit = (i as u64 / 27) % 3;

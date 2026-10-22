@@ -29,7 +29,7 @@ use trit_core::ast::Expr;
 use trit_core::limits::Limits;
 use trit_core::parser::Parser as ExprParser;
 use trit_core::value::Ternary;
-use trit_eval::eval::{Assignment, equivalent, equivalent_within, eval, truth_table_within};
+use trit_eval::eval::{Assignment, equivalent_within, eval, truth_table_within};
 use trit_eval::simplify::{SimplifyOptions, simplify_with};
 use trit_policy::{Engine, Policy};
 use trit_sat::symbolic::{
@@ -683,7 +683,12 @@ fn cmd_equiv(
                 max_vars
             );
         }
-        (equivalent(&a, &b, alg), "exhaustive", None)
+        let limits = Limits {
+            max_vars,
+            max_rows: usize::MAX,
+            ..Limits::default()
+        };
+        (equivalent_within(&a, &b, alg, limits)?, "exhaustive", None)
     };
     match format {
         Format::Json => {
@@ -890,15 +895,17 @@ fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> 
             )
         }
     };
+    let valid = result.try_is_valid()?;
     let holds = match kind {
         Quantifier::Exists => result.is_satisfiable(),
-        Quantifier::Forall => result.is_valid(),
+        Quantifier::Forall => valid,
     };
     let witness = (kind == Quantifier::Exists && result.is_satisfiable())
         .then(|| result.witness())
         .flatten();
-    let counterexample = (kind == Quantifier::Forall && !result.is_valid())
-        .then(|| result.counterexample())
+    let counterexample = (kind == Quantifier::Forall && !valid)
+        .then(|| result.try_counterexample())
+        .transpose()?
         .flatten();
     if json {
         let mut obj = serde_json::json!({
@@ -909,7 +916,7 @@ fn cmd_quantify(expression: &str, alg_name: &str, opts: QuantifyOptions<'_>) -> 
             "quantified": quantified,
             "free": result.free_variables(),
             "satisfiable": result.is_satisfiable(),
-            "valid": result.is_valid(),
+            "valid": valid,
             "nodes": result.nodes(),
         });
         if let Some(asg) = &witness {
@@ -1267,7 +1274,7 @@ fn cmd_circuit(
             println!(
                 "输出含未知（X）的组合数：{} / {}",
                 report.unknown_output_combinations,
-                circuit.combination_count()
+                circuit.combination_count()?
             );
             println!("\n输出值域：");
             for (name, domain) in &report.output_domains {
@@ -1328,9 +1335,9 @@ fn cmd_map(
     }
     .with_context(|| format!("映射失败：{}", path.display()))?;
     match to {
-        "text" => print!("{}", trit_circuit::netlist::to_netlist(&mapped)),
+        "text" => print!("{}", trit_circuit::netlist::to_netlist(&mapped)?),
         "json" => println!("{}", trit_circuit::netlist::to_json(&mapped)?),
-        "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&mapped)),
+        "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&mapped)?),
         other => bail!("未知输出格式 {other:?}，可选 text / json / verilog / blif / aiger"),
     }
     Ok(())
@@ -1350,6 +1357,9 @@ fn cmd_check(
     alg_name: &str,
 ) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
+    if !min_coverage.is_finite() || !(0.0..=1.0).contains(&min_coverage) {
+        bail!("--min-coverage 必须在 [0, 1] 内，当前 {min_coverage}");
+    }
     let circuit = load_circuit(path, from)?;
     let model = timing_model(library, delay, load_delay)?;
     let timing = trit_circuit::timing::analyze_timing(&circuit, model, clock)?;
@@ -1370,6 +1380,13 @@ fn cmd_check(
         failures.push(format!(
             "覆盖率 {:.1}% 低于下限 {:.1}%",
             report.coverage * 100.0,
+            min_coverage * 100.0
+        ));
+    }
+    if atpg.is_none() && min_coverage > 0.0 {
+        failures.push(format!(
+            "覆盖率检查未执行：主输入 {} > 10，无法验证下限 {:.1}%",
+            circuit.input_count(),
             min_coverage * 100.0
         ));
     }
@@ -1418,6 +1435,9 @@ fn cmd_check(
             );
             if let Some(report) = &analysis {
                 println!("  X：未知输出组合 {}", report.unknown_output_combinations);
+            }
+            if atpg.is_none() {
+                println!("  ATPG：跳过（主输入 {} > 10）", circuit.input_count());
             }
             if let Some(report) = &atpg {
                 println!(
@@ -1550,9 +1570,9 @@ fn load_circuit(path: &std::path::Path, from: &str) -> Result<Circuit> {
 fn cmd_netlist(path: &std::path::Path, from: &str, to: &str) -> Result<()> {
     let circuit = load_circuit(path, from)?;
     match to {
-        "text" => print!("{}", trit_circuit::netlist::to_netlist(&circuit)),
+        "text" => print!("{}", trit_circuit::netlist::to_netlist(&circuit)?),
         "json" => println!("{}", trit_circuit::netlist::to_json(&circuit)?),
-        "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&circuit)),
+        "verilog" => print!("{}", trit_circuit::verilog::to_verilog(&circuit)?),
         "blif" => print!("{}", trit_circuit::to_blif(&circuit)?),
         "aiger" => print!("{}", trit_circuit::to_aiger(&circuit)?),
         other => bail!("未知输出格式 {other:?}，可选 json / text / verilog"),
@@ -1761,7 +1781,7 @@ fn cmd_belnap(cmd: BelnapCmd) -> Result<()> {
                     vars.len()
                 );
             }
-            let table = trit_belnap::table(&expr);
+            let table = trit_belnap::table(&expr)?;
             println!("{} | 值", table.vars.join(" "));
             for row in &table.rows {
                 let cells: Vec<String> = row.values.iter().map(|v| v.to_string()).collect();
@@ -1783,7 +1803,7 @@ fn cmd_belnap(cmd: BelnapCmd) -> Result<()> {
                     vars.len()
                 );
             }
-            match trit_belnap::equivalent(&l, &r) {
+            match trit_belnap::equivalent(&l, &r)? {
                 None => println!(
                     "等价（4^{} = {} 组全等）",
                     vars.len(),

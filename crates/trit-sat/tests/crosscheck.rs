@@ -50,7 +50,7 @@ proptest! {
 
     #[test]
     fn sat_matches_exhaustive(a in formula(), b in formula(), alg in algebra_strategy()) {
-        let oracle = equivalent(&a, &b, alg);
+        let oracle = equivalent(&a, &b, alg).expect("穷举不应超出预算");
         let sat = equivalent_symbolic(&a, &b, alg).expect("SAT 编码不应失败");
         prop_assert_eq!(sat.equivalent, oracle.equivalent);
 

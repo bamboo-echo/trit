@@ -9,9 +9,9 @@ pub mod parser;
 pub mod value;
 
 pub use algebra::Algebra;
-pub use ast::Expr;
+pub use ast::{Expr, VarNameError};
 pub use bits::{BitPlane, TriBit, TruthTable};
-pub use bulk::TriVec;
-pub use limits::{LimitError, Limits, check_expr, check_vars};
+pub use bulk::{TriVec, TriVecError};
+pub use limits::{LimitError, Limits, check_expr, check_vars, checked_pow3};
 pub use parser::Parser;
 pub use value::Ternary;

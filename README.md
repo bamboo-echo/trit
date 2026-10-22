@@ -92,20 +92,38 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 
 ## 资源预算与变异门
 
-所有入口共用 `trit_core::Limits`（默认：深度 256 / 节点 100 000 / 枚举 12 变量）：
+所有入口共用 `trit_core::Limits`（默认：深度 256 / 节点 100 000 / 枚举 12 变量 / 100 万行）：
 
-- `check_expr` 迭代遍历 AST，`check_vars` 管 `3^n` 枚举；
+- 解析器在**构造 AST 的过程中**扣节点预算：右结合蕴含链、扁平二元链、`!` 链与深括号
+  都受深度上限约束；输入文本超过 1 MiB 在转 `Vec<char>` 之前拒绝。
+- `check_expr` 迭代遍历 AST；`Evaluator::assignment_count` / `chunk_planes` /
+  `evaluate_within` 用 checked 计数与行数上限，不再用饱和值冒充精确赋值数。
 - `truth_table_within` / `eval_within` / `equivalent_within`：`trit-eval` 的带预算版本；
-- SAT / BDD / 策略入口先 `check_expr` 再编码，超限返回专门的 `Limit` 错误；
+  Belnap `table_within` / `equivalent_within` 与电路 `combination_count` 使用同一套错误类型。
+- SAT / BDD / 策略入口先 `check_expr`（在收集变量之前）再编码，超限返回结构化
+  `Limit`／`BudgetExceeded` 错误；策略展开在分配大子树之前扣节点预算。
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-`python scripts/mutation_check.py` 对 25 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 25/25）；`.github/workflows/mutation.yml` 每周跑一次。
+<<<<<<< HEAD
+`python scripts/mutation_check.py` 对 40 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 40/40）；`.github/workflows/mutation.yml` 每周跑一次。
+=======
+`python scripts/mutation_check.py` 对 39 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 39/39）；`.github/workflows/mutation.yml` 每周跑一次。
+>>>>>>> 1b11216 (fix: 评审第二批（解析/枚举预算、TriVec 值语义、策略展开、BDD 软限额）)
 
 ## fuzz 与基准
 
-- 稳定版 smoke（CI 每次跑）：`cargo test -p trit-circuit --test fuzz_smoke`
-  —— 固定种子变异输入的解析往返、随机电路 ATPG 覆盖不变量。
+- 结构生成属性测试（CI 每次跑）：`cargo test -p trit-core --test structure`
+  —— 任意 AST 经 `to_infix` 往返后结构/深度不变；扁平链与右结合蕴含链在深度预算边界精确接受/拒绝；
+  任意文本只返回 `Ok/Err`。策略侧另有 `expand_budget_is_exact_*` / `expand_depth_is_enforced`。
+- 稳定版 smoke（CI 每次跑）：
+  - `cargo test -p trit-circuit --test fuzz_smoke` —— 网表/Verilog/BLIF/AIGER/JSON 变异输入的解析往返、
+    坏电路导出不 panic、随机电路 ATPG 覆盖不变量；
+  - `cargo test -p trit-policy --test fuzz_smoke` —— 随机 JSON 与结构生成策略只返回 Ok/分类错误。
+- 覆盖率引导 fuzz（`fuzz/`，cargo-fuzz，需要 nightly）：`parse_netlist` / `parse_verilog` /
+  `atpg` / `blif` / `aiger` / `expr` / `policy` / `netlist_json`。
+  Windows 上需要 clang-cl + MSVC 才能链接 libFuzzer；CI 不构建这一层。
 - 覆盖率引导 fuzz（需要 nightly + cargo-fuzz）：
 
 ```bash
@@ -218,9 +236,11 @@ trit timing design.v --from verilog --delay 2 --format json
 
 变量顺序可用 `--bdd-order` 选：`appearance`（默认）、`reverse`、`frequency`、`frequency-asc`、
 `best`（试四种取差集 BDD 节点最少者）。`--stats` 会打印所选顺序与节点数。
-BDD 节点预算默认 100 万（`BddLimits::default()`），任何一次构造超过上限即返回
-`BddError::BudgetExceeded`，不会无限膨胀；库调用可用 `equivalent_bdd_with_limits` 收紧或
-`BddLimits::UNLIMITED` 关闭。
+BDD 节点预算默认 100 万（`BddLimits::default()`）。这是**软限额**：每次运算返回后检查
+`Bdd::size()`，超过即返回 `BddError::BudgetExceeded`；单次 `apply`／量化内部的峰值仍可能
+高于上限。需要硬内存/CPU 上界时，把求解放进有资源限制的进程或 worker。
+量化结果的 `try_is_valid` / `try_counterexample` 会把查询产生的中间 BDD 也纳入检查。
+库调用可用 `equivalent_bdd_with_limits` 收紧，或 `BddLimits::UNLIMITED` 关闭。
 CLI 的 `equiv` / `quantify` / `verify --engine bdd` 都支持 `--bdd-max-nodes N`（0 表示不设上限）。
 
 ## 量化（`trit quantify`）
@@ -302,6 +322,10 @@ python -m http.server 8765 --directory playground
 主输入 ≤ 8 且 故障数 × `2^n` ≤ 50000 时会枚举全部向量再做贪心覆盖（`exhaustive`），否则退回每个故障的首个见证。
 故障数 ≤ 64 且向量数 ≤ 256 时再跑精确最小覆盖（`optimal`，DFS + 下界剪枝，10 万节点预算）。
 
+`trit map` 拒绝把三值强加 `Xor` 导出成 Verilog `xor`（会改变语义）；多输入 `nand/nor/xnor` 按原语语义
+先合并再取反，临时信号在全模块内唯一。`check` 在无法运行 ATPG 时，若用户给了 `--min-coverage` 则直接 FAIL，
+不会把“未检查”当 PASS。
+
 `trit netlist design.aig --from aiger --to text` 读 AIGER ASCII 组合子集（`L = 0`；字面量奇偶取反，
 `M/I/L/O/A` 头部校验；拒绝时序）。`--to aiger` 把组合网表编码成 AND + 取反：AND/NAND/OR/NOR/XOR
 都会展开，BUF/NOT 用字面量取反表达。AIGER 同样是二值格式，只在 0/1 激励上保证往返等价。
@@ -323,7 +347,9 @@ python -m http.server 8765 --directory playground
 
 ## 构建期验证（`trit verify`）
 
-把决策表写成 JSON，断言必须在**所有合法赋值**上恒真；失败时给出充分最小反例，退出码 1。
+把决策表写成 JSON，断言必须在**所有合法赋值**上恒真；失败时给出一个完整赋值模型作为反例
+（有效点反例，但**不做最小化**），退出码 1。`binary` 只允许原始变量；定义名不能是
+`X`/`True` 这类保留 token，未引用的定义循环也会在展开前被拒绝。
 
 ```json
 {
