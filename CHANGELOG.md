@@ -24,6 +24,8 @@
 - BDD 预算明确为软限额（每次运算返回后检查，峰值可超）；新增 `Quantified::try_is_valid` /
   `try_counterexample`；README 说明硬隔离需进程/worker。
 - 策略反例文档改为“完整赋值模型，不做最小化”。
+- `CellLibrary.cells` 的值类型改为 `CellTiming`（`Delay(u32)` 或 `Arcs { delay, arcs }`）；
+  `TimingModel::from_json` 返回 `TimingModelError`，并做键归一化与弧数校验。
 
 ### Fixed
 
@@ -39,6 +41,9 @@
   `inputs` 仍给出具体 0/1 填充，CSV 导出即用该填充。
 - `AtpgReport::x_coverage`（含 X 向量覆盖的可测故障比例）与 `merged`（压缩省下的向量数）；
   表格、JSON、WASM 同步输出。
+- Liberty-lite 引脚弧：`TimingModel.arcs`（按 `A1`/`A2` → `Y`）与 `CellLibrary` 的
+  `{"delay": N, "arcs": [...]}` 写法；`trit timing` / `check` / `map` 按输入引脚弧计算到达时间，
+  慢弧会改变映射选实现。键大小写归一化；未知门、规范化重复、弧数与元数不符都报错。
 - 复审测试缺口（§3.3）：`trit-core/tests/structure.rs` 用 proptest 生成不同形状的 AST，
   验证 `to_infix → parse` 的结构/深度/节点数守恒、扁平链与右结合蕴含链的深度边界、
   任意文本不 panic；`trit-policy` 新增展开预算精确性/深度单测与稳定 smoke。
