@@ -53,6 +53,15 @@
 - 导出字段与 `RuntimeMetrics` 一致；峰值拆为 `peak_cpu` / `peak_memory`。
 - 测试 `prometheus_exports_all_fields`；变异门 112 → 114。
 
+### Added（0.12 checkpoint protocol）
+
+- `CheckpointTask::save_state` + `TaskRestorer::restore`：可序列化状态协议，编码格式由任务决定。
+- `Checkpoint` 带 `version`，`CheckpointStore` 按任务 id 覆盖保存/读取/删除/恢复。
+- `CheckpointedTask` 包装器：每次 `Yield`/`Done` 后写入共享存储，可直接用于现有
+  单线程/线程 runtime。
+- 测试：检查点往返、存储覆盖/删除、版本拒绝、runtime 每步落盘并恢复。
+- 变异门 114 → 117（版本校验、空状态、恢复校验）。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，

@@ -47,9 +47,10 @@ pub use trit_sat::{
     minimal_counterexample, satisfiable,
 };
 pub use trit_schedule::{
-    CancelToken, DeferReason, DeferredTask, Dependency, Progress, Resources, ResumableError,
+    CHECKPOINT_VERSION, CancelToken, Checkpoint, CheckpointError, CheckpointStore, CheckpointTask,
+    CheckpointedTask, DeferReason, DeferredTask, Dependency, Progress, Resources, ResumableError,
     ResumableReport, ResumableSpec, ResumableTask, RuntimeConfig, RuntimeError, RuntimeReport,
     RuntimeTask, Schedule, ScheduleError, ScheduleInput, ScheduledTask, StepContext, Task,
-    TaskFailure, run_resumable, run_resumable_threaded, run_runtime, run_with_config, schedule,
-    schedule_input,
+    TaskFailure, TaskRestorer, restore_checkpoint, run_resumable, run_resumable_threaded,
+    run_runtime, run_with_config, save_checkpoint, schedule, schedule_input,
 };

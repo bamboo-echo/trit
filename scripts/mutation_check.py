@@ -926,6 +926,30 @@ MUTANTS = [
         "new": "                self.peak_usage.cpu.into(),\n",
         "pkg": "trit-schedule",
         "filter": "prometheus_exports_all_fields"
+    },
+    {
+        "name": "checkpoint: 版本校验失效",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "        if self.version == CHECKPOINT_VERSION {\n",
+        "new": "        if true {\n",
+        "pkg": "trit-schedule",
+        "filter": "rejects_unknown_version_and_unknown_task"
+    },
+    {
+        "name": "checkpoint: 保存空状态",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "    Ok(Checkpoint::new(task_id, task.save_state()?))\n",
+        "new": "    Ok(Checkpoint::new(task_id, Vec::new()))\n",
+        "pkg": "trit-schedule",
+        "filter": "checkpoint_round_trips_progress"
+    },
+    {
+        "name": "checkpoint: 恢复不校验版本",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "    checkpoint.validate()?;\n    restorer.restore(&checkpoint.task_id, &checkpoint.state)\n",
+        "new": "    restorer.restore(&checkpoint.task_id, &checkpoint.state)\n",
+        "pkg": "trit-schedule",
+        "filter": "rejects_unknown_version_and_unknown_task"
     }
 ]
 

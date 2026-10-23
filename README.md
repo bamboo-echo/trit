@@ -109,6 +109,27 @@ worker 在 `Yield` 边界检查更高优先级任务，必要时把当前任务�
 
 两个 runtime 报告都包含 `RuntimeMetrics`：`started/completed/failed/cancelled/deferred/
 preemptions/steps/peak_usage`。`started` 按任务去重，抢占后恢复不会重复计数。
+### 检查点协议（checkpoint）
+
+任务实现 `CheckpointTask::save_state` 编码自身状态；恢复方实现 `TaskRestorer::restore`
+按任务 id 重建任务。`Checkpoint` 带格式版本，`CheckpointStore` 按 id 覆盖保存。
+`CheckpointedTask` 把检查点任务包成普通 `ResumableTask`，在每次 `Yield`/`Done` 后写入
+共享存储，单线程/多线程执行器都能直接用。
+
+```rust
+let store = Arc::new(Mutex::new(CheckpointStore::new()));
+let task = CheckpointedTask::new("counter", Counter::new(10), Arc::clone(&store));
+let report = run_resumable(
+    vec![ResumableSpec::new("counter", vec![], task)],
+    RuntimeConfig::new(1),
+    CancelToken::new(),
+).unwrap();
+// 进程重启后：
+let restored = store.lock().unwrap().restore(&MyRestorer, "counter")?;
+```
+
+状态编码格式由任务决定（JSON / bincode / 自定义字节），协议只规定边界与版本。
+
 指标可直接导出 Prometheus/OpenMetrics 文本：
 
 ```rust

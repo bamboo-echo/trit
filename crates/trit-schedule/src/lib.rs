@@ -10,10 +10,15 @@
 
 #![forbid(unsafe_code)]
 
+pub mod checkpoint;
 pub mod resumable;
 pub mod resumable_threaded;
 pub mod runtime;
 
+pub use checkpoint::{
+    CHECKPOINT_VERSION, Checkpoint, CheckpointError, CheckpointStore, CheckpointTask,
+    CheckpointedTask, TaskRestorer, restore_checkpoint, save_checkpoint,
+};
 pub use resumable::{
     Progress, ResumableError, ResumableReport, ResumableSpec, ResumableTask, StepContext,
     run_resumable,
