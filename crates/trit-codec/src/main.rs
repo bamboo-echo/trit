@@ -241,7 +241,49 @@ fn plan_cmd(args: &[String]) -> Result<(), String> {
     for (name, make) in distributions {
         let values: Vec<Ternary> = (0..trits).map(make).collect();
         let chosen = plan::plan(&values);
+        let (encoding, bytes) = plan::encode(&values);
+        // 零拷贝的收益在「只取少数元素」：对比「整条解码 + 随机取」与「视图随机取」。
+        let samples = 200usize;
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let indices: Vec<usize> = (0..samples)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state as usize) % values.len().max(1)
+            })
+            .collect();
+        let iterations = 20;
+        let start = std::time::Instant::now();
+        let mut decoded_hits = 0usize;
+        for _ in 0..iterations {
+            let decoded = plan::decode(encoding, &bytes, values.len()).unwrap();
+            for index in &indices {
+                if std::hint::black_box(decoded[*index]) != Ternary::Unknown {
+                    decoded_hits += 1;
+                }
+            }
+        }
+        let decode_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
+        let start = std::time::Instant::now();
+        let mut view_hits = 0usize;
+        for _ in 0..iterations {
+            let view = plan::View::new(encoding, &bytes, values.len()).unwrap();
+            for index in &indices {
+                if std::hint::black_box(view.get(*index).unwrap_or(Ternary::Unknown))
+                    != Ternary::Unknown
+                {
+                    view_hits += 1;
+                }
+            }
+        }
+        let view_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
+        debug_assert_eq!(decoded_hits, view_hits);
         rows.push(serde_json::json!({
+            "decode_ns": decode_ns,
+            "view_ns": view_ns,
+            "view_speedup": decode_ns / view_ns,
+            "samples": samples,
             "distribution": name,
             "encoding": chosen.encoding.as_str(),
             "bytes": chosen.bytes,
