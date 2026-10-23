@@ -1,0 +1,15 @@
+[package]
+name = "trit-net"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "三值权重网络实验层：{-1,0,+1} 权重 + X 输入 + 确定/弃权解析（不属于稳定 API）"
+publish = false
+
+[dependencies]
+trit-core.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+serde_json = "1.0.154"
