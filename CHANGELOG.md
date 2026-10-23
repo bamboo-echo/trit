@@ -94,6 +94,16 @@
 - 测试：内存源从第 3 步恢复只再走 7 步、文件源恢复、无检查点时用 factory。
 - 变异门 125 → 127（忽略检查点、无检查点不建任务）。
 
+### Added（0.12 tri-state / ternary topology）
+
+- `TriState`（0/1/Z）与 `TriStateConflict`：`Z` 是总线单位元，0/1 同时驱动报冲突；
+  `TriStateBus` 逐位解析并校位宽；`to_ternary()` 把 `Z -> Unknown`。
+- `TernaryTopology`：边带 True/Unknown/False 的有向图三值可达性；路径取 min、节点取 max，
+  False 边断开；固定点迭代处理环。
+- 测试：解析表/冲突、字符与 Ternary 转换、总线逐位/位宽、True 链、Unknown 传播、False/环；
+  `trit-core` 67 → 73。
+- 变异门 127 → 130（Z 单位元、总线宽度、拓扑 min/max）。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，
