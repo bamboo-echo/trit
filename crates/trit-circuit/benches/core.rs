@@ -5,11 +5,14 @@
 use std::hint::black_box;
 use std::time::Instant;
 
+use std::collections::BTreeMap;
+
 use trit_circuit::{
     CellLibrary, MapStrategy, TimingModel, analyze_timing, generate_tests, parse_netlist,
-    parse_verilog, to_cells_with_load, to_nand_only,
+    parse_verilog, propagate_exact, propagate_exact_with_jobs, to_cells_with_load, to_nand_only,
 };
 use trit_core::algebra::Algebra;
+use trit_core::value::Ternary;
 
 const CHAIN_GATES: usize = 32;
 
@@ -60,6 +63,41 @@ fn atpg_netlist() -> String {
     text
 }
 
+/// `inputs` 个主输入的 40 门网表，全部主输入取 `X`，用来量精确传播。
+fn exact_case(inputs: usize) -> (trit_circuit::Circuit, BTreeMap<String, Ternary>) {
+    let mut text = String::new();
+    for index in 0..inputs {
+        text.push_str(&format!(
+            "input i{index}
+"
+        ));
+    }
+    text.push_str(
+        "gate AND i0 i1 g0
+",
+    );
+    for index in 1..40 {
+        text.push_str(&format!(
+            "gate AND g{} i{} g{}
+",
+            index - 1,
+            index % inputs,
+            index
+        ));
+    }
+    text.push_str(
+        "output g39
+",
+    );
+    let circuit = parse_netlist(&text).unwrap();
+    let assignment = circuit
+        .inputs
+        .iter()
+        .map(|signal| (signal.name().to_string(), Ternary::Unknown))
+        .collect();
+    (circuit, assignment)
+}
+
 fn bench<T>(name: &str, iters: u32, mut body: impl FnMut() -> T) {
     let start = Instant::now();
     for _ in 0..iters {
@@ -93,5 +131,14 @@ fn main() {
     });
     bench("atpg (6 inputs)", 50, || {
         generate_tests(&atpg_circuit, Algebra::Kleene)
+    });
+
+    let (exact8, assign8) = exact_case(8);
+    let (exact12, assign12) = exact_case(12);
+    bench("exact k=8 (serial)", 200, || {
+        propagate_exact(&exact8, &assign8, Algebra::Kleene, 4096)
+    });
+    bench("exact k=12 (auto jobs)", 50, || {
+        propagate_exact_with_jobs(&exact12, &assign12, Algebra::Kleene, 4096, 0)
     });
 }

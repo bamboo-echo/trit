@@ -8,14 +8,27 @@ use trit_core::value::Ternary;
 use crate::output::Format;
 use crate::{load_circuit, parse_assignment, resolve_algebra};
 
+/// `--assign` 之后的三种传播模式。
+pub(crate) struct PropagationOptions<'a> {
+    pub assign: Option<&'a str>,
+    pub pessimism: bool,
+    pub exact: bool,
+    pub jobs: usize,
+}
+
 pub(crate) fn cmd_circuit(
     path: &std::path::Path,
     format: Format,
     alg_name: &str,
-    assign: Option<&str>,
+    options: &PropagationOptions<'_>,
     from: &str,
-    pessimism: bool,
 ) -> Result<()> {
+    let PropagationOptions {
+        assign,
+        pessimism,
+        exact,
+        jobs,
+    } = *options;
     let alg = resolve_algebra(alg_name)?;
     let circuit = load_circuit(path, from)?;
 
@@ -33,8 +46,23 @@ pub(crate) fn cmd_circuit(
         if pessimism {
             return print_xpessimism(&circuit, &assignment, alg, format, path);
         }
-        let prop = trit_circuit::circuit::propagate(&circuit, &assignment, alg)
-            .with_context(|| format!("网表传播失败：{}", path.display()))?;
+        let (prop, exact_report) = if exact {
+            let report = trit_circuit::circuit::propagate_exact_with_jobs(
+                &circuit,
+                &assignment,
+                alg,
+                trit_circuit::circuit::DEFAULT_EXACT_BUDGET,
+                jobs,
+            )
+            .with_context(|| format!("精确传播失败：{}", path.display()))?;
+            (report.propagation.clone(), Some(report))
+        } else {
+            (
+                trit_circuit::circuit::propagate(&circuit, &assignment, alg)
+                    .with_context(|| format!("网表传播失败：{}", path.display()))?,
+                None,
+            )
+        };
         match format {
             Format::Json => {
                 let chars = |m: &BTreeMap<String, Ternary>| {
@@ -59,6 +87,13 @@ pub(crate) fn cmd_circuit(
                             v.iter().map(|s| serde_json::Value::String(s.clone())).collect())))
                         .collect::<serde_json::Map<String, serde_json::Value>>(),
                     "masked": prop.masked,
+                    "exact": exact_report.as_ref().map(|report| serde_json::json!({
+                        "exact": report.exact,
+                        "completions": report.completions,
+                        "budget": report.budget,
+                        "jobs": report.jobs,
+                        "unknown_inputs": report.unknown_inputs,
+                    })),
                 });
                 println!("{}", serde_json::to_string_pretty(&obj)?);
             }
@@ -85,6 +120,22 @@ pub(crate) fn cmd_circuit(
                 if !prop.masked.is_empty() {
                     println!("\n被遮蔽（输入含 X、输出确定）：{}", prop.masked.join(", "));
                 }
+                if let Some(report) = &exact_report {
+                    if report.exact {
+                        println!(
+                            "
+精确传播：枚举 {} 个完成（预算 {}，并行度 {}）",
+                            report.completions, report.budget, report.jobs
+                        );
+                    } else {
+                        println!(
+                            "
+精确传播：超出预算 {}，已回退到保守结果（未知输入 {} 个）",
+                            report.budget,
+                            report.unknown_inputs.len()
+                        );
+                    }
+                }
             }
         }
         return Ok(());
@@ -92,6 +143,9 @@ pub(crate) fn cmd_circuit(
 
     if pessimism {
         bail!("--pessimism 需要配合 --assign 给出单向量");
+    }
+    if exact {
+        bail!("--exact 需要配合 --assign 给出单向量");
     }
 
     if circuit.input_count() > 10 {

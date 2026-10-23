@@ -12,7 +12,7 @@ mod validate;
 mod xpessimism;
 
 pub use analyze::{analyze, analyze_faults};
-pub use sim::{DEFAULT_EXACT_BUDGET, propagate, propagate_exact};
+pub use sim::{DEFAULT_EXACT_BUDGET, propagate, propagate_exact, propagate_exact_with_jobs};
 pub use types::*;
 pub use xpessimism::{XOutcome, XPessimismReport, analyze_x_pessimism};
 
@@ -22,6 +22,8 @@ pub(crate) use validate::validate;
 
 #[cfg(test)]
 pub(crate) use test_support::simulate_assignment;
+#[cfg(test)]
+mod sim_tests;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]

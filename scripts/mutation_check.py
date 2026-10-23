@@ -1049,14 +1049,6 @@ MUTANTS = [
         "filter": "bus_resolves_lane_by_lane_and_checks_widths"
     },
     {
-        "name": "exact: 冲突值不合并",
-        "file": "crates/trit-circuit/src/circuit/sim.rs",
-        "old": "                Some(_) => {\n                    values.insert(name, Ternary::Unknown);\n                }\n",
-        "new": "                Some(_) => {}\n",
-        "pkg": "trit-circuit",
-        "filter": "exact_propagation_accepts_partial_vectors_and_merges_values"
-    },
-    {
         "name": "exact: 超预算仍枚举",
         "file": "crates/trit-circuit/src/circuit/sim.rs",
         "old": "    if total > max_completions {\n",
@@ -1127,6 +1119,30 @@ MUTANTS = [
         "new": "            .filter(|&&node| weak_via[node] == Some(Ternary::True))",
         "pkg": "trit-core",
         "filter": "explain_reports_unknown_edges_for_contingent_path"
+    },
+    {
+        "name": "exact: 完成之间不合并差异",
+        "file": "crates/trit-circuit/src/circuit/sim.rs",
+        "old": "if merged[slot] != *value {",
+        "new": "if false {",
+        "pkg": "trit-circuit",
+        "filter": "exact_propagation_accepts_partial_vectors_and_merges_values"
+    },
+    {
+        "name": "exact: 跨块合并只取第一块",
+        "file": "crates/trit-circuit/src/circuit/sim.rs",
+        "old": "if left == right {",
+        "new": "if true {",
+        "pkg": "trit-circuit",
+        "filter": "parallel_really_splits_into_chunks"
+    },
+    {
+        "name": "exact: 每块只枚举第一个完成",
+        "file": "crates/trit-circuit/src/circuit/sim.rs",
+        "old": "for mask in start..end {",
+        "new": "for mask in start..end.min(start + 1) {",
+        "pkg": "trit-circuit",
+        "filter": "exact_propagation_accepts_partial_vectors_and_merges_values"
     }
 ]
 
