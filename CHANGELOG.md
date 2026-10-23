@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed（去上帝模块 + 门禁加强）
+
+- **`trit-schedule` 去上帝模块**：`checkpoint.rs`（1095 行 / 82 个函数）拆成
+  `checkpoint/{mod,file,memory,index,lock}.rs` + `tests.rs`；`runtime.rs`（988 行）拆成
+  `runtime/{mod,types,execute}.rs` + `tests.rs`。公开路径不变（`trit_schedule::checkpoint::*`、
+  `trit_schedule::runtime::*` 与 crate 根重导出均保持），无新增公开 API。
+- **新门：模块预算**（`scripts/module_budget.py`）：单文件 800 行预算；超预算必须登记在
+  `scripts/module_budget_baseline.json`，且台账**只允许变短**——变胖、变瘦却没收紧、
+  文件已降到预算内却没移除、台账里的文件已删除，四种都判红；`--update` 拒绝任何增长。
+  当前登记 5 件：`map.rs` 842、`verilog/parse.rs` 861、`verilog/tests.rs` 1094、
+  `cli/tests.rs` 1100、`bits.rs` 801。
+- **门的自证**：`--self-test` 用脚本自己的 `LIMIT` 生成夹具，10 条断言（正例 5 / 反证 5），
+  逐条覆盖上面四种红法与 `--update` 的两条路径。
+- **CI**：新增 `module budget (god objects)` job（先跑自测再查台账）；`mutation` 新增 PR 触发，
+  只跑改动过的 crate（`mutation_check.py --pkg`），周常全量保留。
+- 变异门仍为 133 条：拆分只改路径不改语义，锚点逐条重定位并验证唯一命中。
+
 ### Added（0.12 静态三值调度）
 
 - 新增 `trit-schedule`：静态 DAG 调度，支持 `True` / `False` / `Unknown` 依赖；
