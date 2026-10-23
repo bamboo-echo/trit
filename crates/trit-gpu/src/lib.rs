@@ -73,8 +73,12 @@ pub struct Report {
     pub gpu: i64,
     /// GPU 与 CPU 是否一致。
     pub matches: bool,
-    /// GPU 三值点积（ns / trit）。
+    /// GPU 三值点积（默认内核：四组 POPC + 每字 atomic），ns / trit。
     pub gpu_ns_per_trit: f64,
+    /// GPU 三值点积：只合并 POPC（两组）+ 每字 atomic，ns / trit。
+    pub gpu_popc2_ns_per_trit: f64,
+    /// GPU 三值点积：合并 POPC + workgroup 归约，ns / trit。
+    pub gpu_reduce_ns_per_trit: f64,
     /// CPU 位并行（ns / trit）。
     pub cpu_ns_per_trit: f64,
     /// 同设备 f32 点积（ns / 元素）。

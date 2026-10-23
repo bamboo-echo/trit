@@ -60,8 +60,24 @@ impl TernaryBits {
         Self::from_trits(&digits)
     }
 
-    /// 精确的三值点积：4 组 AND + POPC。
+    /// 精确的三值点积：两组 POPC（`pp+nn` 与 `pn+np` 各合一次）。
     pub fn dot(&self, other: &Self) -> i64 {
+        assert_eq!(self.len, other.len, "点积长度必须一致");
+        let mut total = 0i64;
+        for block in 0..self.pos.len() {
+            let matches = ((self.pos[block] & other.pos[block])
+                | (self.neg[block] & other.neg[block]))
+                .count_ones();
+            let mismatches = ((self.pos[block] & other.neg[block])
+                | (self.neg[block] & other.pos[block]))
+                .count_ones();
+            total += i64::from(matches) - i64::from(mismatches);
+        }
+        total
+    }
+
+    /// 旧写法：四组 POPC（A/B 对照）。
+    pub fn dot_naive(&self, other: &Self) -> i64 {
         assert_eq!(self.len, other.len, "点积长度必须一致");
         let mut total = 0i64;
         for block in 0..self.pos.len() {

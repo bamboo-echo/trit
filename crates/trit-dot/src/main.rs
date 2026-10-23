@@ -133,6 +133,7 @@ fn bench(args: &[String]) -> Result<(), String> {
     }
 
     let ns_ternary = time(iters, || bits_a.dot(&bits_b));
+    let ns_ternary_naive = time(iters, || bits_a.dot_naive(&bits_b));
     let ns_sparse = time(iters, || sparse_bits_a.dot_sparse(&sparse_bits_b));
     let ns_block_sparse = time(iters, || block_bits_a.dot_sparse(&block_bits_b));
     let ns_bipolar = time(iters, || bipolar_dot(&packed_a, &packed_b, len));
@@ -156,6 +157,7 @@ fn bench(args: &[String]) -> Result<(), String> {
         },
         "timings_ns": {
             "ternary_dense": ns_ternary,
+            "ternary_dense_naive": ns_ternary_naive,
             "ternary_element_sparse_90pct": ns_sparse,
             "ternary_block_sparse_90pct": ns_block_sparse,
             "bipolar": ns_bipolar,
@@ -164,12 +166,14 @@ fn bench(args: &[String]) -> Result<(), String> {
         },
         "ns_per_element": {
             "ternary_dense": per(ns_ternary),
+            "ternary_dense_naive": per(ns_ternary_naive),
             "ternary_element_sparse_90pct": per(ns_sparse),
             "ternary_block_sparse_90pct": per(ns_block_sparse),
             "bipolar": per(ns_bipolar),
             "f32_scalar_naive": per(ns_float),
             "f32_scalar_4acc": per(ns_float4),
         },
+        "two_popc_over_four": ns_ternary_naive as f64 / ns_ternary as f64,
         "nonzero_blocks": {
             "element_sparse_a": sparse_bits_a.nonzero_blocks(),
             "element_sparse_b": sparse_bits_b.nonzero_blocks(),
