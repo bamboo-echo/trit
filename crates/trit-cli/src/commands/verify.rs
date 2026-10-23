@@ -10,6 +10,7 @@ pub(crate) fn cmd_verify(
     engine: &str,
     bdd_order: &str,
     bdd_max_nodes: usize,
+    jobs: usize,
     json: bool,
 ) -> Result<()> {
     let Some(engine) = Engine::parse(engine) else {
@@ -35,7 +36,8 @@ pub(crate) fn cmd_verify(
             VarOrder::FrequencyDesc,
             VarOrder::FrequencyAsc,
         ] {
-            let results = policy.verify_with_bdd_config(engine, Some(order), limits)?;
+            let results =
+                policy.verify_with_bdd_config_and_jobs(engine, Some(order), limits, jobs)?;
             let score = results
                 .iter()
                 .filter_map(|result| result.nodes)
@@ -52,7 +54,7 @@ pub(crate) fn cmd_verify(
                 VarOrder::parse(name).ok_or_else(|| anyhow::anyhow!("未知 BDD 排序：{name}"))?,
             ),
         };
-        policy.verify_with_bdd_config(engine, order, limits)?
+        policy.verify_with_bdd_config_and_jobs(engine, order, limits, jobs)?
     };
     let failed = results.iter().filter(|r| !r.holds).count();
     if json {

@@ -967,3 +967,15 @@ fn sdf_delays_feed_timing_and_check() {
     ]);
     assert_ne!(code, 0, "--sdf 与 --library 必须互斥");
 }
+
+#[test]
+fn verify_jobs_match_serial_output() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let policy = dir.join("admission.json");
+    let path = policy.to_str().unwrap();
+    let serial = run(&["verify", path, "--json"]);
+    let parallel = run(&["verify", path, "--json", "--jobs", "4"]);
+    assert_eq!(serial.2, 0, "stdout={} stderr={}", serial.0, serial.1);
+    assert_eq!(parallel.2, 0, "stdout={} stderr={}", parallel.0, parallel.1);
+    assert_eq!(serial.0, parallel.0);
+}

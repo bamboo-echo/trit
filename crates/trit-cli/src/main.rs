@@ -307,6 +307,9 @@ enum Commands {
         /// BDD 单图节点预算（仅 --engine bdd；0 表示不设上限）。
         #[arg(long, value_name = "N", default_value_t = 1_000_000)]
         bdd_max_nodes: usize,
+        /// 并行检查断言的线程数（0 = 自动，1 = 串行）。
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        jobs: usize,
         /// JSON 输出。
         #[arg(long)]
         json: bool,
@@ -483,8 +486,9 @@ fn main() -> Result<()> {
             engine,
             bdd_order,
             bdd_max_nodes,
+            jobs,
             json,
-        } => commands::verify::cmd_verify(&path, &engine, &bdd_order, bdd_max_nodes, json),
+        } => commands::verify::cmd_verify(&path, &engine, &bdd_order, bdd_max_nodes, jobs, json),
         Commands::Belnap { cmd } => commands::belnap::cmd_belnap(cmd),
         Commands::Repl { algebra } => {
             let alg_name = algebra.unwrap_or(cli.algebra);

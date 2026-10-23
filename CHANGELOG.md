@@ -17,9 +17,13 @@
   `generate_bridge_tests_sat_with_jobs`；CLI `atpg --sat --jobs N`、`bridge --sat --jobs N`
   （`0` = 自动，`1` = 串行）。按故障/桥接对分块，`std::thread::scope` 独立 CNF/solver，
   按原顺序合并，输出与串行逐字段一致；wasm32 强制串行。
-- 测速：`cargo run --release --example parallel_atpg`（800 门/16 输入；本机 24 线程
-  6.7 s → 1.0 s，约 6.5×）。
-- 测试：并行/串行逐字段对拍（ATPG、桥接、CLI JSON）、顺序与错误传播。
+- **策略断言并行**：`trit-core::parallel` 下沉为公共并发原语；`Policy::verify_with_bdd_config_and_jobs`、
+  CLI `verify --jobs N`。前提只检查一次，断言顺序不变。
+- **减少重复工作**：SAT CNF 复用调用方算好的拓扑序，`Cnf::new_with_order`；不再每个故障重跑
+  `validate` / `topological_order`。
+- 测速（本机 24 线程）：800 门串行 6.6 s → 2.5 s（拓扑序复用），`jobs=8` 0.37 s（并行 6.97×）；
+  3000 门 34.4 s → 4.68 s（7.36×）；2000 条策略断言 0.19 s → 0.07 s。
+- 测试：并行/串行逐字段对拍（ATPG、桥接、策略、CLI JSON）、顺序与错误传播。
 
 ### Added（0.10 STA I/O 约束）
 

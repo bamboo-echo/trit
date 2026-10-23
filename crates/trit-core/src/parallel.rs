@@ -1,7 +1,9 @@
 //! 轻量并行映射：按块切分，结果顺序与串行一致；不引入第三方线程池。
+//!
+//! 供 ATPG、桥接 SAT、策略断言等独立任务复用。
 
 /// 把请求的线程数收敛到 `[1, tasks]`；`0` 表示自动，wasm32 强制串行。
-pub(crate) fn resolve_jobs(requested: usize, tasks: usize) -> usize {
+pub fn resolve_jobs(requested: usize, tasks: usize) -> usize {
     if tasks <= 1 {
         return 1;
     }
@@ -23,7 +25,7 @@ pub(crate) fn resolve_jobs(requested: usize, tasks: usize) -> usize {
 /// 对 `tasks` 逐项执行 `f`，按原顺序收集结果。
 ///
 /// 少于 2 个任务或 `jobs == 1` 时直接串行，避免小输入的线程开销。
-pub(crate) fn map<T, R, E, F>(tasks: &[T], requested_jobs: usize, f: F) -> Result<Vec<R>, E>
+pub fn map<T, R, E, F>(tasks: &[T], requested_jobs: usize, f: F) -> Result<Vec<R>, E>
 where
     T: Sync,
     R: Send,

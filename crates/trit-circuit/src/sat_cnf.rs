@@ -15,7 +15,7 @@ use trit_core::algebra::Algebra;
 use trit_core::value::Ternary;
 use varisat::{ExtendFormula, Lit, Solver, Var};
 
-use crate::circuit::{Circuit, CircuitError, Gate, GateKind, topological_order, validate};
+use crate::circuit::{Circuit, CircuitError, Gate, GateKind};
 
 /// 对 faulty 副本做的改动。
 pub(crate) enum SatDefect {
@@ -57,12 +57,15 @@ pub(crate) struct Cnf<'a> {
 
 impl<'a> Cnf<'a> {
     /// 构建两份电路；`None` 表示 faulty 与 good 相同（只用于对称分析）。
+    ///
+    /// 调用方必须先用 `validate` 检查结构，并传入 `topological_order(circuit)`；
+    /// 这样逐故障求解时可以复用同一份校验/排序结果。
     pub(crate) fn new(
         circuit: &'a Circuit,
         alg: Algebra,
         defect: Option<SatDefect>,
+        order: &[usize],
     ) -> Result<Self, CircuitError> {
-        validate(circuit)?;
         let (stuck, forced) = match defect {
             None => (None, BTreeMap::new()),
             Some(SatDefect::StuckAt { gate, pin, stuck }) => {
@@ -94,7 +97,7 @@ impl<'a> Cnf<'a> {
             encoded.good.insert(input.name(), var);
             encoded.faulty.insert(input.name(), var);
         }
-        for index in topological_order(circuit)? {
+        for &index in order {
             let gate = &circuit.gates[index];
             let good_out = encoded.fresh();
             encoded.encode_gate(gate, good_out, false, None)?;

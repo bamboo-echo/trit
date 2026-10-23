@@ -370,8 +370,15 @@ SAT 给出测试向量；UNSAT 证明不可测（原因记 `proven`）。上限 
 
 `--jobs N` 按故障并行求解（`0` = 自动取可用并行度，`1` = 串行，默认 `0`）。每个线程独立建
 CNF/solver，结果按原故障顺序合并，所以 JSON/CSV 与串行**逐字段一致**；wasm32 强制串行。
-可复现测速：`cargo run --release --example parallel_atpg`（本机 24 线程、800 门/16 输入：
-串行 6.7 s，`--jobs 8` 1.0 s，约 6.5×；另一台机器的绝对值会不同）。
+拓扑序/结构校验只算一次并复用于每个故障，不再逐故障重算。
+可复现测速：`cargo run --release --example parallel_atpg [门数]`（本机 24 线程、16 输入）：
+
+| 门数 | 串行 | jobs=8 | 并行加速 |
+|---|---|---|---|
+| 800 | 2.5 s | 0.37 s | 6.97× |
+| 3000 | 34.4 s | 4.68 s | 7.36× |
+
+（优化前 800 门串行 6.6 s；复用拓扑序后 2.5 s。绝对值与机器相关，CI 不做性能门禁。）
 
 ### 桥接故障（`trit bridge`）
 
@@ -463,7 +470,8 @@ OK     free slot must not reject on unknown hopelessness
 - `binary` 里的变量只在 0/1 上取值；其余变量按三值（含 X）检查——所以断言比二值布尔更强。
 - 可选 `assumptions`：前提必须同时**可满足**，断言只在满足前提的赋值上检查；前提不一致直接判错。
   注意前提不会把 X 变成 0/1，需要二值语义就写进 `binary`。
-- `--engine bdd` 切 canonical BDD；`--json` 给 CI 用。
+- `--engine bdd` 切 canonical BDD；`--jobs N` 并行检查断言（0=自动，1=串行；结果顺序不变）。
+  前提只检查一次，断言之间互不依赖；`--json` 给 CI 用。本机 2000 条小断言：0.19 s → 0.07 s（8 线程）。
 `--bdd-order` 可选 appearance（默认）/ reverse / frequency / frequency-asc / best，仅 `--engine bdd` 生效；
 `best` 会跑四种排序，取断言 BDD 节点总数最少的一组。
 - 可复用 Action（在目标仓里）：

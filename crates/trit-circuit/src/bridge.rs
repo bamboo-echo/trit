@@ -133,6 +133,7 @@ fn solve_bridge(
     circuit: &Circuit,
     alg: Algebra,
     pair: &BridgePair,
+    order: &[usize],
 ) -> Result<BridgeResult, BridgeError> {
     let value = matches!(pair.mode, BridgeMode::Or);
     let mut cnf = Cnf::new(
@@ -143,6 +144,7 @@ fn solve_bridge(
             b: pair.b.clone(),
             value,
         }),
+        order,
     )?;
     cnf.require_good_difference(&pair.a, &pair.b)?;
     cnf.require_output_difference()?;
@@ -346,7 +348,9 @@ pub fn generate_bridge_tests_sat_with_jobs(
         }
     }
 
-    let results = crate::parallel::map(pairs, jobs, |pair| solve_bridge(circuit, alg, pair))?;
+    let order = crate::circuit::topological_order(circuit)?;
+    let results =
+        trit_core::parallel::map(pairs, jobs, |pair| solve_bridge(circuit, alg, pair, &order))?;
     let mut bridges = Vec::with_capacity(results.len());
     let mut by_mask: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     for (index, result) in results.into_iter().enumerate() {

@@ -77,6 +77,7 @@ fn solve_fault(
     circuit: &Circuit,
     alg: Algebra,
     task: FaultTask,
+    order: &[usize],
 ) -> Result<FaultResult, CircuitError> {
     let gate = &circuit.gates[task.gate_index];
     let signal = &gate.inputs[task.input_index];
@@ -88,6 +89,7 @@ fn solve_fault(
             pin: task.input_index,
             stuck: task.stuck,
         }),
+        order,
     )?;
     cnf.require_output_difference()?;
     let witness = cnf.solve()?;
@@ -146,8 +148,8 @@ pub fn generate_tests_sat_with_jobs(
             gate.output.name().to_string(),
         ));
     }
-    // 组合环单独拒绝，避免给无意义的 SAT 公式。
-    topological_order(circuit)?;
+    // 组合环单独拒绝，避免给无意义的 SAT 公式；拓扑序只算一次，供每个故障复用。
+    let order = topological_order(circuit)?;
 
     let mut tasks = Vec::new();
     for (gate_index, gate) in circuit.gates.iter().enumerate() {
@@ -164,7 +166,9 @@ pub fn generate_tests_sat_with_jobs(
             }
         }
     }
-    let results = crate::parallel::map(&tasks, jobs, |task| solve_fault(circuit, alg, *task))?;
+    let results = trit_core::parallel::map(&tasks, jobs, |task| {
+        solve_fault(circuit, alg, *task, &order)
+    })?;
 
     let mut faults = Vec::with_capacity(results.len());
     let mut by_mask: BTreeMap<u64, Vec<usize>> = BTreeMap::new();

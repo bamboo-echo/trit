@@ -10,7 +10,6 @@ pub mod circuit;
 mod coverage;
 pub mod map;
 pub mod netlist;
-mod parallel;
 mod pattern;
 mod sat_cnf;
 pub mod sdf;

@@ -6,13 +6,18 @@ use trit_circuit::{Circuit, Gate, GateKind, Signal, generate_tests_sat_with_jobs
 use trit_core::algebra::Algebra;
 
 fn main() {
+    let gates: usize = std::env::args()
+        .nth(1)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(800);
+    assert!(gates >= 2, "至少需要 2 个门");
     let mut circuit = Circuit::new("parallel_bench");
     for index in 0..16 {
         circuit.add_input(Signal::new(format!("i{index}")));
     }
     let mut previous = Signal::new("i0");
-    for index in 1..800 {
-        let output = if index == 799 {
+    for index in 1..gates {
+        let output = if index == gates - 1 {
             Signal::new("out")
         } else {
             Signal::new(format!("n{index}"))
