@@ -174,7 +174,8 @@ trit map design.net --to verilog
 ```
 
 给单元库时按时序选实现：每个门在「直接单元」与「NAND 展开」之间取到达时间更短者
-（拓扑序上的最长路径 DP，关键路径最优）；`--area-first` 改成单元数优先。
+（拓扑序上的最长路径 DP，关键路径最优）；`--area-first` 改成面积优先（单元 `area`，
+未声明按 1，因此旧库等价于单元数最少）。
 
 ```bash
 trit map design.net --cells cells.json --to verilog
@@ -182,12 +183,13 @@ trit map design.v --from verilog --cells cells.json --area-first
 trit map design.net --cells cells.json --load-delay 2   # 扇出按负载延迟参与选实现
 ```
 
-`cells.json` 是「门类型 → 延迟」的对象；没列出的类型视为库里没有该单元
-（与 `timing --library` 的 `default_delay` 语义不同）。值可以是数字，也可以按输入引脚
-（Liberty 的 `A1`/`A2` → `Y`）给弧延迟：
+`cells.json` 是「门类型 → 延迟 / 面积」的对象；没列出的类型视为库里没有该单元
+（与 `timing --library` 的 `default_delay` 语义不同）。值可以是数字，也可以是
+`{delay, area}` 或按输入引脚（Liberty 的 `A1`/`A2` → `Y`）给弧延迟的
+`{delay, arcs, area}`；`area` 省略按 1：
 
 ```json
-{ "NAND": 1, "AND": {"delay": 3, "arcs": [1, 4]}, "NOT": {"arcs": [2]}, "XOR2": 4 }
+{ "NAND": 1, "AND": {"delay": 3, "arcs": [1, 4], "area": 2}, "OR": {"delay": 5, "area": 1}, "XOR2": 4 }
 ```
 
 `arcs` 的长度必须等于门元数；`delay` 省略时取弧最大值，只用于不区分引脚的粗估。
@@ -205,12 +207,20 @@ trit check design.net --clock 4 --library cells.json --format json
 
 ## 时序估算（`trit timing`）
 
-组合、单位延迟的 STA-lite：输入到达 0，每个非常量门加 `--delay`（默认 1），
+组合、单位延迟的 STA-lite：默认输入到达 0，每个非常量门加 `--delay`（默认 1），
 `--clock N` 给出周期时按反向传播算 required/slack，负 slack 记为违例。
 
+`--constraints io.json` 给 I/O 时序约束；未列出的输入按 0，未列出的输出按 `--clock`
+（省略 clock 时按关键路径）。`--paths` 也从输入到达时间开始计：
+
+```json
+{ "input_arrival": { "a": 2 }, "output_required": { "y": 10 } }
+```
+
 ```bash
-trit timing design.net --clock 10
+trit timing design.net --clock 10 --constraints io.json
 trit timing design.v --from verilog --delay 2 --format json
+trit check design.net --constraints io.json --min-coverage 0.9
 ```
 
 `--library cells.json` 可按门类型给延迟（`{"default_delay":1,"delays":{"AND":2}}`），优先于 `--delay`；
@@ -355,6 +365,9 @@ SAT 给出测试向量；UNSAT 证明不可测（原因记 `proven`）。上限 
 二进制向量下两条网络取值不同、且短路后某个主输出与正常值不同时，才算可测。取值相同的
 向量不会暴露桥接，不计覆盖。
 
+`--sat`：逐桥接构造 good / faulty CNF，要求两端在 good 下取值不同且至少一个主输出不同；
+SAT 给出见证，UNSAT 证明不可测。支持 **≤64 个主输入**；默认枚举路径仍是 ≤10。
+
 `--pairs` 给桥接对 JSON（`mode` 可写 `and`/`or` 或 `wired-and`/`wired-or`）：
 
 ```json
@@ -367,7 +380,8 @@ trit bridge design.v --from verilog --format json
 ```
 
 省略 `--pairs` 会枚举主输入/门输出之间的全部配对（每对展开 AND/OR 两种），`--max-pairs`
-（默认 128）限制数量。CLI 输入上限 10；库侧规模 `对数 × 2^n > 1,000,000` 时拒绝；
+（默认 128）限制数量。默认枚举路径 CLI 上限 10（`--sat` 支持 ≤64）；库侧规模
+`对数 × 2^n > 1,000,000` 时拒绝；
 空列表直接失败，不会把“没检查”报成通过。这是**逻辑级静态模型**：不建模模拟电阻、竞争、
 延迟或布局邻近性；短到自身输入的桥接按静态强制值处理，不代表真实振荡行为。
 JSON 输出含每对的 `testable`/`witness` 与测试向量 `patterns`。

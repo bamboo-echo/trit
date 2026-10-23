@@ -186,6 +186,9 @@ enum Commands {
         /// 自动枚举的桥接上限（每个网络对展开 AND/OR 两种）。
         #[arg(long, value_name = "N", default_value_t = 128)]
         max_pairs: usize,
+        /// 用 SAT 逐桥接求解（支持 ≤64 主输入）。
+        #[arg(long)]
+        sat: bool,
         /// 输出格式。
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
@@ -209,6 +212,9 @@ enum Commands {
         /// 时序库 JSON（`default_delay` + `delays`），形如 `{"default_delay":1,"delays":{"AND":2}}`。
         #[arg(long, value_name = "FILE")]
         library: Option<std::path::PathBuf>,
+        /// I/O 时序约束 JSON（`input_arrival` / `output_required`）。
+        #[arg(long, value_name = "FILE")]
+        constraints: Option<std::path::PathBuf>,
         /// 列出最慢的 N 条路径（0 = 不列）。
         #[arg(long, default_value_t = 0)]
         paths: usize,
@@ -229,7 +235,7 @@ enum Commands {
         /// 单元库 JSON（如 `{"AND":1,"NAND":2}`）；给出时按延迟选实现。
         #[arg(long, value_name = "JSON")]
         cells: Option<std::path::PathBuf>,
-        /// 面积优先（最少单元），平手再看延迟；需配合 `--cells`。
+        /// 面积优先（单元 area，未声明按 1），平手再看延迟；需配合 `--cells`。
         #[arg(long)]
         area_first: bool,
         /// 每个扇出（门输入引用）追加的延迟；0 = 不看负载。
@@ -255,6 +261,9 @@ enum Commands {
         /// 时序库 JSON。
         #[arg(long, value_name = "FILE")]
         library: Option<std::path::PathBuf>,
+        /// I/O 时序约束 JSON（`input_arrival` / `output_required`）。
+        #[arg(long, value_name = "FILE")]
+        constraints: Option<std::path::PathBuf>,
         /// ATPG 覆盖率下限（0..=1）。
         #[arg(long, default_value_t = 0.0)]
         min_coverage: f64,
@@ -387,6 +396,7 @@ fn main() -> Result<()> {
             from,
             pairs,
             max_pairs,
+            sat,
             format,
         } => commands::bridge::cmd_bridge(
             &path,
@@ -395,6 +405,7 @@ fn main() -> Result<()> {
             &from,
             pairs.as_deref(),
             max_pairs,
+            sat,
         ),
         Commands::Timing {
             path,
@@ -403,6 +414,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library,
+            constraints,
             paths,
             format,
         } => commands::timing::cmd_timing(
@@ -412,6 +424,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library.as_deref(),
+            constraints.as_deref(),
             paths,
             format,
         ),
@@ -430,6 +443,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library,
+            constraints,
             min_coverage,
             format,
         } => commands::check::cmd_check(
@@ -439,6 +453,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library.as_deref(),
+            constraints.as_deref(),
             min_coverage,
             format,
             &cli.algebra,
@@ -577,6 +592,17 @@ pub(crate) fn timing_model(
         model.load_delay = load;
     }
     Ok(model)
+}
+
+pub(crate) fn load_timing_constraints(
+    path: Option<&std::path::Path>,
+) -> Result<trit_circuit::timing::TimingConstraints> {
+    let Some(path) = path else {
+        return Ok(Default::default());
+    };
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("无法读取时序约束 {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("时序约束 JSON 无效：{}", path.display()))
 }
 
 pub(crate) fn load_circuit(path: &std::path::Path, from: &str) -> Result<Circuit> {

@@ -14,6 +14,7 @@ pub(crate) fn cmd_check(
     delay: u32,
     load_delay: Option<u32>,
     library: Option<&std::path::Path>,
+    constraints: Option<&std::path::Path>,
     min_coverage: f64,
     format: Format,
     alg_name: &str,
@@ -24,7 +25,13 @@ pub(crate) fn cmd_check(
     }
     let circuit = load_circuit(path, from)?;
     let model = timing_model(library, delay, load_delay)?;
-    let timing = trit_circuit::timing::analyze_timing(&circuit, model, clock)?;
+    let constraints = crate::load_timing_constraints(constraints)?;
+    let timing = trit_circuit::timing::analyze_timing_with_constraints(
+        &circuit,
+        model,
+        clock,
+        &constraints,
+    )?;
     let atpg = (circuit.input_count() <= 10)
         .then(|| trit_circuit::generate_tests(&circuit, alg))
         .transpose()?;
@@ -65,6 +72,8 @@ pub(crate) fn cmd_check(
                     "critical_path": timing.critical_path,
                     "clock": timing.clock,
                     "violations": timing.violations,
+                    "input_arrival": constraints.input_arrival,
+                    "output_required": constraints.output_required,
                 },
                 "x": analysis.as_ref().map(|report| serde_json::json!({
                     "unknown_output_combinations": report.unknown_output_combinations,

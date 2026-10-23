@@ -7,13 +7,14 @@
 //! 这是**逻辑级**模型：不建模模拟电阻、竞争、延迟或布局邻近性；桥接对由调用方给出
 //! （CLI 在未给 `--pairs` 时会枚举主输入/门输出之间的全部配对，并有数量上限）。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use trit_core::algebra::Algebra;
 use trit_core::value::Ternary;
 
 use crate::circuit::{Circuit, CircuitError, Simulator, validate};
 use crate::pattern::TestPattern;
+use crate::sat_cnf::{Cnf, SatDefect};
 
 /// 检查次数上限：`桥接对数 × 2^输入数`。
 const MAX_CHECKS: usize = 1_000_000;
@@ -92,6 +93,8 @@ pub struct BridgeReport {
     pub exhaustive: bool,
     /// 测试集是否为精确最小覆盖（仅小规模实例尝试）。
     pub optimal: bool,
+    /// 是否用 SAT 逐桥接求解（而非枚举向量）。
+    pub sat: bool,
 }
 
 /// 桥接分析错误。
@@ -254,6 +257,107 @@ pub fn generate_bridge_tests(
         coverage,
         exhaustive,
         optimal,
+        sat: false,
+    })
+}
+
+/// 用 SAT 逐桥接生成测试向量；支持最多 64 个主输入。
+///
+/// 每个桥接要求 good 副本中两端取值不同（短路只在两端不同时产生强制值），
+/// 且 faulty 副本至少一个主输出不同。UNSAT 表示不可测（不细分原因）。
+pub fn generate_bridge_tests_sat(
+    circuit: &Circuit,
+    alg: Algebra,
+    pairs: &[BridgePair],
+) -> Result<BridgeReport, BridgeError> {
+    validate(circuit)?;
+    if pairs.is_empty() {
+        return Err(BridgeError::NoPairs);
+    }
+    let inputs = circuit.input_count();
+    if inputs > 64 {
+        return Err(CircuitError::BinaryInputLimit {
+            max: 64,
+            actual: inputs,
+        }
+        .into());
+    }
+    if let Some(gate) = circuit.gates.iter().find(|gate| {
+        gate.kind == crate::circuit::GateKind::Const && gate.const_value == Some(Ternary::Unknown)
+    }) {
+        return Err(CircuitError::NonBinaryConstant(gate.output.name().to_string()).into());
+    }
+    let mut names: BTreeSet<&str> = circuit.inputs.iter().map(|signal| signal.name()).collect();
+    names.extend(circuit.gates.iter().map(|gate| gate.output.name()));
+    for pair in pairs {
+        if pair.a == pair.b {
+            return Err(BridgeError::SameNet(pair.a.clone()));
+        }
+        if !names.contains(pair.a.as_str()) {
+            return Err(BridgeError::UnknownNet(pair.a.clone()));
+        }
+        if !names.contains(pair.b.as_str()) {
+            return Err(BridgeError::UnknownNet(pair.b.clone()));
+        }
+    }
+
+    let mut bridges = Vec::with_capacity(pairs.len());
+    let mut by_mask: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+    for pair in pairs {
+        let value = matches!(pair.mode, BridgeMode::Or);
+        let mut cnf = Cnf::new(
+            circuit,
+            alg,
+            Some(SatDefect::Bridge {
+                a: pair.a.clone(),
+                b: pair.b.clone(),
+                value,
+            }),
+        )?;
+        cnf.require_good_difference(&pair.a, &pair.b)?;
+        cnf.require_output_difference()?;
+        let witness = cnf.solve()?;
+        if let Some(mask) = witness {
+            by_mask.entry(mask).or_default().push(bridges.len());
+        }
+        bridges.push(BridgeFault {
+            a: pair.a.clone(),
+            b: pair.b.clone(),
+            mode: pair.mode,
+            testable: witness.is_some(),
+            witness,
+        });
+    }
+    let testable = bridges.iter().filter(|bridge| bridge.testable).count();
+    let coverage = testable as f64 / bridges.len() as f64;
+    let patterns: Vec<TestPattern> = by_mask
+        .into_iter()
+        .map(|(mask, covers)| TestPattern {
+            inputs: circuit
+                .inputs
+                .iter()
+                .enumerate()
+                .map(|(index, signal)| {
+                    let value = if (mask >> index) & 1 == 1 {
+                        Ternary::True
+                    } else {
+                        Ternary::False
+                    };
+                    (signal.name().to_string(), value)
+                })
+                .collect(),
+            covers,
+            dont_care: Vec::new(),
+        })
+        .collect();
+    Ok(BridgeReport {
+        bridges,
+        patterns,
+        testable,
+        coverage,
+        exhaustive: false,
+        optimal: false,
+        sat: true,
     })
 }
 
@@ -356,6 +460,26 @@ mod tests {
                 .unwrap_err(),
             BridgeError::SameNet("a".to_string())
         );
+
+        // SAT 路径必须保持同样的 fail-closed 校验。
+        assert_eq!(
+            generate_bridge_tests_sat(&circuit, Algebra::Kleene, &[]).unwrap_err(),
+            BridgeError::NoPairs
+        );
+        assert_eq!(
+            generate_bridge_tests_sat(
+                &circuit,
+                Algebra::Kleene,
+                &[pair("a", "nope", BridgeMode::Or)]
+            )
+            .unwrap_err(),
+            BridgeError::UnknownNet("nope".to_string())
+        );
+        assert_eq!(
+            generate_bridge_tests_sat(&circuit, Algebra::Kleene, &[pair("a", "a", BridgeMode::Or)])
+                .unwrap_err(),
+            BridgeError::SameNet("a".to_string())
+        );
     }
 
     #[test]
@@ -366,5 +490,142 @@ mod tests {
         .unwrap();
         assert_eq!(pairs[0].mode, BridgeMode::And);
         assert_eq!(pairs[1].mode, BridgeMode::Or);
+    }
+
+    fn verify_sat_bridge(circuit: &Circuit, alg: Algebra, report: &BridgeReport) {
+        let mut simulator = Simulator::new(circuit, alg).unwrap();
+        let outputs = simulator.output_indices().to_vec();
+        let mut seen = vec![0usize; report.bridges.len()];
+        for pattern in &report.patterns {
+            for &index in &pattern.covers {
+                seen[index] += 1;
+                let bridge = &report.bridges[index];
+                let mask = bridge.witness.expect("covered bridge has witness");
+                let a = simulator.signal_index_checked(&bridge.a).unwrap();
+                let b = simulator.signal_index_checked(&bridge.b).unwrap();
+                let good = simulator.eval_binary(mask, None).to_vec();
+                assert_ne!(good[a], good[b], "桥接前提：两端必须不同");
+                let forced = bridge.mode.forced();
+                let bad = simulator
+                    .eval_binary_with_overrides(mask, &[(a, forced), (b, forced)])
+                    .to_vec();
+                assert!(
+                    outputs.iter().any(|&slot| good[slot] != bad[slot]),
+                    "SAT witness 没有暴露桥接 {index}"
+                );
+            }
+        }
+        for (index, bridge) in report.bridges.iter().enumerate() {
+            assert_eq!(
+                seen[index],
+                if bridge.testable { 1 } else { 0 },
+                "桥接 {index} 覆盖次数"
+            );
+        }
+    }
+
+    #[test]
+    fn sat_bridge_matches_exhaustive_for_small_circuits() {
+        let cases: Vec<(Circuit, Vec<BridgePair>)> = vec![
+            (
+                and_circuit(),
+                vec![
+                    pair("a", "b", BridgeMode::And),
+                    pair("a", "b", BridgeMode::Or),
+                ],
+            ),
+            (
+                xor_circuit(),
+                vec![
+                    pair("a", "b", BridgeMode::And),
+                    pair("a", "b", BridgeMode::Or),
+                ],
+            ),
+            (
+                and_circuit(),
+                vec![
+                    pair("a", "y", BridgeMode::And),
+                    pair("a", "y", BridgeMode::Or),
+                ],
+            ),
+        ];
+        for (circuit, pairs) in cases {
+            let exhaustive = generate_bridge_tests(&circuit, Algebra::Kleene, &pairs).unwrap();
+            let sat = generate_bridge_tests_sat(&circuit, Algebra::Kleene, &pairs).unwrap();
+            assert!(sat.sat);
+            assert_eq!(sat.bridges.len(), exhaustive.bridges.len());
+            for (left, right) in sat.bridges.iter().zip(&exhaustive.bridges) {
+                assert_eq!(
+                    (&left.a, &left.b, left.mode),
+                    (&right.a, &right.b, right.mode)
+                );
+                assert_eq!(left.testable, right.testable, "{}--{}", left.a, left.b);
+            }
+            verify_sat_bridge(&circuit, Algebra::Kleene, &sat);
+        }
+    }
+
+    fn and_chain(circuit: &mut Circuit, start: usize, end: usize, prefix: &str) -> String {
+        let mut previous = format!("i{start}");
+        for index in start + 1..end {
+            let output = format!("{prefix}{index}");
+            circuit.add_gate(Gate::new(
+                GateKind::And,
+                vec![sig(&previous), sig(&format!("i{index}"))],
+                sig(&output),
+            ));
+            previous = output;
+        }
+        previous
+    }
+
+    #[test]
+    fn sat_bridge_handles_more_than_sixteen_inputs() {
+        let mut circuit = Circuit::new("bridge20");
+        for index in 0..20 {
+            circuit.add_input(sig(&format!("i{index}")));
+        }
+        let left = and_chain(&mut circuit, 0, 10, "n");
+        let right = and_chain(&mut circuit, 10, 20, "m");
+        circuit.add_gate(Gate::new(
+            GateKind::And,
+            vec![sig(&left), sig(&right)],
+            sig("y"),
+        ));
+        circuit.add_output(sig("y"));
+        let pairs = [
+            pair(&left, &right, BridgeMode::And),
+            pair(&left, &right, BridgeMode::Or),
+        ];
+        let report = generate_bridge_tests_sat(&circuit, Algebra::Kleene, &pairs).unwrap();
+        assert_eq!(report.testable, 1, "wired-AND 不可测，wired-OR 可测");
+        verify_sat_bridge(&circuit, Algebra::Kleene, &report);
+    }
+
+    #[test]
+    fn sat_bridge_rejects_x_constant_and_too_many_inputs() {
+        let x =
+            crate::netlist::parse_netlist("input a\nconst X x\nbuf a out\noutput out\n").unwrap();
+        let error =
+            generate_bridge_tests_sat(&x, Algebra::Kleene, &[pair("a", "x", BridgeMode::Or)])
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            BridgeError::Circuit(CircuitError::NonBinaryConstant(_))
+        ));
+
+        let mut wide = Circuit::new("wide");
+        for index in 0..65 {
+            wide.add_input(sig(&format!("i{index}")));
+        }
+        wide.add_gate(Gate::new(GateKind::Buf, vec![sig("i0")], sig("out")));
+        wide.add_output(sig("out"));
+        let error =
+            generate_bridge_tests_sat(&wide, Algebra::Kleene, &[pair("i0", "i1", BridgeMode::Or)])
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            BridgeError::Circuit(CircuitError::BinaryInputLimit { max: 64, .. })
+        ));
     }
 }

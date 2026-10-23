@@ -1,6 +1,6 @@
 //! 组合时序估算（STA-lite）：单位门延迟、输入到达 0、按拓扑序传播。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::circuit::{Circuit, CircuitError, GateKind, fanout_counts, topological_order, validate};
 
@@ -13,6 +13,12 @@ pub enum TimingError {
     /// 电路结构不合法。
     #[error(transparent)]
     Circuit(#[from] CircuitError),
+    /// 约束引用了未知主输入。
+    #[error("时序约束引用了未知主输入：{0}")]
+    UnknownInput(String),
+    /// 约束引用了未知主输出。
+    #[error("时序约束引用了未知主输出：{0}")]
+    UnknownOutput(String),
 }
 
 /// 时序模型错误。
@@ -191,6 +197,38 @@ pub struct TimingReport {
     pub violations: usize,
 }
 
+/// I/O 时序约束。
+///
+/// JSON 形如 `{"input_arrival":{"a":2},"output_required":{"y":10}}`；未列出的主输入
+/// 到达时间为 0，未列出的主输出要求时间取 `clock`（省略 clock 时取关键路径）。
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TimingConstraints {
+    /// 主输入到达时间。
+    pub input_arrival: BTreeMap<String, u32>,
+    /// 主输出要求时间。
+    pub output_required: BTreeMap<String, u32>,
+}
+
+fn validate_constraints(
+    circuit: &Circuit,
+    constraints: &TimingConstraints,
+) -> Result<(), TimingError> {
+    let inputs: BTreeSet<&str> = circuit.inputs.iter().map(|signal| signal.name()).collect();
+    for name in constraints.input_arrival.keys() {
+        if !inputs.contains(name.as_str()) {
+            return Err(TimingError::UnknownInput(name.clone()));
+        }
+    }
+    let outputs: BTreeSet<&str> = circuit.outputs.iter().map(|signal| signal.name()).collect();
+    for name in constraints.output_required.keys() {
+        if !outputs.contains(name.as_str()) {
+            return Err(TimingError::UnknownOutput(name.clone()));
+        }
+    }
+    Ok(())
+}
+
 /// 一条时序路径（信号序列，从主输入/常量到主输出）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimingPath {
@@ -208,17 +246,33 @@ pub fn critical_paths(
     model: TimingModel,
     limit: usize,
 ) -> Result<Vec<TimingPath>, TimingError> {
+    critical_paths_with_constraints(circuit, model, limit, &TimingConstraints::default())
+}
+
+/// 同 [`critical_paths`]，但主输入从各自的到达时间开始计时。
+pub fn critical_paths_with_constraints(
+    circuit: &Circuit,
+    model: TimingModel,
+    limit: usize,
+    constraints: &TimingConstraints,
+) -> Result<Vec<TimingPath>, TimingError> {
     if limit == 0 {
         return Ok(Vec::new());
     }
     validate(circuit)?;
+    validate_constraints(circuit, constraints)?;
     let order = topological_order(circuit)?;
     let fanouts = fanout_counts(circuit);
     let mut best: BTreeMap<String, Vec<(u32, Vec<String>)>> = BTreeMap::new();
     for input in &circuit.inputs {
+        let arrival = constraints
+            .input_arrival
+            .get(input.name())
+            .copied()
+            .unwrap_or(0);
         best.insert(
             input.name().to_string(),
-            vec![(0, vec![input.name().to_string()])],
+            vec![(arrival, vec![input.name().to_string()])],
         );
     }
     for &index in &order {
@@ -273,13 +327,31 @@ pub fn analyze_timing(
     model: TimingModel,
     clock: Option<u32>,
 ) -> Result<TimingReport, TimingError> {
+    analyze_timing_with_constraints(circuit, model, clock, &TimingConstraints::default())
+}
+
+/// 同 [`analyze_timing`]，但可给主输入到达时间与逐主输出要求时间。
+pub fn analyze_timing_with_constraints(
+    circuit: &Circuit,
+    model: TimingModel,
+    clock: Option<u32>,
+    constraints: &TimingConstraints,
+) -> Result<TimingReport, TimingError> {
     validate(circuit)?;
+    validate_constraints(circuit, constraints)?;
     let order = topological_order(circuit)?;
     let fanouts = fanout_counts(circuit);
     let mut arrival: BTreeMap<String, u32> = circuit
         .inputs
         .iter()
-        .map(|signal| (signal.name().to_string(), 0))
+        .map(|signal| {
+            let arrival = constraints
+                .input_arrival
+                .get(signal.name())
+                .copied()
+                .unwrap_or(0);
+            (signal.name().to_string(), arrival)
+        })
         .collect();
     for &index in &order {
         let gate = &circuit.gates[index];
@@ -303,7 +375,14 @@ pub fn analyze_timing(
     let mut required: BTreeMap<String, u32> = circuit
         .outputs
         .iter()
-        .map(|signal| (signal.name().to_string(), clock))
+        .map(|signal| {
+            let required = constraints
+                .output_required
+                .get(signal.name())
+                .copied()
+                .unwrap_or(clock);
+            (signal.name().to_string(), required)
+        })
         .collect();
     for &index in order.iter().rev() {
         let gate = &circuit.gates[index];
@@ -540,5 +619,77 @@ output y
         assert_eq!(paths[2].delay, 1);
         let top = critical_paths(&circuit, TimingModel::default(), 1).unwrap();
         assert_eq!(top.len(), 1);
+    }
+
+    #[test]
+    fn input_arrival_and_output_required_constraints() {
+        let circuit = parse_netlist("input a\ninput b\ngate AND a b y\noutput y\n").unwrap();
+        let constraints = TimingConstraints {
+            input_arrival: BTreeMap::from([("a".to_string(), 3)]),
+            output_required: BTreeMap::from([("y".to_string(), 6)]),
+        };
+        let report =
+            analyze_timing_with_constraints(&circuit, TimingModel::default(), None, &constraints)
+                .unwrap();
+        assert_eq!(report.critical_path, 4);
+        assert_eq!(report.clock, 4);
+        assert_eq!(report.outputs[0].arrival, 4);
+        assert_eq!(report.outputs[0].required, 6);
+        assert_eq!(report.outputs[0].slack, 2);
+        assert_eq!(report.violations, 0);
+
+        let paths =
+            critical_paths_with_constraints(&circuit, TimingModel::default(), 1, &constraints)
+                .unwrap();
+        assert_eq!(paths[0].delay, 4);
+        assert_eq!(paths[0].signals, vec!["a".to_string(), "y".to_string()]);
+    }
+
+    #[test]
+    fn per_output_required_times_are_independent() {
+        let circuit = parse_netlist("input a\nbuf a y1\nbuf a y2\noutput y1\noutput y2\n").unwrap();
+        let constraints = TimingConstraints {
+            input_arrival: BTreeMap::new(),
+            output_required: BTreeMap::from([("y1".to_string(), 1), ("y2".to_string(), 3)]),
+        };
+        let report =
+            analyze_timing_with_constraints(&circuit, TimingModel::default(), None, &constraints)
+                .unwrap();
+        assert_eq!(report.critical_path, 1);
+        assert_eq!(report.outputs[0].slack, 0);
+        assert_eq!(report.outputs[1].slack, 2);
+        assert_eq!(report.violations, 0);
+    }
+
+    #[test]
+    fn constraints_reject_unknown_names() {
+        let circuit = parse_netlist("input a\nbuf a y\noutput y\n").unwrap();
+        let wrong_input = TimingConstraints {
+            input_arrival: BTreeMap::from([("zzz".to_string(), 1)]),
+            output_required: BTreeMap::new(),
+        };
+        assert_eq!(
+            analyze_timing_with_constraints(&circuit, TimingModel::default(), None, &wrong_input)
+                .unwrap_err(),
+            TimingError::UnknownInput("zzz".to_string())
+        );
+        let wrong_output = TimingConstraints {
+            input_arrival: BTreeMap::new(),
+            output_required: BTreeMap::from([("zzz".to_string(), 1)]),
+        };
+        assert_eq!(
+            analyze_timing_with_constraints(&circuit, TimingModel::default(), None, &wrong_output)
+                .unwrap_err(),
+            TimingError::UnknownOutput("zzz".to_string())
+        );
+    }
+
+    #[test]
+    fn constraints_json_round_trips_and_rejects_unknown_fields() {
+        let constraints: TimingConstraints =
+            serde_json::from_str(r#"{"input_arrival":{"a":2},"output_required":{"y":5}}"#).unwrap();
+        assert_eq!(constraints.input_arrival["a"], 2);
+        assert_eq!(constraints.output_required["y"], 5);
+        assert!(serde_json::from_str::<TimingConstraints>(r#"{"bogus":1}"#).is_err());
     }
 }
