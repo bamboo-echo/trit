@@ -890,6 +890,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "trit-codec"
+version = "0.12.0"
+dependencies = [
+ "serde_json",
+ "thiserror 2.0.21",
+ "trit-core",
+]
+
+[[package]]
 name = "trit-core"
 version = "0.12.0"
 dependencies = [
