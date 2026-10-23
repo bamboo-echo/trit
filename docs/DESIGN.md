@@ -87,8 +87,8 @@
 - **v0.8（已完成，0.8.1）**：芯片链路——结构化 Verilog 子集、索引化仿真、STA-lite（按门类型延迟 +
   top-N 路径）、NAND-only 与时序驱动技术映射、`trit check` 流水线、ATPG X don't-care、
   桥接故障、多比特 Verilog；变异门扩到 53 条。
-- **v0.9（计划）**：信号/bus 元数据（向量宽度不再只存在于解析期）；Verilog 尺寸常量与模块实例；
-  引入格式版本字段；minor 可含破坏性调整。
+- **v0.9（进行中）**：bus 元数据、Verilog 尺寸常量（b/o/d/h）与网表 JSON `format` 版本已完成；
+  模块实例与 `[0:N]` 范围待做；minor 可含破坏性调整。
 - **v0.10（计划）**：SAT-based ATPG（突破 16 主输入的全枚举上限）、桥接故障 SAT、
   映射/STA 扩展。
 - **v0.11（计划）**：打包/审计/基准趋势工程化，WASM 与 Action 生态收口。
