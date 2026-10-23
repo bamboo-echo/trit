@@ -1271,6 +1271,30 @@ MUTANTS = [
         "new": "    value.round()",
         "pkg": "trit-attn",
         "filter": "quantize_clamps_to_ternary"
+    },
+    {
+        "name": "float: 舍入改成截断",
+        "file": "crates/trit-float/src/lib.rs",
+        "old": "    if remainder <= 1 {",
+        "new": "    if remainder <= 2 {",
+        "pkg": "trit-float",
+        "filter": "rounding_is_nearest_in_balanced_ternary"
+    },
+    {
+        "name": "float: 加法恒丢弃小项",
+        "file": "crates/trit-float/src/lib.rs",
+        "old": "        if shift > 76 {",
+        "new": "        if shift > 0 {",
+        "pkg": "trit-float",
+        "filter": "arithmetic_is_exact_when_digits_fit"
+    },
+    {
+        "name": "float: 乘法指数相减",
+        "file": "crates/trit-float/src/lib.rs",
+        "old": "            self.exponent + other.exponent,",
+        "new": "            self.exponent - other.exponent,",
+        "pkg": "trit-float",
+        "filter": "arithmetic_is_exact_when_digits_fit"
     }
 ]
 
