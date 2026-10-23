@@ -1307,8 +1307,8 @@ MUTANTS = [
     {
         "name": "dot: 三值点积少减一项",
         "file": "crates/trit-dot/src/lib.rs",
-        "old": "            total += i64::from(pp) - i64::from(pn) - i64::from(np) + i64::from(nn);\n        }\n        total\n    }\n\n    /// 块级稀疏跳过",
-        "new": "            total += i64::from(pp) - i64::from(pn) + i64::from(nn);\n        }\n        total\n    }\n\n    /// 块级稀疏跳过",
+        "old": "            let mismatches = ((self.pos[block] & other.neg[block])\n                | (self.neg[block] & other.pos[block]))\n                .count_ones();\n            total += i64::from(matches) - i64::from(mismatches);",
+        "new": "            let mismatches = ((self.pos[block] & other.neg[block])\n                | (self.neg[block] & other.pos[block]))\n                .count_ones();\n            total += i64::from(matches);",
         "pkg": "trit-dot",
         "filter": "ternary_dot_matches_scalar_across_block_boundaries"
     },
