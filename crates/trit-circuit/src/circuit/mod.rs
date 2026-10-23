@@ -10,7 +10,7 @@ mod types;
 mod validate;
 
 pub use analyze::{analyze, analyze_faults};
-pub use sim::propagate;
+pub use sim::{DEFAULT_EXACT_BUDGET, propagate, propagate_exact};
 pub use types::*;
 
 pub(crate) use graph::{fanout_counts, topological_order};

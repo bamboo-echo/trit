@@ -32,9 +32,9 @@ pub use trit_belnap::{
     eval as eval_belnap, table as table_belnap,
 };
 pub use trit_circuit::{
-    AtpgReport, Bus, Circuit, CircuitError, CircuitReport, CoverageStat, Fault, Gate, GateKind,
-    Propagation, Signal, SimulationRow, TestPattern, UntestableReason, analyze, generate_tests,
-    propagate,
+    AtpgReport, Bus, Circuit, CircuitError, CircuitReport, CoverageStat, ExactPropagation, Fault,
+    Gate, GateKind, Propagation, Signal, SimulationRow, TestPattern, UntestableReason, analyze,
+    generate_tests, propagate, propagate_exact,
 };
 pub use trit_core::{Algebra, BitPlane, Expr, Parser, Ternary, TriBit, TriVec, TruthTable};
 pub use trit_eval::{
