@@ -127,72 +127,159 @@ pub fn encode(values: &[Ternary]) -> (Encoding, Vec<u8>) {
     }
 }
 
-/// 解码。
-pub fn decode(encoding: Encoding, bytes: &[u8], len: usize) -> Result<Vec<Ternary>, CodecError> {
-    match encoding {
-        Encoding::Binary => {
-            if bytes.len() < len.div_ceil(8) {
-                return Err(CodecError::Length {
-                    expected: len,
-                    available: bytes.len() * 8,
-                });
+/// 零拷贝视图：只做校验，元素按需从字节里算出来。
+pub struct View<'a> {
+    encoding: Encoding,
+    bytes: &'a [u8],
+    len: usize,
+}
+
+impl<'a> View<'a> {
+    /// 校验并构造视图；不分配、不拷贝。
+    pub fn new(encoding: Encoding, bytes: &'a [u8], len: usize) -> Result<Self, CodecError> {
+        match encoding {
+            Encoding::Binary => {
+                if bytes.len() < len.div_ceil(8) {
+                    return Err(CodecError::Length {
+                        expected: len.div_ceil(8),
+                        available: bytes.len(),
+                    });
+                }
             }
-            Ok((0..len)
-                .map(|index| {
-                    if (bytes[index / 8] >> (index % 8)) & 1 == 1 {
+            Encoding::Packed => {
+                if bytes.len() < len.div_ceil(pack::TRITS_PER_BYTE) {
+                    return Err(CodecError::Length {
+                        expected: len.div_ceil(pack::TRITS_PER_BYTE),
+                        available: bytes.len(),
+                    });
+                }
+                let used = &bytes[..len.div_ceil(pack::TRITS_PER_BYTE)];
+                if let Some(byte) = used
+                    .iter()
+                    .find(|byte| u16::from(**byte) >= pack::COMBINATIONS)
+                {
+                    return Err(CodecError::InvalidByte(*byte));
+                }
+            }
+            Encoding::Sparse => {
+                if bytes.len() < 8 {
+                    return Err(CodecError::Length {
+                        expected: 8,
+                        available: bytes.len(),
+                    });
+                }
+                let stored = u32::from_le_bytes(bytes[0..4].try_into().expect("4 字节")) as usize;
+                if stored != len {
+                    return Err(CodecError::Length {
+                        expected: len,
+                        available: stored,
+                    });
+                }
+                let count = u32::from_le_bytes(bytes[4..8].try_into().expect("4 字节")) as usize;
+                if count > len {
+                    return Err(CodecError::Length {
+                        expected: len,
+                        available: count,
+                    });
+                }
+                let needed = 8 + count * 4 + count.div_ceil(8);
+                if bytes.len() < needed {
+                    return Err(CodecError::Length {
+                        expected: needed,
+                        available: bytes.len(),
+                    });
+                }
+            }
+        }
+        Ok(Self {
+            encoding,
+            bytes,
+            len,
+        })
+    }
+
+    /// 元素数。
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// 是否为空。
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// 使用的编码。
+    pub fn encoding(&self) -> Encoding {
+        self.encoding
+    }
+
+    /// 取第 `index` 个 trit；越界返回 `None`。
+    pub fn get(&self, index: usize) -> Option<Ternary> {
+        if index >= self.len {
+            return None;
+        }
+        match self.encoding {
+            Encoding::Binary => Some(if (self.bytes[index / 8] >> (index % 8)) & 1 == 1 {
+                Ternary::True
+            } else {
+                Ternary::False
+            }),
+            Encoding::Packed => {
+                let byte = *self.bytes.get(index / pack::TRITS_PER_BYTE)?;
+                let digit = (u16::from(byte) / POW3[index % pack::TRITS_PER_BYTE]) % 3;
+                Some(match digit {
+                    0 => Ternary::False,
+                    1 => Ternary::Unknown,
+                    _ => Ternary::True,
+                })
+            }
+            Encoding::Sparse => {
+                let count =
+                    u32::from_le_bytes(self.bytes[4..8].try_into().expect("4 字节")) as usize;
+                let indices = &self.bytes[8..8 + count * 4];
+                let signs = &self.bytes[8 + count * 4..];
+                // 下标按升序存储，二分查找；找不到就是编码时省略的 Unknown。
+                let mut low = 0usize;
+                let mut high = count;
+                let mut found = None;
+                while low < high {
+                    let middle = (low + high) / 2;
+                    let offset = middle * 4;
+                    let value =
+                        u32::from_le_bytes(indices[offset..offset + 4].try_into().expect("4 字节"))
+                            as usize;
+                    match value.cmp(&index) {
+                        std::cmp::Ordering::Less => low = middle + 1,
+                        std::cmp::Ordering::Greater => high = middle,
+                        std::cmp::Ordering::Equal => {
+                            found = Some(middle);
+                            break;
+                        }
+                    }
+                }
+                match found {
+                    Some(position) => Some(if (signs[position / 8] >> (position % 8)) & 1 == 1 {
                         Ternary::True
                     } else {
                         Ternary::False
-                    }
-                })
-                .collect())
-        }
-        Encoding::Sparse => {
-            if bytes.len() < 8 {
-                return Err(CodecError::Length {
-                    expected: 8,
-                    available: bytes.len(),
-                });
-            }
-            let stored_len = u32::from_le_bytes(bytes[0..4].try_into().expect("4 字节")) as usize;
-            let count = u32::from_le_bytes(bytes[4..8].try_into().expect("4 字节")) as usize;
-            if stored_len != len {
-                return Err(CodecError::Length {
-                    expected: len,
-                    available: stored_len,
-                });
-            }
-            let needed = 8 + count * 4 + count.div_ceil(8);
-            if bytes.len() < needed {
-                return Err(CodecError::Length {
-                    expected: needed,
-                    available: bytes.len(),
-                });
-            }
-            let mut out = vec![Ternary::Unknown; len];
-            let signs = &bytes[8 + count * 4..needed];
-            for position in 0..count {
-                let offset = 8 + position * 4;
-                let index =
-                    u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("4 字节"))
-                        as usize;
-                if index >= len {
-                    return Err(CodecError::Length {
-                        expected: len,
-                        available: index,
-                    });
+                    }),
+                    None => Some(Ternary::Unknown),
                 }
-                let positive = (signs[position / 8] >> (position % 8)) & 1 == 1;
-                out[index] = if positive {
-                    Ternary::True
-                } else {
-                    Ternary::False
-                };
             }
-            Ok(out)
         }
-        Encoding::Packed => pack::unpack(bytes, len),
     }
+
+    /// 逐元素迭代（不分配）。
+    pub fn iter(&self) -> impl Iterator<Item = Ternary> + '_ {
+        (0..self.len).map(move |index| self.get(index).expect("下标在范围内"))
+    }
+}
+
+const POW3: [u16; 5] = [1, 3, 9, 27, 81];
+
+/// 解码成拥有所有权的向量（内部就是视图 + 收集）。
+pub fn decode(encoding: Encoding, bytes: &[u8], len: usize) -> Result<Vec<Ternary>, CodecError> {
+    Ok(View::new(encoding, bytes, len)?.iter().collect())
 }
 
 #[cfg(test)]
@@ -268,6 +355,74 @@ mod tests {
             values[index] = Ternary::True;
         }
         assert_eq!(plan(&values).encoding, Encoding::Sparse);
+    }
+
+    #[test]
+    fn view_matches_owned_decode() {
+        let binary: Vec<Ternary> = (0..300usize)
+            .map(|i| {
+                if i.is_multiple_of(3) {
+                    Ternary::True
+                } else {
+                    Ternary::False
+                }
+            })
+            .collect();
+        let ternary: Vec<Ternary> = (0..300)
+            .map(|i| match i % 3 {
+                0 => Ternary::False,
+                1 => Ternary::Unknown,
+                _ => Ternary::True,
+            })
+            .collect();
+        let mut sparse = vec![Ternary::Unknown; 3000];
+        sparse[1] = Ternary::True;
+        sparse[2999] = Ternary::False;
+        for values in [&binary, &ternary, &sparse] {
+            let (encoding, bytes) = encode(values);
+            let view = View::new(encoding, &bytes, values.len()).unwrap();
+            assert_eq!(view.len(), values.len());
+            for index in 0..values.len() {
+                assert_eq!(
+                    view.get(index),
+                    Some(values[index]),
+                    "{encoding:?} @{index}"
+                );
+            }
+            assert_eq!(view.get(values.len()), None);
+            let collected: Vec<Ternary> = view.iter().collect();
+            assert_eq!(collected.as_slice(), values.as_slice());
+            assert_eq!(
+                decode(encoding, &bytes, values.len()).unwrap().as_slice(),
+                values.as_slice()
+            );
+        }
+    }
+
+    #[test]
+    fn view_validates_without_allocating() {
+        let values: Vec<Ternary> = (0..64)
+            .map(|i| match i % 3 {
+                0 => Ternary::False,
+                1 => Ternary::Unknown,
+                _ => Ternary::True,
+            })
+            .collect();
+        let (_, bytes) = encode(&values);
+        assert!(matches!(
+            View::new(Encoding::Binary, &bytes[..1], 64),
+            Err(CodecError::Length { .. })
+        ));
+        let mut bad = bytes.clone();
+        bad[0] = 243;
+        assert!(matches!(
+            View::new(Encoding::Packed, &bad, values.len()),
+            Err(CodecError::InvalidByte(243))
+        ));
+        assert!(matches!(
+            View::new(Encoding::Sparse, &[0u8; 4], 8),
+            Err(CodecError::Length { .. })
+        ));
     }
 
     #[test]
