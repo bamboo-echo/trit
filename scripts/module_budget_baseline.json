@@ -3,24 +3,8 @@
   "note": "只允许变短：拆掉一个文件后跑 --update 把它移除；--update 拒绝任何增长。",
   "over_budget": [
     {
-      "file": "crates/trit-circuit/src/map.rs",
-      "lines": 842
-    },
-    {
       "file": "crates/trit-circuit/src/verilog/parse.rs",
       "lines": 861
-    },
-    {
-      "file": "crates/trit-circuit/src/verilog/tests.rs",
-      "lines": 1094
-    },
-    {
-      "file": "crates/trit-cli/tests/cli.rs",
-      "lines": 1100
-    },
-    {
-      "file": "crates/trit-core/src/bits.rs",
-      "lines": 801
     }
   ]
 }
