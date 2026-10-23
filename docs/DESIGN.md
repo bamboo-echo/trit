@@ -96,11 +96,13 @@
   top-N 路径）、NAND-only 与时序驱动技术映射、`trit check` 流水线、ATPG X don't-care、
   桥接故障、多比特 Verilog；变异门扩到 53 条。
 - **v0.9（已完成，0.9.0）**：bus 元数据、Verilog 尺寸常量（b/o/d/h）与网表 JSON `format` 版本。
-- **v0.10（进行中）**：Verilog 多模块实例（标量 + `[N:0]` / `[0:N]` 向量端口，
+- **v0.10（已完成，随 0.11.0 发布）**：Verilog 多模块实例（标量 + `[N:0]` / `[0:N]` 向量端口，
   命名 / 位置连接、层级展开、生成名冲突检测）；SAT-based ATPG（≤64）、桥接故障 SAT（≤64）、
-  映射面积（`--area-first` 按 area）、STA I/O 约束（`input_arrival` / `output_required`）已完成；
-  更大规模/取消机制与更多 STA 约束（多时钟、false path）仍待做。
-- **v0.11（计划）**：打包/审计/基准趋势工程化，WASM 与 Action 生态收口。
+  映射面积（`--area-first` 按 area）、STA I/O 约束（`input_arrival` / `output_required`）。
+- **v0.11（已完成，0.11.0）**：并行 ATPG/桥接、共享 CNF（10k 门/40k 故障 2.6 s）、
+  策略断言并行；SDF per-instance；Verilog 整数参数/实例覆盖；CLI 全局硬超时。
+- **v0.12（计划）**：SDF 引脚级/TIMESCALE、Liberty/SDC、100k 门与取消机制、
+  Python/C 绑定与 1.0 API 收口。
 
 ## 参考
 

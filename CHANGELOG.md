@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-23
+
+0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，
+以及 0.10 的桥接 SAT、映射面积、STA I/O 约束、层级/向量 Verilog。
+
+### Changed（发布工程）
+
+- workspace 版本 0.9.0 → **0.11.0**；新增每周 `quality` 工作流：`cargo audit` +
+  8 个 fuzz 目标各 500 次 smoke。
+
 ### Added（SDF per-instance）
 
 - **门实例元数据**：`Gate.instance`（`u1` / `u1.u2`），层级展开时写入；JSON 可选字段，
