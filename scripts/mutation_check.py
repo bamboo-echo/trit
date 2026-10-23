@@ -1167,6 +1167,30 @@ MUTANTS = [
         "new": "low += weight * highs[input];",
         "pkg": "trit-net",
         "filter": "cancellation_is_exact_but_interval_is_blind"
+    },
+    {
+        "name": "vm: X 分叉跳到错误位置",
+        "file": "crates/trit-machines/src/vm.rs",
+        "old": "queue.push((target, stack.clone()));",
+        "new": "queue.push((pc + 1, stack.clone()));",
+        "pkg": "trit-machines",
+        "filter": "branch_on_unknown_with_different_outputs_is_ambiguous"
+    },
+    {
+        "name": "ca: 规则表倒序查",
+        "file": "crates/trit-machines/src/ca.rs",
+        "old": "next.push(rule.0[sum]);",
+        "new": "next.push(rule.0[6 - sum]);",
+        "pkg": "trit-machines",
+        "filter": "single_seed_spreads_to_the_whole_line"
+    },
+    {
+        "name": "snn: 抑制阈值写成严格小于",
+        "file": "crates/trit-machines/src/snn.rs",
+        "old": "} else if potential <= -network.threshold {",
+        "new": "} else if potential < -network.threshold {",
+        "pkg": "trit-machines",
+        "filter": "negative_drive_produces_inhibitory_spike"
     }
 ]
 
