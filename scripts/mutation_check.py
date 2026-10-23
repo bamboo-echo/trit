@@ -138,8 +138,8 @@ MUTANTS = [
     {
         "name": "verilog: 向量声明记成 1 位",
         "file": "crates/trit-circuit/src/verilog/parse.rs",
-        "old": "                    .insert(name.clone(), Bus::new(name.clone(), msb + 1));",
-        "new": "                    .insert(name.clone(), Bus::new(name.clone(), 1));",
+        "old": "                let bus = if range.ascending {\n                    Bus::new_ascending(name.clone(), range.width)\n                } else {\n                    Bus::new(name.clone(), range.width)\n                };\n",
+        "new": "                let bus = Bus::new(name.clone(), 1);\n",
         "pkg": "trit-circuit",
         "filter": "vector_declarations_are_recorded_as_buses"
     },
