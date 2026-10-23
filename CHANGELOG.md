@@ -43,6 +43,26 @@
 - 变异门 `preflight` 增加规则：锚点落在 `#[cfg(test)] mod ...` 之后直接报错——
   改测试代码不改变产品行为，不该算覆盖。
 
+### Added（GPU 后端 `trit-gpu`：WGSL `countOneBits`）
+
+- 新 crate `crates/trit-gpu`（`publish = false`）。**GPU 代码在 `gpu` feature 后面**，默认构建不拉
+  `wgpu`，CI 的三平台 / MSRV job 不受影响；本地用 `--features gpu` 构建。
+- `src/ternary.wgsl`：每 32 个 trit 打成 `u32`（双导轨），`countOneBits` 四组计数累加；
+  `src/float.wgsl`：**同一个设备**上的 f32 点积（workgroup 归约），作为公平对照。
+- CPU 位并行 `dot_words` 与 GPU 内核逐位一致；测试覆盖 1/31/32/33/100 跨字边界、四种符号组合、
+  正负导轨不对称；GPU 测试在没有 adapter 时自动跳过。
+- 实测（RTX 4060 Ti / Vulkan，5 批取中位数）：
+
+  | 规模 | GPU 三值 | 同卡 f32 | CPU 位并行 | 加速 |
+  |---|---|---|---|---|
+  | 16M trit | **2.68 ps/trit** | 35.6 ps/元素 | 50.7 ps/trit | **13.3×** |
+  | 1M trit | 40.6 ps/trit | 58.0 ps/元素 | 54.6 ps/trit | 1.4× |
+
+  与内存带宽一致：三值 0.5 B/trit（4 个位平面 / 32 trit）vs f32 8 B/元素 = **16× 字节比**；
+  1M 时数据进缓存、dispatch 延迟占主导，GPU 优势消失。
+- 测试 4 条 + 1 条 GPU 测试；变异门 163 → **166**（少减一项、`+1` 写错导轨、标量参考改加法）。
+- 边界：只测这一个 kernel，不是完整推理；没有与 int8/triton 内核对比；GPU 计时抖动大（已取中位数）。
+
 ### Added（发布图门 `scripts/publish_graph.py`）
 
 - 新门：**任何 crate 都不许依赖未发布（`publish = false`）的 crate**。
