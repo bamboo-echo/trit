@@ -844,6 +844,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "trit-attn"
+version = "0.12.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "trit-bdd"
 version = "0.12.0"
 dependencies = [
