@@ -43,6 +43,15 @@
 - 变异门 `preflight` 增加规则：锚点落在 `#[cfg(test)] mod ...` 之后直接报错——
   改测试代码不改变产品行为，不该算覆盖。
 
+### Changed（清模块预算债务：5 → 1）
+
+- `verilog/tests.rs` 1094 → **576** + `verilog/hierarchy_tests.rs` 528（层级/参数化测试独立成文件）；
+- `trit-cli/tests/cli.rs` 1100 → **459** + `tests/cli_io.rs` 674（每文件自带 `trit_bin`/`run` 助手）；
+- `trit-core/src/bits.rs` 801 → **534** + `src/bits/tests.rs` 264；
+- `trit-circuit/src/map.rs` 842 → **480** + `src/map/tests.rs` 359；
+- 台账从 5 件缩到 **1 件**（`verilog/parse.rs` 861，生产代码，需按职责拆，未做）。
+- 测试条数不变（verilog 58、CLI 42+36、core 80、circuit 182）；fmt/clippy 全绿。
+
 ### Added（底层补齐：`Ternary` 运算符 + `View::copy_into`）
 
 - `trit-core`：`Ternary` 现在实现 `Default`（`False`）、`From<bool>`、`Not`、
