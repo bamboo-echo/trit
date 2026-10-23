@@ -56,6 +56,17 @@ jobs:
       - name: Every file within budget or shrinking-only debt
         run: python3 scripts/module_budget.py
 
+  publish-graph:
+    name: publish graph (no dep on unpublished crates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Gate self-test (positive + counterexamples)
+        run: python3 scripts/publish_graph.py --self-test
+      - name: Dependency direction and publish metadata
+        run: python3 scripts/publish_graph.py
+
   docs:
     name: docs (rustdoc -D warnings)
     runs-on: ubuntu-latest

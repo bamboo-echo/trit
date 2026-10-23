@@ -43,6 +43,21 @@
 - 变异门 `preflight` 增加规则：锚点落在 `#[cfg(test)] mod ...` 之后直接报错——
   改测试代码不改变产品行为，不该算覆盖。
 
+### Added（发布图门 `scripts/publish_graph.py`）
+
+- 新门：**任何 crate 都不许依赖未发布（`publish = false`）的 crate**。
+  - 可发布 → 实验层：发布链断（红）；
+  - 实验层 → 实验层：`cargo package --workspace` 会把实验层也一起打包，路径依赖没有版本 ⇒ 同样失败（红）；
+  - 实验层 → 可发布：允许（绿）。
+- 推论：**实验层必须自包含**；共享代码只能下沉到可发布 crate。`trit-net::format` 里 5-trit 打包
+  之所以内联而不是复用 `trit-codec`，就是这条约束。
+- 顺带检查可发布 crate 的 crates.io 必填字段（`description` / `license` / `repository`），
+  并按依赖打印**发布顺序**（当前：17 个 crate / 11 个可发布）。
+- `--self-test` 5 条断言：2 正例（可发布→可发布、实验层→可发布）+ 3 反证（可发布→实验层、
+  实验层→实验层、缺 `license`），夹具是真实的两 crate workspace，跑的是真 `cargo metadata`。
+- 接入 CI：新 job `publish graph (no dep on unpublished crates)`。
+- 由来：本会话真实踩过两次（`trit-net → trit-codec` 让 `cargo package` 失败），现在由门强制。
+
 ### Added（三值点积的位并行实现 `trit-dot`）
 
 - 新 crate `crates/trit-dot`（`publish = false`，不属于稳定 API）：
