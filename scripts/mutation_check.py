@@ -1143,6 +1143,30 @@ MUTANTS = [
         "new": "for mask in start..end.min(start + 1) {",
         "pkg": "trit-circuit",
         "filter": "exact_propagation_accepts_partial_vectors_and_merges_values"
+    },
+    {
+        "name": "net: 预算边界写成严格小于",
+        "file": "crates/trit-net/src/infer.rs",
+        "old": ".filter(|total| *total <= budget)",
+        "new": ".filter(|total| *total < budget)",
+        "pkg": "trit-net",
+        "filter": "budget_is_inclusive"
+    },
+    {
+        "name": "net: +1 见证记到另一端",
+        "file": "crates/trit-net/src/infer.rs",
+        "old": "pos_witness[output] = Some(witness.clone());",
+        "new": "neg_witness[output] = Some(witness.clone());",
+        "pkg": "trit-net",
+        "filter": "ambiguous_output_carries_both_witnesses"
+    },
+    {
+        "name": "net: 区间下界用上界",
+        "file": "crates/trit-net/src/infer.rs",
+        "old": "low += weight * lows[input];",
+        "new": "low += weight * highs[input];",
+        "pkg": "trit-net",
+        "filter": "cancellation_is_exact_but_interval_is_blind"
     }
 ]
 
