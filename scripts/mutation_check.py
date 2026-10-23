@@ -146,8 +146,8 @@ MUTANTS = [
     {
         "name": "verilog: 导出忽略 bus 宽度",
         "file": "crates/trit-circuit/src/verilog/export.rs",
-        "old": "        let (max, vector) = if let Some(bus) = buses.get(&base) {",
-        "new": "        let (max, vector) = if let Some(bus) = buses.get(&base).filter(|_| false) {",
+        "old": "        let (max, vector, ascending) = if let Some(bus) = buses.get(&base) {",
+        "new": "        let (max, vector, ascending) = if let Some(bus) = buses.get(&base).filter(|_| false) {",
         "pkg": "trit-circuit",
         "filter": "export_uses_declared_bus_width_for_partial_wire"
     },
@@ -282,8 +282,8 @@ MUTANTS = [
     {
         "name": "timing: 负载延迟不参与到达时间",
         "file": "crates/trit-circuit/src/timing.rs",
-        "old": "        start + u64::from(self.load_delay) * fanout as u64",
-        "new": "        start",
+        "old": "        start + u64::from(self.load_delay) * fanout as u64\n    }\n\n    /// 某类门在给定扇出下的延迟",
+        "new": "        start\n    }\n\n    /// 某类门在给定扇出下的延迟",
         "pkg": "trit-circuit",
         "filter": "load_delay_accumulates_with_fanout"
     },
@@ -298,8 +298,8 @@ MUTANTS = [
     {
         "name": "map: 面积策略按延迟排序",
         "file": "crates/trit-circuit/src/map.rs",
-        "old": "                MapStrategy::Area => (candidate.cells as u64, candidate.arrival as u64),",
-        "new": "                MapStrategy::Area => (candidate.arrival as u64, candidate.cells as u64),",
+        "old": "                MapStrategy::Area => (candidate.area as u64, candidate.arrival as u64),",
+        "new": "                MapStrategy::Area => (candidate.arrival as u64, candidate.area as u64),",
         "pkg": "trit-circuit",
         "filter": "timing_driven_picks_lower_arrival_implementation"
     },
@@ -402,15 +402,15 @@ MUTANTS = [
     {
         "name": "timing: 到达时间忽略引脚弧",
         "file": "crates/trit-circuit/src/timing.rs",
-        "old": "            .map(|(index, arrival)| u64::from(*arrival) + u64::from(self.arc_delay(kind, index)))\n",
-        "new": "            .map(|(_index, arrival)| u64::from(*arrival))\n",
+        "old": "            .map(|(index, arrival)| {\n                u64::from(*arrival) + u64::from(self.arc_delay_for_gate(gate, index))\n            })",
+        "new": "            .map(|(_index, arrival)| u64::from(*arrival))",
         "pkg": "trit-circuit",
         "filter": "pin_arcs_change_arrival_and_critical_path"
     },
     {
         "name": "timing: 关键路径忽略引脚弧",
         "file": "crates/trit-circuit/src/timing.rs",
-        "old": "                    let arc = u64::from(model.arc_delay(gate.kind, input_index));\n",
+        "old": "                    let arc = u64::from(model.arc_delay_for_gate(gate, input_index));\n",
         "new": "                    let arc = 0u64;\n",
         "pkg": "trit-circuit",
         "filter": "pin_arcs_change_arrival_and_critical_path"
@@ -458,8 +458,8 @@ MUTANTS = [
     {
         "name": "bridge: 空列表不失败",
         "file": "crates/trit-circuit/src/bridge.rs",
-        "old": "    if pairs.is_empty() {\n        return Err(BridgeError::NoPairs);\n    }\n",
-        "new": "    if false {\n        return Err(BridgeError::NoPairs);\n    }\n",
+        "old": "    if pairs.is_empty() {\n        return Err(BridgeError::NoPairs);\n    }\n    let inputs = circuit.input_count();\n    if inputs > 16 {",
+        "new": "    if false {\n        return Err(BridgeError::NoPairs);\n    }\n    let inputs = circuit.input_count();\n    if inputs > 16 {",
         "pkg": "trit-circuit",
         "filter": "validation_rejects_empty_unknown_and_same_pairs"
     },
@@ -474,10 +474,10 @@ MUTANTS = [
     {
         "name": "verilog: 向量位选择恒取 bit 0",
         "file": "crates\\trit-circuit\\src\\verilog\\expr.rs",
-        "old": "                Ok(VExpr::Var(format!(\"{name}[{index}]\")))\n",
-        "new": "                Ok(VExpr::Var(format!(\"{name}[0]\")))\n",
+        "old": "                    return Ok(VExpr::Var(format!(\"{name}[{index}]\")));",
+        "new": "                    return Ok(VExpr::Var(format!(\"{name}[0]\")));",
         "pkg": "trit-circuit",
-        "filter": "parses_vector_ports_and_vectorized_bitwise_assign"
+        "filter": "parses_bit_selects_and_concatenation"
     },
     {
         "name": "verilog: 拼接按 MSB-first 误解",
@@ -490,16 +490,16 @@ MUTANTS = [
     {
         "name": "verilog: 向量端口只展开 bit 0",
         "file": "crates\\trit-circuit\\src\\verilog\\parse.rs",
-        "old": "                    .insert(name.clone(), Bus::new(name.clone(), msb + 1));\n                for index in (0..=msb).rev() {",
-        "new": "                    .insert(name.clone(), Bus::new(name.clone(), msb + 1));\n                for index in [0] {",
+        "old": "                for index in order {",
+        "new": "                for index in [0] {",
         "pkg": "trit-circuit",
         "filter": "parses_vector_ports_and_vectorized_bitwise_assign"
     },
     {
         "name": "verilog: 导出不分组向量端口",
         "file": "crates\\trit-circuit\\src\\verilog\\export.rs",
-        "old": "            (max, true)",
-        "new": "            (max, false)",
+        "old": "            (max, true, bus.ascending)",
+        "new": "            (max, false, bus.ascending)",
         "pkg": "trit-circuit",
         "filter": "vector_round_trip_regroups_ports"
     },
@@ -594,8 +594,8 @@ MUTANTS = [
     {
         "name": "sat: 常量 false 被强制成真",
         "file": "crates/trit-circuit/src/sat_cnf.rs",
-        "old": "        solver.add_clause(&[Lit::from_var(false_var, false)]);\n",
-        "new": "        solver.add_clause(&[Lit::from_var(false_var, true)]);\n",
+        "old": "        solver.add_clause(&[Lit::from_var(false_var, false)]);\n        let mut encoded = Self {",
+        "new": "        solver.add_clause(&[Lit::from_var(false_var, true)]);\n        let mut encoded = Self {",
         "pkg": "trit-circuit",
         "filter": "sat_matches_exhaustive_on_random_small_circuits"
     },
@@ -626,24 +626,24 @@ MUTANTS = [
     {
         "name": "bridge: 不要求两端取值不同",
         "file": "crates/trit-circuit/src/bridge.rs",
-        "old": "        cnf.require_good_difference(&pair.a, &pair.b)?;\n",
-        "new": "        if false { cnf.require_good_difference(&pair.a, &pair.b)?; }\n",
+        "old": "    cnf.require_good_difference(&pair.a, &pair.b)?;",
+        "new": "    if false { cnf.require_good_difference(&pair.a, &pair.b)?; }",
         "pkg": "trit-circuit",
         "filter": "sat_bridge_matches_exhaustive_for_small_circuits"
     },
     {
         "name": "bridge: wired 值反转",
         "file": "crates/trit-circuit/src/bridge.rs",
-        "old": "        let value = matches!(pair.mode, BridgeMode::Or);\n",
-        "new": "        let value = !matches!(pair.mode, BridgeMode::Or);\n",
+        "old": "    let value = matches!(pair.mode, BridgeMode::Or);",
+        "new": "    let value = !matches!(pair.mode, BridgeMode::Or);",
         "pkg": "trit-circuit",
         "filter": "sat_bridge_matches_exhaustive_for_small_circuits"
     },
     {
         "name": "bridge: 不要求输出不同",
         "file": "crates/trit-circuit/src/bridge.rs",
-        "old": "        cnf.require_output_difference()?;\n",
-        "new": "        if false { cnf.require_output_difference()?; }\n",
+        "old": "    cnf.require_output_difference()?;",
+        "new": "    if false { cnf.require_output_difference()?; }",
         "pkg": "trit-circuit",
         "filter": "sat_bridge_matches_exhaustive_for_small_circuits"
     },
@@ -690,16 +690,16 @@ MUTANTS = [
     {
         "name": "sdf: 向下取整",
         "file": "crates/trit-circuit/src/sdf.rs",
-        "old": "        let rounded = value.ceil();\n",
-        "new": "        let rounded = value.floor();\n",
+        "old": "    let rounded = value.ceil();",
+        "new": "    let rounded = value.floor();",
         "pkg": "trit-circuit",
         "filter": "sdf::tests::parses_and_rounds_up_the_worst_arc"
     },
     {
         "name": "sdf: 跨实例取最小",
         "file": "crates/trit-circuit/src/sdf.rs",
-        "old": "                    .and_modify(|current| *current = current.max(worst))\n",
-        "new": "                    .and_modify(|current| *current = current.min(worst))\n",
+        "old": "                out.entry(cell.to_string())\n                    .and_modify(|current| *current = current.max(worst))\n                    .or_insert(worst);",
+        "new": "                out.entry(cell.to_string())\n                    .and_modify(|current| *current = current.min(worst))\n                    .or_insert(worst);",
         "pkg": "trit-circuit",
         "filter": "sdf::tests::takes_the_max_across_instances_and_conditional_arcs"
     },
