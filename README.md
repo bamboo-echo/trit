@@ -24,7 +24,7 @@ GitHub Releases（`v0.3.1` 起）提供：
 
 | crate | 内容 |
 |---|---|
-| `trit-core` | `Ternary`、K3/Ł3/B3、AST、解析器、位并行 `TriBit`、位切片 `TriVec` |
+| `trit-core` | `Ternary`、`TriState`（0/1/Z）、三值拓扑、K3/Ł3/B3、AST、解析器、位并行 `TriBit`、位切片 `TriVec` |
 | `trit-eval` | 求值、真值表、穷举等价、化简 |
 | `trit-sat` | dual-rail + SAT 等价判定与反例 |
 | `trit-circuit` | 组合网表 X 传播、stuck-at/桥接可测性、ATPG、STA-lite、技术映射、结构化 Verilog |
@@ -35,6 +35,25 @@ GitHub Releases（`v0.3.1` 起）提供：
 | `trit-schedule` | 三值依赖的静态 DAG 调度（True/False/Unknown） |
 | `sansheng` | 三生：统一入口伞包（re-export 以上能力） |
 | `trit-cli` | `trit` 命令行 |
+
+## 三态与三值拓扑
+
+`TriState` 表示 0 / 1 / Z（高阻），与逻辑未知 `X` 区分：`Z` 不驱动总线，可被其他驱动覆盖。
+`TriState::resolve` 逐条解析驱动，0 与 1 同时驱动报冲突；`TriStateBus` 做逐位解析，
+`to_ternary()` 把 `Z` 映射为 `Unknown`。
+
+`TernaryTopology` 是有向图的三值可达性：边值 `True` / `Unknown` / `False`；路径值取边值最小值，
+同一对节点取所有路径最大值。纯 `True` 路径 → `True`，只有含 `Unknown` 边的路径 → `Unknown`，
+没有可用路径 → `False`；`False` 边视为断开。
+
+```rust
+let mut graph = TernaryTopology::new(3);
+graph.add_edge(0, 1, Ternary::Unknown)?;
+graph.add_edge(1, 2, Ternary::True)?;
+assert_eq!(graph.reachability(0)?, vec![
+    Ternary::True, Ternary::Unknown, Ternary::Unknown,
+]);
+```
 
 ## 三值调度（`trit schedule`）
 

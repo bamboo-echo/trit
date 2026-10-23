@@ -34,6 +34,8 @@
 ## 已归类的例子
 
 - `Ternary::{False, Unknown, True}` 是 **A**：三态是原子值，不是 `(bool, err)`。
+- `TriState::{Low, High, HighZ}` 是**电气三态**，与逻辑 `X` 分开；`Z` 只参与总线解析，
+  不进入逻辑代数。`TernaryTopology` 用 `False < Unknown < True` 格序做路径可达性。
 - 双导轨 `(ones, unknowns)` 每 trit 占 2 bit 是 **B**：为了在二进制硬件上位并行。
 - `unknowns: Option<Vec<u64>>` 惰性分配、`from_binary` 零拷贝是 B 的**减税**，
   不改变“2 bit/trit”的事实。

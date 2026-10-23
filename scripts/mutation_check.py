@@ -1032,6 +1032,30 @@ MUTANTS = [
         "filter": "missing_checkpoint_uses_factory"
     },
     {
+        "name": "tristate: Z 不吸收",
+        "file": "crates/trit-core/src/tristate.rs",
+        "old": "            (Self::HighZ, value) | (value, Self::HighZ) => Ok(value),\n",
+        "new": "            (Self::HighZ, Self::HighZ) => Ok(Self::HighZ),\n",
+        "pkg": "trit-core",
+        "filter": "resolution_table_and_conflict"
+    },
+    {
+        "name": "tristate: 总线宽度不校验",
+        "file": "crates/trit-core/src/tristate.rs",
+        "old": "        if self.width() != other.width() {\n",
+        "new": "        if false {\n",
+        "pkg": "trit-core",
+        "filter": "bus_resolves_lane_by_lane_and_checks_widths"
+    },
+    {
+        "name": "topology: 路径取最大值",
+        "file": "crates/trit-core/src/topology.rs",
+        "old": "                let path = source.min(edge.value);\n",
+        "new": "                let path = source.max(edge.value);\n",
+        "pkg": "trit-core",
+        "filter": "unknown_edge_propagates_unknown_until_true_path_exists"
+    },
+    {
         "name": "exact: 冲突值不合并",
         "file": "crates/trit-circuit/src/circuit/sim.rs",
         "old": "                Some(_) => {\n                    values.insert(name, Ternary::Unknown);\n                }\n",
