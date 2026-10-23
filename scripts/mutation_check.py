@@ -1223,6 +1223,30 @@ MUTANTS = [
         "new": "            '-' => 1,",
         "pkg": "trit-codec",
         "filter": "small_values"
+    },
+    {
+        "name": "net-format: 不校验魔数",
+        "file": "crates/trit-net/src/format.rs",
+        "old": "    if magic != MAGIC {",
+        "new": "    if false {",
+        "pkg": "trit-net",
+        "filter": "bad_magic_is_rejected"
+    },
+    {
+        "name": "net-format: 打包长度向上取整改成向下",
+        "file": "crates/trit-net/src/format.rs",
+        "old": "        let bytes = self.take(trits.div_ceil(5))?;",
+        "new": "        let bytes = self.take(trits / 5)?;",
+        "pkg": "trit-net",
+        "filter": "round_trip_preserves_weights"
+    },
+    {
+        "name": "net-train: 梯度上升",
+        "file": "crates/trit-net/src/train.rs",
+        "old": "        let scale = options.learning_rate / count;",
+        "new": "        let scale = -options.learning_rate / count;",
+        "pkg": "trit-net",
+        "filter": "majority_five_is_learned"
     }
 ]
 

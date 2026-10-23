@@ -10,8 +10,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod format;
+pub mod train;
+
 mod infer;
 mod model;
 
 pub use infer::{Analysis, DEFAULT_BUDGET, Outcome, Sign, Witness, analyze, forward};
 pub use model::{Layer, Model, ModelError};
+pub use train::{TrainError, TrainOptions, TrainReport, majority_dataset, train};

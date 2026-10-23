@@ -4,16 +4,139 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use trit_core::value::Ternary;
-use trit_net::{Analysis, DEFAULT_BUDGET, Model, Outcome, analyze};
+use trit_net::{
+    Analysis, DEFAULT_BUDGET, Layer, Model, Outcome, TrainOptions, analyze, format,
+    majority_dataset, train,
+};
 
 fn main() -> ExitCode {
-    match run() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let result = match args.first().map(String::as_str) {
+        Some("format") => format_cmd(&args[1..]),
+        Some("train") => train_cmd(&args[1..]),
+        _ => run(),
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("{message}");
             ExitCode::FAILURE
         }
     }
+}
+
+fn format_cmd(args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("encode") => {
+            let path = args.get(1).ok_or("format encode 需要 MODEL.json")?;
+            let text = std::fs::read_to_string(path)
+                .map_err(|error| format!("读取模型失败 {path}：{error}"))?;
+            let model = Model::from_json(&text).map_err(|error| error.to_string())?;
+            let bytes = format::encode(&model);
+            let mut obj = serde_json::json!({
+                "model": path,
+                "bytes": bytes.len(),
+                "json_bytes": text.len(),
+            });
+            match args.iter().position(|arg| arg == "--out") {
+                Some(index) => {
+                    let out = args.get(index + 1).ok_or("--out 缺少路径")?;
+                    std::fs::write(out, &bytes)
+                        .map_err(|error| format!("写入 {out} 失败：{error}"))?;
+                    obj["out"] = serde_json::Value::String(out.clone());
+                }
+                None => {
+                    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+                    obj["hex"] = serde_json::Value::String(hex);
+                }
+            }
+            println!("{}", serde_json::to_string_pretty(&obj).unwrap_or_default());
+            Ok(())
+        }
+        Some("decode") => {
+            let path = args.get(1).ok_or("format decode 需要 .trn 文件")?;
+            let bytes =
+                std::fs::read(path).map_err(|error| format!("读取模型失败 {path}：{error}"))?;
+            let model = format::decode(&bytes).map_err(|error| error.to_string())?;
+            let obj = serde_json::json!({"model": model, "bytes": bytes.len()});
+            println!("{}", serde_json::to_string_pretty(&obj).unwrap_or_default());
+            Ok(())
+        }
+        _ => Err(
+            "用法：trit-net format <encode MODEL.json [--out FILE] | decode FILE.trn>".to_string(),
+        ),
+    }
+}
+
+fn flag_value(args: &[String], name: &str) -> Option<String> {
+    args.iter()
+        .position(|arg| arg == name)
+        .and_then(|index| args.get(index + 1).cloned())
+}
+
+fn train_cmd(args: &[String]) -> Result<(), String> {
+    let epochs = flag_value(args, "--epochs").map_or(Ok(300), |raw| {
+        raw.parse().map_err(|_| "epochs 不是整数".to_string())
+    })?;
+    let hidden = flag_value(args, "--hidden").map_or(Ok(6), |raw| {
+        raw.parse().map_err(|_| "hidden 不是整数".to_string())
+    })?;
+    let learning_rate = flag_value(args, "--lr").map_or(Ok(0.3), |raw| {
+        raw.parse::<f32>().map_err(|_| "lr 不是数字".to_string())
+    })?;
+    let inputs = 5;
+    let mut model = Model {
+        layers: vec![
+            Layer {
+                inputs,
+                outputs: hidden,
+                weights: (0..hidden)
+                    .map(|row| {
+                        (0..inputs)
+                            .map(|col| if (row + col) % 3 == 0 { 1 } else { -1 })
+                            .collect()
+                    })
+                    .collect(),
+                bias: vec![0; hidden],
+            },
+            Layer {
+                inputs: hidden,
+                outputs: 1,
+                weights: vec![
+                    (0..hidden)
+                        .map(|col| if col % 2 == 0 { 1 } else { -1 })
+                        .collect(),
+                ],
+                bias: vec![0],
+            },
+        ],
+    };
+    let (samples, labels) = majority_dataset(inputs);
+    let report = train(
+        &mut model,
+        &samples,
+        &labels,
+        TrainOptions {
+            epochs,
+            learning_rate,
+            seed: 11,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let bytes = format::encode(&model);
+    let obj = serde_json::json!({
+        "task": format!("majority of {inputs}"),
+        "samples": samples.len(),
+        "hidden": hidden,
+        "epochs": report.epochs,
+        "initial_loss": report.initial_loss,
+        "final_loss": report.final_loss,
+        "shadow_accuracy": report.shadow_accuracy,
+        "ternary_accuracy": report.ternary_accuracy,
+        "model_bytes": bytes.len(),
+    });
+    println!("{}", serde_json::to_string_pretty(&obj).unwrap_or_default());
+    Ok(())
 }
 
 struct Args {
@@ -60,7 +183,7 @@ fn parse_args() -> Result<Args, String> {
 }
 
 fn usage() -> String {
-    "用法：trit-net infer MODEL.json --inputs 1,X,0 [--budget N] [--json]".to_string()
+    "用法：trit-net <infer MODEL.json --inputs 1,X,0 [--budget N] [--json] | format encode|decode | train [--epochs N]>".to_string()
 }
 
 fn parse_inputs(raw: &str) -> Result<Vec<Ternary>, String> {
