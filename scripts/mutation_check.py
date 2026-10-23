@@ -814,6 +814,54 @@ MUTANTS = [
         "new": "    (-task.priority, task.duration, task.id.clone(), position)\n",
         "pkg": "trit-schedule",
         "filter": "higher_priority_is_scheduled_first"
+    },
+    {
+        "name": "runtime: 忽略取消",
+        "file": "crates/trit-schedule/src/runtime.rs",
+        "old": "        if cancel.is_cancelled() && !state.stop {\n",
+        "new": "        if false && !state.stop {\n",
+        "pkg": "trit-schedule",
+        "filter": "cancellation_prevents_unstarted_tasks"
+    },
+    {
+        "name": "runtime: 依赖完成不传播",
+        "file": "crates/trit-schedule/src/runtime.rs",
+        "old": "                            state.indegree[next] -= 1;\n",
+        "new": "                            state.indegree[next] = 0;\n",
+        "pkg": "trit-schedule",
+        "filter": "join_waits_for_all_predecessors"
+    },
+    {
+        "name": "runtime: 失败后继续调度",
+        "file": "crates/trit-schedule/src/runtime.rs",
+        "old": "                Err(message) => {\n                    state.failed = Some(TaskFailure { task: id, message });\n                    state.stop = true;\n",
+        "new": "                Err(message) => {\n                    state.failed = Some(TaskFailure { task: id, message });\n                    state.stop = false;\n",
+        "pkg": "trit-schedule",
+        "filter": "failure_does_not_start_new_work"
+    },
+    {
+        "name": "runtime: 忽略资源配额",
+        "file": "crates/trit-schedule/src/runtime.rs",
+        "old": "            state\n                .capacity\n                .is_none_or(|capacity| state.requirements[*position].fits_in(capacity, state.used))\n",
+        "new": "            true\n",
+        "pkg": "trit-schedule",
+        "filter": "quota_serializes_tasks_that_do_not_fit_together"
+    },
+    {
+        "name": "runtime: 资源占用不累计",
+        "file": "crates/trit-schedule/src/runtime.rs",
+        "old": "            state.used = state\n                .used\n                .checked_add(requirements)\n                .expect(\"预检保证资源相加不溢出\");\n",
+        "new": "            state.used = requirements;\n",
+        "pkg": "trit-schedule",
+        "filter": "quota_accumulates_across_tasks"
+    },
+    {
+        "name": "runtime: 超容量不拒绝",
+        "file": "crates/trit-schedule/src/runtime.rs",
+        "old": "            if !tasks[position]\n                .requirements\n                .fits_in(capacity, Resources::default())\n            {\n",
+        "new": "            if false {\n",
+        "pkg": "trit-schedule",
+        "filter": "task_exceeding_capacity_is_rejected"
     }
 ]
 

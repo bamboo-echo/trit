@@ -10,6 +10,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod runtime;
+
+pub use runtime::{
+    CancelToken, Resources, RuntimeConfig, RuntimeError, RuntimeReport, RuntimeTask, TaskFailure,
+    run as run_runtime, run_with_config,
+};
+
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
 
