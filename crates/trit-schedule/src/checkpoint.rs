@@ -76,6 +76,46 @@ impl Checkpoint {
     }
 }
 
+/// 多任务索引中的一项。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointEntry {
+    /// 任务 id。
+    pub task_id: String,
+    /// 最新代号。
+    pub generation: u64,
+    /// 最新状态字节数。
+    pub state_bytes: u64,
+}
+
+/// 多任务检查点索引；只含元数据，不读取状态内容。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointIndex {
+    /// 索引格式版本（与检查点版本一致）。
+    pub version: u32,
+    /// 按 task id 升序排列。
+    pub entries: Vec<CheckpointEntry>,
+}
+
+impl CheckpointIndex {
+    /// 任务数。
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// 是否没有任务。
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// 按 task id 查找。
+    pub fn get(&self, task_id: &str) -> Option<&CheckpointEntry> {
+        self.entries
+            .binary_search_by(|entry| entry.task_id.as_str().cmp(task_id))
+            .ok()
+            .map(|index| &self.entries[index])
+    }
+}
+
 /// 能保存自身状态的可恢复任务。
 pub trait CheckpointTask: ResumableTask {
     /// 编码当前状态；调用方保证在 `Yield` 边界调用。
@@ -307,6 +347,57 @@ impl FileCheckpointStore {
         Ok(remove)
     }
 
+    /// 扫描版本目录，生成按 task id 排序的多任务索引。
+    pub fn index(&self) -> Result<CheckpointIndex, CheckpointError> {
+        let dir = self.version_dir();
+        let mut entries = Vec::new();
+        if dir.exists() {
+            for entry in fs::read_dir(&dir).map_err(io_error)? {
+                let path = entry.map_err(io_error)?.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                let task_id = hex_decode(name)?;
+                let Some(generation) = latest_generation(&path)? else {
+                    continue;
+                };
+                let Some(file) = latest_checkpoint_file(&path)? else {
+                    continue;
+                };
+                let state_bytes = fs::metadata(&file).map_err(io_error)?.len();
+                entries.push(CheckpointEntry {
+                    task_id,
+                    generation,
+                    state_bytes,
+                });
+            }
+        }
+        entries.sort_by(|left, right| left.task_id.cmp(&right.task_id));
+        Ok(CheckpointIndex {
+            version: CHECKPOINT_VERSION,
+            entries,
+        })
+    }
+
+    /// 任务 id 列表（按索引顺序）。
+    pub fn task_ids(&self) -> Result<Vec<String>, CheckpointError> {
+        Ok(self
+            .index()?
+            .entries
+            .into_iter()
+            .map(|entry| entry.task_id)
+            .collect())
+    }
+
+    /// 索引的 JSON 表示（便于外部工具消费）。
+    pub fn index_json(&self) -> Result<String, CheckpointError> {
+        serde_json::to_string_pretty(&self.index()?)
+            .map_err(|error| CheckpointError::InvalidState(error.to_string()))
+    }
+
     /// 已保存的任务数。
     pub fn len(&self) -> Result<usize, CheckpointError> {
         let dir = self.version_dir();
@@ -345,6 +436,23 @@ fn hex_encode(bytes: &[u8]) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+fn hex_decode(text: &str) -> Result<String, CheckpointError> {
+    if !text.len().is_multiple_of(2) {
+        return Err(CheckpointError::InvalidState(format!(
+            "任务目录名不是十六进制: {text}"
+        )));
+    }
+    let mut bytes = Vec::with_capacity(text.len() / 2);
+    for pair in text.as_bytes().chunks(2) {
+        let pair = std::str::from_utf8(pair)
+            .map_err(|error| CheckpointError::InvalidState(error.to_string()))?;
+        let byte = u8::from_str_radix(pair, 16)
+            .map_err(|_| CheckpointError::InvalidState(format!("非法十六进制目录: {text}")))?;
+        bytes.push(byte);
+    }
+    String::from_utf8(bytes).map_err(|error| CheckpointError::InvalidState(error.to_string()))
 }
 
 fn checkpoint_files(dir: &Path) -> Result<Vec<PathBuf>, CheckpointError> {
@@ -628,5 +736,50 @@ mod file_store_tests {
         ));
         assert!(store.is_empty().unwrap());
         cleanup(&root);
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "trit-index-{}-{}-{}",
+            std::process::id(),
+            nanos(),
+            TEMP_SEQ.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn index_lists_latest_generations_sorted() {
+        let root = temp_root();
+        let store = FileCheckpointStore::new(&root);
+        assert!(store.index().unwrap().is_empty());
+        store.save(&Checkpoint::new("b", vec![1, 2, 3])).unwrap();
+        store.save(&Checkpoint::new("a/任务", vec![4])).unwrap();
+        store.save(&Checkpoint::new("a/任务", vec![5, 6])).unwrap();
+        let index = store.index().unwrap();
+        assert_eq!(index.version, CHECKPOINT_VERSION);
+        assert_eq!(index.len(), 2);
+        assert_eq!(
+            index
+                .entries
+                .iter()
+                .map(|entry| entry.task_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a/任务", "b"]
+        );
+        let entry = index.get("a/任务").unwrap();
+        assert_eq!(entry.generation, 2);
+        assert!(entry.state_bytes > 10, "{entry:?}");
+        assert_eq!(store.task_ids().unwrap(), vec!["a/任务", "b"]);
+        assert!(store.index_json().unwrap().contains("a/任务"));
+        assert!(store.index().unwrap().get("missing").is_none());
+        let _ = fs::remove_dir_all(&root);
     }
 }

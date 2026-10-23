@@ -70,6 +70,14 @@
 - 测试：往返/代号递增、id 转义、prune/remove、版本拒绝；crate 33 → 36。
 - 变异门 117 → 120（保存版本校验、加载最新代、prune 保留）。
 
+### Added（0.12 checkpoint index）
+
+- `CheckpointIndex` / `CheckpointEntry`：扫描 `v1/<hex>/`，列出 task id、最新代、状态字节数；
+  按 task id 排序，只读元数据，不加载状态。
+- `FileCheckpointStore::index()` / `task_ids()` / `index_json()`；`CheckpointIndex::get()`。
+- 测试：多任务排序、unicode/slash id、最新代、空索引；crate 36 → 37。
+- 变异门 120 → 123（id 解码、排序、state_bytes）。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，

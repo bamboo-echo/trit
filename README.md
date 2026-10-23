@@ -134,6 +134,9 @@ let restored = store.lock().unwrap().restore(&MyRestorer, "counter")?;
 每次保存写同目录临时文件，再 `rename` 到**新**代文件，不覆盖旧代；加载取最大代。
 `prune(task_id, keep)` 控制保留代数，`remove(task_id)` 清理任务目录。
 
+`index()` 扫描版本目录生成按 task id 排序的 `CheckpointIndex`（task id、最新代、状态字节数），
+只读元数据不加载状态；`task_ids()` / `index_json()` 便于外部工具消费。
+
 指标可直接导出 Prometheus/OpenMetrics 文本：
 
 ```rust

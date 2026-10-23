@@ -974,6 +974,30 @@ MUTANTS = [
         "new": "        for path in files.into_iter().skip(keep) {\n",
         "pkg": "trit-schedule",
         "filter": "file_store_prunes_and_removes"
+    },
+    {
+        "name": "index: 不解码 task id",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "                let task_id = hex_decode(name)?;\n",
+        "new": "                let task_id = name.to_string();\n",
+        "pkg": "trit-schedule",
+        "filter": "index_lists_latest_generations_sorted"
+    },
+    {
+        "name": "index: 倒序",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "        entries.sort_by(|left, right| left.task_id.cmp(&right.task_id));\n",
+        "new": "        entries.sort_by(|left, right| right.task_id.cmp(&left.task_id));\n",
+        "pkg": "trit-schedule",
+        "filter": "index_lists_latest_generations_sorted"
+    },
+    {
+        "name": "index: state_bytes 取代号",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "                let state_bytes = fs::metadata(&file).map_err(io_error)?.len();\n",
+        "new": "                let state_bytes = generation;\n",
+        "pkg": "trit-schedule",
+        "filter": "index_lists_latest_generations_sorted"
     }
 ]
 
