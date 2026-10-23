@@ -1,0 +1,12 @@
+[package]
+name = "trit-float"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "平衡三进制浮点实验层：尾数/指数/舍入与同比特精度对比（不属于稳定 API）"
+publish = false
+
+[dependencies]
+serde_json = "1.0.154"
