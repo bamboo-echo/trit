@@ -176,6 +176,14 @@ MUTANTS = [
         "filter": "sized_literal_zero_extends_to_wider_vector"
     },
     {
+        "name": "netlist: JSON 新版本不拒绝",
+        "file": "crates/trit-circuit/src/netlist.rs",
+        "old": "    if parsed.format > JSON_FORMAT {",
+        "new": "    if false {",
+        "pkg": "trit-circuit",
+        "filter": "json_format_is_versioned_and_rejects_newer"
+    },
+    {
         "name": "netlist: gate 参数计数失效",
         "file": "crates/trit-circuit/src/netlist.rs",
         "old": "                if parts.len() != 5 {",
