@@ -1,5 +1,7 @@
 //! 网表文本格式：`input` / `output` / `gate` / `not` / `buf` / `const`。
 
+use serde::de::Error as _;
+
 use crate::circuit::{Circuit, CircuitError, Gate, GateKind, Signal, validate};
 use trit_core::value::Ternary;
 
@@ -111,14 +113,42 @@ pub fn parse_netlist(text: &str) -> Result<Circuit, NetlistError> {
     Ok(circuit)
 }
 
-/// 序列化为 JSON（字段与 [`Circuit`] 一致）。
-pub fn to_json(circuit: &Circuit) -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(circuit)
+/// 当前网表 JSON 格式版本；缺省 `format` 视为旧版 0。
+const JSON_FORMAT: u32 = 1;
+
+#[derive(serde::Serialize)]
+struct NetlistJson<'a> {
+    format: u32,
+    #[serde(flatten)]
+    circuit: &'a Circuit,
 }
 
-/// 从 JSON 读取电路；结构合法性留给 `analyze` 校验。
+#[derive(serde::Deserialize)]
+struct NetlistJsonOwned {
+    #[serde(default)]
+    format: u32,
+    #[serde(flatten)]
+    circuit: Circuit,
+}
+
+/// 序列化为 JSON：带 `format` 版本字段，其余字段与 [`Circuit`] 一致。
+pub fn to_json(circuit: &Circuit) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&NetlistJson {
+        format: JSON_FORMAT,
+        circuit,
+    })
+}
+
+/// 从 JSON 读取电路；旧版（无 `format`）按 0 接受，更新版本拒绝。
 pub fn from_json(text: &str) -> Result<Circuit, serde_json::Error> {
-    serde_json::from_str(text)
+    let parsed: NetlistJsonOwned = serde_json::from_str(text)?;
+    if parsed.format > JSON_FORMAT {
+        return Err(serde_json::Error::custom(format!(
+            "不支持的网表 JSON 格式版本 {}（当前支持 0..={JSON_FORMAT}）",
+            parsed.format
+        )));
+    }
+    Ok(parsed.circuit)
 }
 
 /// 把电路序列化回网表文本（`parse_netlist` 的逆操作）。
@@ -203,6 +233,21 @@ mod tests {
         assert!(json.contains("\"inputs\""), "{json}");
         assert!(json.contains("\"And\""), "{json}");
         assert_eq!(from_json(&json).unwrap(), circuit);
+    }
+
+    #[test]
+    fn json_format_is_versioned_and_rejects_newer() {
+        let circuit = parse_netlist(AND).unwrap();
+        let json = to_json(&circuit).unwrap();
+        assert!(json.contains("\"format\": 1"), "{json}");
+
+        let legacy = serde_json::to_string(&circuit).unwrap();
+        assert!(!legacy.contains("\"format\""), "{legacy}");
+        assert_eq!(from_json(&legacy).unwrap(), circuit);
+
+        let newer = json.replace("\"format\": 1", "\"format\": 2");
+        let err = from_json(&newer).unwrap_err();
+        assert!(err.to_string().contains("格式版本 2"), "{err}");
     }
 
     #[test]

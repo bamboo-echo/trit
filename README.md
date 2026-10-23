@@ -104,8 +104,8 @@ cargo run --release -p trit-cli -- verify examples/policy.json
   `Limit`／`BudgetExceeded` 错误；策略展开在分配大子树之前扣节点预算。
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-`python scripts/mutation_check.py` 对 61 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 61/61）；`.github/workflows/mutation.yml` 每周跑一次。
+`python scripts/mutation_check.py` 对 62 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住（当前 62/62）；`.github/workflows/mutation.yml` 每周跑一次。
 
 ## fuzz 与基准
 
@@ -380,6 +380,7 @@ JSON 输出含每对的 `testable`/`witness` 与测试向量 `patterns`。
 与未声明向量的非连续位；`always/reg/initial` 一律拒绝。
 `trit netlist design.v --from verilog --to verilog` 可做向量端口往返。
 格式互转：`trit netlist design.net`（text → JSON），`trit netlist design.json --from json --to text`。
+JSON 带 `format: 1` 版本字段；缺少 `format` 的旧文件按 0 读取，更高版本会被拒绝。
 网表指令：`input` / `output` / `gate <AND|OR|XOR|NAND|NOR> <a> <b> <out>` / `not <a> <out>` /
 `buf <a> <out>` / `const <0|1|X> <out>`。`examples/x_mask.net` 是 `X & 0`、`X | 1` 遮蔽的最小例子。
 同一信号被多个源驱动、或主输入重复声明，都会在分析前报错。
