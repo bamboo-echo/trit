@@ -1,0 +1,40 @@
+input i0
+input i1
+input i2
+input i3
+input i4
+input i5
+input i6
+input i7
+input i8
+input i9
+input i10
+input i11
+input i12
+input i13
+input i14
+input i15
+input i16
+input i17
+input i18
+input i19
+gate AND i0 i1 n1
+gate AND n1 i2 n2
+gate AND n2 i3 n3
+gate AND n3 i4 n4
+gate AND n4 i5 n5
+gate AND n5 i6 n6
+gate AND n6 i7 n7
+gate AND n7 i8 n8
+gate AND n8 i9 n9
+gate AND n9 i10 n10
+gate AND n10 i11 n11
+gate AND n11 i12 n12
+gate AND n12 i13 n13
+gate AND n13 i14 n14
+gate AND n14 i15 n15
+gate AND n15 i16 n16
+gate AND n16 i17 n17
+gate AND n17 i18 n18
+gate AND n18 i19 n19
+output n19

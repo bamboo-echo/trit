@@ -169,6 +169,9 @@ enum Commands {
         /// 输出格式。
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
+        /// 用 SAT 逐故障求解（支持 ≤64 主输入；不可测由 UNSAT 证明）。
+        #[arg(long)]
+        sat: bool,
     },
     /// 桥接故障（wired-AND / wired-OR）可测性与测试向量。
     Bridge {
@@ -373,9 +376,12 @@ fn main() -> Result<()> {
             from,
             format,
         } => commands::circuit::cmd_circuit(&path, format, &cli.algebra, assign.as_deref(), &from),
-        Commands::Atpg { path, from, format } => {
-            commands::atpg::cmd_atpg(&path, format, &cli.algebra, &from)
-        }
+        Commands::Atpg {
+            path,
+            from,
+            format,
+            sat,
+        } => commands::atpg::cmd_atpg(&path, format, &cli.algebra, &from, sat),
         Commands::Bridge {
             path,
             from,

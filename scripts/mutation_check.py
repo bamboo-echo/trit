@@ -590,6 +590,38 @@ MUTANTS = [
         "new": "            let child_index = if false && child_asc {\n",
         "pkg": "trit-circuit",
         "filter": "hierarchical_cross_direction_bus_maps_by_position"
+    },
+    {
+        "name": "sat: 常量 false 被强制成真",
+        "file": "crates/trit-circuit/src/atpg/sat.rs",
+        "old": "        solver.add_clause(&[Lit::from_var(false_var, false)]);\n",
+        "new": "        solver.add_clause(&[Lit::from_var(false_var, true)]);\n",
+        "pkg": "trit-circuit",
+        "filter": "sat_matches_exhaustive_on_random_small_circuits"
+    },
+    {
+        "name": "sat: 不要求输出不同",
+        "file": "crates/trit-circuit/src/atpg/sat.rs",
+        "old": "        encoded.solver.add_clause(&differences);\n",
+        "new": "        if false { encoded.solver.add_clause(&differences); }\n",
+        "pkg": "trit-circuit",
+        "filter": "sat_matches_exhaustive_on_random_small_circuits"
+    },
+    {
+        "name": "sat: 故障引脚不注入",
+        "file": "crates/trit-circuit/src/atpg/sat.rs",
+        "old": "                .map(|(_, pin, stuck)| (pin, stuck));\n",
+        "new": "                .map(|(_, _pin, stuck)| (usize::MAX, stuck));\n",
+        "pkg": "trit-circuit",
+        "filter": "sat_matches_exhaustive_on_random_small_circuits"
+    },
+    {
+        "name": "sat: Xor 一律按经典 XOR",
+        "file": "crates/trit-circuit/src/atpg/sat.rs",
+        "old": "                    GateKind::Xor => match self.alg {\n                        // Ł3 强加法在 0/1 上是 OR；K3/B3 是 AND。\n                        Algebra::Lukasiewicz => self.or(y, a, b),\n                        Algebra::Kleene | Algebra::Bochvar => self.and(y, a, b),\n                    },\n",
+        "new": "                    GateKind::Xor => self.xor(y, a, b),\n",
+        "pkg": "trit-circuit",
+        "filter": "sat_encodes_strong_xor_by_algebra"
     }
 ]
 

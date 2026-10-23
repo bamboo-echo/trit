@@ -834,3 +834,17 @@ fn map_area_first_without_cells_is_rejected() {
     assert_eq!(code, 1);
     assert!(stderr.contains("--area-first 需要配合 --cells"), "{stderr}");
 }
+
+#[test]
+fn atpg_sat_supports_more_than_ten_inputs() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/and20.net");
+    let (stdout, stderr, code) = run(&["atpg", path.to_str().unwrap(), "--sat"]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("SAT 逐故障"), "{stdout}");
+    assert!(stdout.contains("覆盖率 100.0%"), "{stdout}");
+
+    let (_, stderr, code) = run(&["atpg", path.to_str().unwrap()]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("可用 --sat"), "{stderr}");
+}

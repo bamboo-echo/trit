@@ -341,6 +341,14 @@ python -m http.server 8765 --directory playground
 主输入 ≤ 8 且 故障数 × `2^n` ≤ 50000 时会枚举全部向量再做贪心覆盖（`exhaustive`），否则退回每个故障的首个见证。
 故障数 ≤ 64 且向量数 ≤ 256 时再跑精确最小覆盖（`optimal`，DFS + 下界剪枝，10 万节点预算）。
 
+### SAT ATPG（>16 输入）
+
+`trit atpg design.net --sat`：对每个门引脚故障构造 good / faulty 两份 CNF，要求至少一个主输出不同。
+SAT 给出测试向量；UNSAT 证明不可测（原因记 `proven`）。上限 **64 个主输入**（`Fault.witness` 是 `u64` 掩码）；
+≤10 输入的枚举 / 贪心路径保持不变。SAT 路径不做 X don't-care 压缩（`x_coverage = 0`），也不证明测试集最小。
+`GateKind::Xor` 按所选代数编码：Ł3 在 0/1 上退化为 OR，K3/B3 退化为 AND。
+当前未设单故障求解超时；极端难例可能长时间运行。
+
 ### 桥接故障（`trit bridge`）
 
 把两条网络短路建模为 **wired-AND**（都拉到 0）或 **wired-OR**（都拉到 1）：只有当某个
