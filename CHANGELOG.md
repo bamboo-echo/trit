@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Changed（三值拓扑：两趟 BFS + 三值验证证书）
+
+- `TernaryTopology::reachability` 从「逐边松弛到不动点」改为**两趟 BFS**：先沿 `True` 边求
+  `True` 集，再从 `True` 集出发沿非 `False` 边求 `Unknown` 集。结果与旧最小不动点逐点一致
+  （200 个随机图上与参考实现逐点对拍），但**不再依赖边的插入顺序**。
+- 实测（研究探针，未入库）：稀疏随机图 1.7×；长链且边按拓扑序 0.3×（旧实现一轮扫完）；
+  同一条链边逆序时旧实现 12,500 轮 / 20.8 ms，新实现 0.10 ms（**199×**）；稠密图 1.1×。
+- 邻接表随 `add_edge` 持久维护：第一版每次调用重建邻接表，实测反而慢 3×，已改。
+
+### Added（三值自己的验证结论）
+
+- `TernaryTopology::explain(origin, target) -> ReachEvidence`：三值结论
+  `Verdict::{Proved, Undetermined, Refuted}` + `value` + `path` + `unknown_edges`。
+  `Proved` 给纯 `True` 路径；`Undetermined` 给一条路径与路径上需要补全的 `Unknown` 边；
+  `Refuted` 表示任何补全都不可达。结论是**通过 / 未定 / 否定**，不是二值的「可能」。
+- 新增 `trit topology FILE [--origin N] [--to M] [-f json]`：JSON 输入
+  （`nodes` / `origin` / `edges`，边值 `0`/`1`/`X`）；不给 `--to` 输出整张传播表，
+  给了则输出单点判定与证书。`TernaryTopology` 此前没有任何消费方，现在有了对外入口。
+- 测试：9 条库测试（200 组随机图与旧不动点对拍、100 组随机图 explain 与 reachability 一致）
+  + 4 条 CLI 集成测试。
+- 变异门 136 → **139**：删 1 条已失效的（拆模块后锚点落进测试代码），新增 4 条并逐条实跑判红。
+- 变异门 `preflight` 增加规则：锚点落在 `#[cfg(test)] mod ...` 之后直接报错——
+  改测试代码不改变产品行为，不该算覆盖。
+
 ### Added（X-Pessimism 分析）
 
 - `trit_circuit::circuit::analyze_x_pessimism`：把单遍传播给出的 `X` 分成**真 X**与

@@ -15,4 +15,5 @@ pub(crate) mod schedule;
 pub(crate) mod simplify;
 pub(crate) mod table;
 pub(crate) mod timing;
+pub(crate) mod topology;
 pub(crate) mod verify;

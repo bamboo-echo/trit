@@ -1049,14 +1049,6 @@ MUTANTS = [
         "filter": "bus_resolves_lane_by_lane_and_checks_widths"
     },
     {
-        "name": "topology: 路径取最大值",
-        "file": "crates/trit-core/src/topology.rs",
-        "old": "                let path = source.min(edge.value);\n",
-        "new": "                let path = source.max(edge.value);\n",
-        "pkg": "trit-core",
-        "filter": "unknown_edge_propagates_unknown_until_true_path_exists"
-    },
-    {
         "name": "exact: 冲突值不合并",
         "file": "crates/trit-circuit/src/circuit/sim.rs",
         "old": "                Some(_) => {\n                    values.insert(name, Ternary::Unknown);\n                }\n",
@@ -1103,6 +1095,38 @@ MUTANTS = [
         "new": "            let _ = gate;\n",
         "pkg": "trit-circuit",
         "filter": "support_only_covers_the_backward_cone"
+    },
+    {
+        "name": "topology: True 传播也走 Unknown 边",
+        "file": "crates/trit-core/src/topology.rs",
+        "old": "                if value == Ternary::True && best[next] == Ternary::False {\n                    best[next] = Ternary::True;\n",
+        "new": "                if value != Ternary::False && best[next] == Ternary::False {\n                    best[next] = Ternary::True;\n",
+        "pkg": "trit-core",
+        "filter": "unknown_edge_propagates_unknown_until_true_path_exists"
+    },
+    {
+        "name": "topology: Unknown 传播只走 Unknown 边",
+        "file": "crates/trit-core/src/topology.rs",
+        "old": "                if value != Ternary::False && best[next] == Ternary::False {\n                    best[next] = Ternary::Unknown;\n",
+        "new": "                if value == Ternary::Unknown && best[next] == Ternary::False {\n                    best[next] = Ternary::Unknown;\n",
+        "pkg": "trit-core",
+        "filter": "unknown_edge_propagates_unknown_until_true_path_exists"
+    },
+    {
+        "name": "topology: 未定判成通过",
+        "file": "crates/trit-core/src/topology.rs",
+        "old": "            verdict: Verdict::Undetermined,",
+        "new": "            verdict: Verdict::Proved,",
+        "pkg": "trit-core",
+        "filter": "explain_reports_unknown_edges_for_contingent_path"
+    },
+    {
+        "name": "topology: 证书不收集 Unknown 边",
+        "file": "crates/trit-core/src/topology.rs",
+        "old": "            .filter(|&&node| weak_via[node] == Some(Ternary::Unknown))",
+        "new": "            .filter(|&&node| weak_via[node] == Some(Ternary::True))",
+        "pkg": "trit-core",
+        "filter": "explain_reports_unknown_edges_for_contingent_path"
     }
 ]
 
@@ -1130,8 +1154,15 @@ def select(pkgs: list[str]) -> list[dict]:
     return [mutant for mutant in MUTANTS if mutant["pkg"] in pkgs]
 
 
+TEST_MODULE = re.compile(r"#\[cfg\(test\)\]\s*mod\s+\w+")
+
+
 def preflight(mutants: list[dict]) -> list[str]:
-    """跑测试之前先把文件与锚点查一遍：路径写错/锚点漂移要立刻报全，不等到跑一半才崩。"""
+    """跑测试之前先把文件与锚点查一遍：路径写错/锚点漂移要立刻报全，不等到跑一半才崩。
+
+    锚点落在 `#[cfg(test)] mod ...` 之后也算错：改测试代码不会改产品行为，
+    这类变异就算「没抓住」也不说明断言弱，只会把债账搅浑（拆模块时真踩到过）。
+    """
     problems: list[str] = []
     for mutant in mutants:
         raw = mutant["file"]
@@ -1142,9 +1173,14 @@ def preflight(mutants: list[dict]) -> list[str]:
         if not path.is_file():
             problems.append(f"{mutant['name']}: 文件不存在: {raw}")
             continue
-        count = path.read_text(encoding="utf-8").count(mutant["old"])
+        text = path.read_text(encoding="utf-8")
+        count = text.count(mutant["old"])
         if count != 1:
             problems.append(f"{mutant['name']}: 锚点出现 {count} 次（{raw}）")
+            continue
+        test_modules = [match.start() for match in TEST_MODULE.finditer(text)]
+        if test_modules and text.find(mutant["old"]) > test_modules[-1]:
+            problems.append(f"{mutant['name']}: 锚点落在测试代码里（{raw}）")
     return problems
 
 
