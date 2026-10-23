@@ -150,6 +150,20 @@ enum Commands {
         expand_implies: bool,
     },
     /// 分析三值门级网表。
+    /// 三值拓扑：从起点传播可达性，或判定「通过 / 未定 / 否定」并给证书。
+    Topology {
+        /// 拓扑 JSON：{"nodes": N, "origin": 0, "edges": [{"from":..,"to":..,"value":"X"}]}。
+        path: std::path::PathBuf,
+        /// 覆盖 JSON 里的起点。
+        #[arg(long, value_name = "NODE")]
+        origin: Option<usize>,
+        /// 只判定这一个终点，并输出证书路径与需要补全的 Unknown 边。
+        #[arg(long = "to", value_name = "NODE")]
+        target: Option<usize>,
+        /// 输出格式。
+        #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
+        format: Format,
+    },
     Circuit {
         /// 网表文件路径。
         path: std::path::PathBuf,
@@ -464,6 +478,12 @@ fn main() -> Result<()> {
             &from,
             pessimism,
         ),
+        Commands::Topology {
+            path,
+            origin,
+            target,
+            format,
+        } => commands::topology::cmd_topology(&path, format, origin, target),
         Commands::Atpg {
             path,
             from,
