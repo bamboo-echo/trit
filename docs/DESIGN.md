@@ -77,8 +77,23 @@
   建模自由。我们不做运行时或类型层面的“反上帝对象”限制，也不为极端最小化牺牲扩展性——那是吃力不讨好的事。
 - **提醒可以，门禁不造**：Rust/Clippy 已有 `too_many_lines`、`too_many_arguments`、
   `struct_excessive_bools`、`type_complexity` 等现成 lint；需要提醒就启用/记录这些，不重复造自研检查器。
-  没有合适 lint 时只写文档提醒，不新增 CI 门禁。
+- **2026-10-24 修订**：加了唯一一道自研的**模块预算门**（`scripts/module_budget.py`）。
+  触发条件是「拆模块之后又长回 1000+ 行」反复发生，而 clippy 的 `too_many_lines` 管的是函数不是文件。
+  门的形态刻意做得最轻：单文件 800 行预算 + 一个**只允许变短**的台账 + 10 条自证；
+  它只判「文件有没有变大」，不判「职责该不该拆」——后者仍然是评审的事。
 - 判断标准是“职责是否可独立变化”，不是行数或字段数本身；为拆而拆同样会损失扩展性。
+
+## 实验层（`publish = false`）
+
+有七个 crate 是**实验层**：`trit-net`、`trit-machines`、`trit-codec`、`trit-float`、`trit-attn`、
+`trit-dot`、`trit-gpu`。规则：
+
+- **不属于稳定 API**：可以随时改签名、删模块，不进 crates.io，不发版；
+- **彼此不许互相依赖**：`cargo package --workspace` 会连实验层一起打包，而指向未发布 crate 的
+  路径依赖没有版本可填 ⇒ 打包失败。共享代码只能下沉到可发布 crate。这条由 `scripts/publish_graph.py` 强制；
+- **入口是独立二进制**（`trit-net`、`trit-machines`、…），不并进 `trit` CLI，避免实验面污染稳定命令行；
+- **结论要带回边界标签**：实验层里关于「三值红利」的结论必须按 `docs/TERNARY-BOUNDARIES.md` 归类，
+  并同时给二进制基线（§6）与高压测试（§7）。
 
 ## 路线
 

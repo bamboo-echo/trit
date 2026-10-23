@@ -36,6 +36,19 @@ GitHub Releases（`v0.3.1` 起）提供：
 | `sansheng` | 三生：统一入口伞包（re-export 以上能力） |
 | `trit-cli` | `trit` 命令行 |
 
+**实验层**（`publish = false`，不属于稳定 API；彼此**不许互相依赖**，否则 `cargo package` 会断，
+见下面的发布图门）：
+
+| crate | 内容 | 入口 |
+|---|---|---|
+| `trit-net` | 三值权重前向 + `X` 输入「确定/弃权」+ `TRN1` 模型格式 + STE 反向传播 | `trit-net infer/train/format` |
+| `trit-machines` | 三值栈式解释器 / 一维元胞自动机 / `{-1,0,+1}` 突触脉冲神经元 | `trit-machines vm\|ca\|snn` |
+| `trit-codec` | 5 trits/byte、平衡三进制、GF(3) `[4,2,3]` 纠错、按分布选编码、零拷贝视图 | `trit-codec pack\|plan\|...` |
+| `trit-float` | 平衡三进制浮点（结论：同比特精度恒为二进制的 3 倍误差） | `trit-float stats` |
+| `trit-attn` | 注意力 = 快权重 FFN 的双视角、三值整数关联记忆 | `trit-attn demo` |
+| `trit-dot` | 位并行三值/二值点积（XNOR+POPC 的适用边界）、块级稀疏 | `trit-dot bench` |
+| `trit-gpu` | WGSL `countOneBits` 内核（`--features gpu` 构建） | `trit-gpu bench --trits N` |
+
 ## 三态与三值拓扑
 
 `TriState` 表示 0 / 1 / Z（高阻），与逻辑未知 `X` 区分：`Z` 不驱动总线，可被其他驱动覆盖。
@@ -249,8 +262,22 @@ cargo run --release -p trit-cli -- verify examples/policy.json
   `Limit`／`BudgetExceeded` 错误；策略展开在分配大子树之前扣节点预算。
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-`python scripts/mutation_check.py` 对 62 条关键规则做单点文本变异并跑对应回归，
-测试必须变红才算抓住（当前 62/62）；`.github/workflows/mutation.yml` 每周跑一次。
+`python scripts/mutation_check.py` 对 **166** 条关键规则做单点文本变异并跑对应回归，
+测试必须变红才算抓住；`--pkg <crate>` 只跑改动过的 crate（PR 门），全量每周跑一次。
+
+### 六道门（每道一个判定，均带自证）
+
+| 门 | 判定 | 自证 |
+|---|---|---|
+| `module budget` | 单文件 ≤ 800 行；超了必须登记，台账**只允许变短** | `--self-test` 10 条（含四种红法） |
+| `publish graph` | 任何 crate 不许依赖 `publish = false` 的 crate；可发布 crate 必填字段齐全 | `--self-test` 5 条（2 正例 + 3 反证） |
+| `mutation`（PR 级） | 改动 crate 的变异必须全被抓 | 全量周常 |
+| `mutation preflight` | 路径用正斜杠、锚点唯一、锚点不在测试代码里 | 跑测试前一次性报全 |
+| `stress` | 极端向量 / 跨字边界 / 10 万级载荷的不变量 | release 模式跑四件套 |
+| CI 基础面 | 三平台 fmt+clippy+test、MSRV 1.88、rustdoc `-D warnings`、package、wasm、action 自测 | — |
+
+**对比与测量的硬规则**见 [`docs/TERNARY-BOUNDARIES.md`](docs/TERNARY-BOUNDARIES.md) §6/§7：
+任何对比必须同时给二进制基线（同机 f32/f64 或 1-bit 二值），并写明省的是带宽还是指令数。
 
 ## fuzz 与基准
 
