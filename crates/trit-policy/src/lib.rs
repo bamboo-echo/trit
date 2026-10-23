@@ -222,6 +222,20 @@ impl Policy {
         bdd_order: Option<VarOrder>,
         bdd_limits: BddLimits,
     ) -> Result<Vec<AssertionResult>, PolicyError> {
+        self.verify_with_bdd_config_and_jobs(engine, bdd_order, bdd_limits, 1)
+    }
+
+    /// 同 [`Policy::verify_with_bdd_config`]，但按 `jobs` 并行检查断言。
+    ///
+    /// `jobs = 0` 表示自动取可用并行度，`1` 表示串行；结果顺序与串行一致。
+    /// 前提可满足性只检查一次，然后各断言独立求解。
+    pub fn verify_with_bdd_config_and_jobs(
+        &self,
+        engine: Engine,
+        bdd_order: Option<VarOrder>,
+        bdd_limits: BddLimits,
+        jobs: usize,
+    ) -> Result<Vec<AssertionResult>, PolicyError> {
         if self.assertions.is_empty() {
             return Err(PolicyError::NoAssertions);
         }
@@ -266,39 +280,69 @@ impl Policy {
             return Err(PolicyError::InconsistentAssumptions);
         }
 
-        let mut results = Vec::with_capacity(self.assertions.len());
-        for assertion in &self.assertions {
-            let raw = parse_expr(&assertion.name, &assertion.expr)?;
-            let expr = expand_with_limits(&raw, &definitions, limits)?;
-            check_expr(&expr, limits)?;
-            match engine {
-                Engine::Sat => {
-                    let witness = premise_counterexample(&premise, &expr, alg, &binary)?;
-                    results.push(AssertionResult {
-                        name: assertion.name.clone(),
-                        holds: witness.is_none(),
-                        counterexample: witness,
-                        nodes: None,
-                    });
-                }
-                Engine::Bdd => {
-                    let vars = bdd_order.map(|order| order_variables(&premise, &expr, order));
-                    let request = BddRequest {
-                        order: vars.as_deref(),
-                        limits: bdd_limits,
-                    };
-                    let check =
-                        premise_counterexample_bdd_with(&premise, &expr, alg, &binary, &request)?;
-                    results.push(AssertionResult {
-                        name: assertion.name.clone(),
-                        holds: check.counterexample.is_none(),
-                        counterexample: check.counterexample,
-                        nodes: Some(check.nodes),
-                    });
-                }
+        let context = VerifyContext {
+            engine,
+            bdd_order,
+            bdd_limits,
+            definitions: &definitions,
+            premise: &premise,
+            alg,
+            binary: &binary,
+            limits,
+        };
+        trit_core::parallel::map(&self.assertions, jobs, |assertion| context.check(assertion))
+    }
+}
+
+struct VerifyContext<'a> {
+    engine: Engine,
+    bdd_order: Option<VarOrder>,
+    bdd_limits: BddLimits,
+    definitions: &'a BTreeMap<String, Expr>,
+    premise: &'a Expr,
+    alg: Algebra,
+    binary: &'a HashSet<String>,
+    limits: Limits,
+}
+
+impl VerifyContext<'_> {
+    fn check(&self, assertion: &Assertion) -> Result<AssertionResult, PolicyError> {
+        let raw = parse_expr(&assertion.name, &assertion.expr)?;
+        let expr = expand_with_limits(&raw, self.definitions, self.limits)?;
+        check_expr(&expr, self.limits)?;
+        match self.engine {
+            Engine::Sat => {
+                let witness = premise_counterexample(self.premise, &expr, self.alg, self.binary)?;
+                Ok(AssertionResult {
+                    name: assertion.name.clone(),
+                    holds: witness.is_none(),
+                    counterexample: witness,
+                    nodes: None,
+                })
+            }
+            Engine::Bdd => {
+                let vars = self
+                    .bdd_order
+                    .map(|order| order_variables(self.premise, &expr, order));
+                let request = BddRequest {
+                    order: vars.as_deref(),
+                    limits: self.bdd_limits,
+                };
+                let check = premise_counterexample_bdd_with(
+                    self.premise,
+                    &expr,
+                    self.alg,
+                    self.binary,
+                    &request,
+                )?;
+                Ok(AssertionResult {
+                    name: assertion.name.clone(),
+                    holds: check.counterexample.is_none(),
+                    counterexample: check.counterexample,
+                    nodes: Some(check.nodes),
+                })
             }
         }
-        Ok(results)
     }
 }
 
@@ -585,4 +629,30 @@ mod tests {
             Err(PolicyError::DefinitionDepth { limit: 3 })
         ));
     }
+}
+
+#[test]
+fn parallel_verify_matches_serial() {
+    let binary = (0..64).map(|index| format!("v{index}")).collect();
+    let assertions = (0..64)
+        .map(|index| Assertion {
+            name: format!("tautology{index}"),
+            expr: format!("v{index} | !v{index}"),
+        })
+        .collect();
+    let policy = Policy {
+        algebra: "kleene".to_string(),
+        binary,
+        assumptions: Vec::new(),
+        definitions: BTreeMap::new(),
+        assertions,
+    };
+    let serial = policy
+        .verify_with_bdd_config_and_jobs(Engine::Sat, None, BddLimits::default(), 1)
+        .unwrap();
+    let parallel = policy
+        .verify_with_bdd_config_and_jobs(Engine::Sat, None, BddLimits::default(), 4)
+        .unwrap();
+    assert_eq!(serial, parallel);
+    assert!(serial.iter().all(|result| result.holds));
 }

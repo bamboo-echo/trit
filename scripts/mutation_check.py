@@ -678,6 +678,94 @@ MUTANTS = [
         "new": "        let arrival = 0;\n",
         "pkg": "trit-circuit",
         "filter": "input_arrival_and_output_required_constraints"
+    },
+    {
+        "name": "sdf: 取最小延迟",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "                    worst = worst.max(delay);\n",
+        "new": "                    worst = worst.min(delay);\n",
+        "pkg": "trit-circuit",
+        "filter": "sdf::tests::parses_and_rounds_up_the_worst_arc"
+    },
+    {
+        "name": "sdf: 向下取整",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "        let rounded = value.ceil();\n",
+        "new": "        let rounded = value.floor();\n",
+        "pkg": "trit-circuit",
+        "filter": "sdf::tests::parses_and_rounds_up_the_worst_arc"
+    },
+    {
+        "name": "sdf: 跨实例取最小",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "                    .and_modify(|current| *current = current.max(worst))\n",
+        "new": "                    .and_modify(|current| *current = current.min(worst))\n",
+        "pkg": "trit-circuit",
+        "filter": "sdf::tests::takes_the_max_across_instances_and_conditional_arcs"
+    },
+    {
+        "name": "sdf: 放行负值",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "        if !value.is_finite() || value < 0.0 {\n",
+        "new": "        if !value.is_finite() {\n",
+        "pkg": "trit-circuit",
+        "filter": "sdf::tests::rejects_bad_syntax_and_missing_delays"
+    },
+    {
+        "name": "shared: 候选不注入常量",
+        "file": "crates/trit-circuit/src/sat_cnf.rs",
+        "old": "                    injected[pin] = enc.const_lit(stuck);\n",
+        "new": "                    injected[pin] = faulty_inputs[pin];\n",
+        "pkg": "trit-circuit",
+        "filter": "shared_cnf_matches_per_fault_semantics"
+    },
+    {
+        "name": "shared: mux 选反",
+        "file": "crates/trit-circuit/src/sat_cnf.rs",
+        "old": "                        Lit::from_var(candidate, true),\n                        Lit::from_var(current, true),\n",
+        "new": "                        Lit::from_var(current, true),\n                        Lit::from_var(current, true),\n",
+        "pkg": "trit-circuit",
+        "filter": "shared_cnf_matches_per_fault_semantics"
+    },
+    {
+        "name": "shared: 不假设故障 selector",
+        "file": "crates/trit-circuit/src/sat_cnf.rs",
+        "old": "        self.enc.solver.assume(&[selector]);\n",
+        "new": "        let _ = selector;\n",
+        "pkg": "trit-circuit",
+        "filter": "shared_cnf_matches_per_fault_semantics"
+    },
+    {
+        "name": "params: 忽略实例覆盖",
+        "file": "crates/trit-circuit/src/verilog/params.rs",
+        "old": "            Some(value) => *value,\n",
+        "new": "            Some(_) => eval_expr(&param.default, &params)?,\n",
+        "pkg": "trit-circuit",
+        "filter": "named_parameter_override_changes_width"
+    },
+    {
+        "name": "params: 不替换参数",
+        "file": "crates/trit-circuit/src/verilog/params.rs",
+        "old": "            if let Some(value) = params.get(&name) {\n",
+        "new": "            if let Some(value) = params.get(\"__never__\") {\n",
+        "pkg": "trit-circuit",
+        "filter": "parses_parameterized_module_defaults"
+    },
+    {
+        "name": "params: 不归一化位宽",
+        "file": "crates/trit-circuit/src/verilog/params.rs",
+        "old": "            let left = eval_expr(left, &empty)?;\n            out.push('[');\n            out.push_str(&left.to_string());\n            if let Some(right) = right {\n                let right = eval_expr(right, &empty)?;\n                out.push(':');\n                out.push_str(&right.to_string());\n            }\n            out.push(']');\n",
+        "new": "            out.push('[');\n            out.push_str(inner.trim());\n            out.push(']');\n",
+        "pkg": "trit-circuit",
+        "filter": "parses_parameterized_module_defaults"
+    },
+    {
+        "name": "params: 位置覆盖错位",
+        "file": "crates/trit-circuit/src/verilog/params.rs",
+        "old": "            let Some(param) = child.params.get(positional) else {\n",
+        "new": "            let Some(param) = child.params.get(positional + 1) else {\n",
+        "pkg": "trit-circuit",
+        "filter": "parent_parameter_flows_to_positional_child_override"
     }
 ]
 

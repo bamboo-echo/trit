@@ -123,6 +123,7 @@ fn is_signal_ref(token: &str) -> bool {
 mod export;
 mod expr;
 mod hierarchy;
+mod params;
 mod parse;
 pub use export::to_verilog;
 pub use parse::parse_verilog;

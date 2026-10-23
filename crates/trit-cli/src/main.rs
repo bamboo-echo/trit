@@ -47,6 +47,10 @@ struct Cli {
     )]
     algebra: String,
 
+    /// 硬超时（毫秒）：超时后终止整个子进程，退出码 124。
+    #[arg(long, global = true, value_name = "MS")]
+    timeout_ms: Option<u64>,
+
     /// 子命令。
     #[command(subcommand)]
     command: Commands,
@@ -172,6 +176,12 @@ enum Commands {
         /// 用 SAT 逐故障求解（支持 ≤64 主输入；不可测由 UNSAT 证明）。
         #[arg(long)]
         sat: bool,
+        /// 并行工作线程数（0 = 自动，1 = 串行）。
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        jobs: usize,
+        /// 复用一份 CNF、用 selector 逐故障求解（适合大规模；见证向量可能与默认路径不同）。
+        #[arg(long, requires = "sat")]
+        shared_cnf: bool,
     },
     /// 桥接故障（wired-AND / wired-OR）可测性与测试向量。
     Bridge {
@@ -189,6 +199,9 @@ enum Commands {
         /// 用 SAT 逐桥接求解（支持 ≤64 主输入）。
         #[arg(long)]
         sat: bool,
+        /// 并行工作线程数（0 = 自动，1 = 串行）。
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        jobs: usize,
         /// 输出格式。
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
@@ -212,6 +225,9 @@ enum Commands {
         /// 时序库 JSON（`default_delay` + `delays`），形如 `{"default_delay":1,"delays":{"AND":2}}`。
         #[arg(long, value_name = "FILE")]
         library: Option<std::path::PathBuf>,
+        /// SDF 延迟文件（保守子集：每类 celltype 取最坏 IOPATH，向上取整；TIMESCALE 不换算）。
+        #[arg(long, value_name = "FILE", conflicts_with = "library")]
+        sdf: Option<std::path::PathBuf>,
         /// I/O 时序约束 JSON（`input_arrival` / `output_required`）。
         #[arg(long, value_name = "FILE")]
         constraints: Option<std::path::PathBuf>,
@@ -261,6 +277,9 @@ enum Commands {
         /// 时序库 JSON。
         #[arg(long, value_name = "FILE")]
         library: Option<std::path::PathBuf>,
+        /// SDF 延迟文件（保守子集：每类 celltype 取最坏 IOPATH，向上取整）。
+        #[arg(long, value_name = "FILE", conflicts_with = "library")]
+        sdf: Option<std::path::PathBuf>,
         /// I/O 时序约束 JSON（`input_arrival` / `output_required`）。
         #[arg(long, value_name = "FILE")]
         constraints: Option<std::path::PathBuf>,
@@ -295,6 +314,9 @@ enum Commands {
         /// BDD 单图节点预算（仅 --engine bdd；0 表示不设上限）。
         #[arg(long, value_name = "N", default_value_t = 1_000_000)]
         bdd_max_nodes: usize,
+        /// 并行检查断言的线程数（0 = 自动，1 = 串行）。
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        jobs: usize,
         /// JSON 输出。
         #[arg(long)]
         json: bool,
@@ -313,8 +335,43 @@ enum Commands {
     },
 }
 
+/// 重新执行自身，并在 `timeout_ms` 后杀掉整个子进程。
+///
+/// 子进程通过 `TRIT_TIMEOUT_CHILD` 跳过包装，避免递归；输出直接继承终端。
+fn run_with_timeout(timeout_ms: u64) -> Result<()> {
+    let exe = std::env::current_exe().context("无法定位 trit 可执行文件")?;
+    let mut child = std::process::Command::new(exe)
+        .args(std::env::args_os().skip(1))
+        .env("TRIT_TIMEOUT_CHILD", "1")
+        .spawn()
+        .context("无法启动超时子进程")?;
+    let started = std::time::Instant::now();
+    let limit = std::time::Duration::from_millis(timeout_ms);
+    loop {
+        if let Some(status) = child.try_wait()? {
+            std::process::exit(status.code().unwrap_or(1));
+        }
+        if started.elapsed() >= limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            eprintln!("超时：{timeout_ms} ms 内未完成，已终止");
+            std::process::exit(124);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(timeout_ms) = cli.timeout_ms {
+        if timeout_ms == 0 {
+            bail!("--timeout-ms 必须大于 0");
+        }
+        if std::env::var_os("TRIT_TIMEOUT_CHILD").is_none() {
+            run_with_timeout(timeout_ms)?;
+            return Ok(());
+        }
+    }
     match cli.command {
         Commands::Eval { expression, assign } => {
             commands::eval::cmd_eval(&expression, &assign, &cli.algebra)
@@ -390,13 +447,16 @@ fn main() -> Result<()> {
             from,
             format,
             sat,
-        } => commands::atpg::cmd_atpg(&path, format, &cli.algebra, &from, sat),
+            jobs,
+            shared_cnf,
+        } => commands::atpg::cmd_atpg(&path, format, &cli.algebra, &from, sat, jobs, shared_cnf),
         Commands::Bridge {
             path,
             from,
             pairs,
             max_pairs,
             sat,
+            jobs,
             format,
         } => commands::bridge::cmd_bridge(
             &path,
@@ -406,6 +466,7 @@ fn main() -> Result<()> {
             pairs.as_deref(),
             max_pairs,
             sat,
+            jobs,
         ),
         Commands::Timing {
             path,
@@ -414,6 +475,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library,
+            sdf,
             constraints,
             paths,
             format,
@@ -424,6 +486,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library.as_deref(),
+            sdf.as_deref(),
             constraints.as_deref(),
             paths,
             format,
@@ -443,6 +506,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library,
+            sdf,
             constraints,
             min_coverage,
             format,
@@ -453,6 +517,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library.as_deref(),
+            sdf.as_deref(),
             constraints.as_deref(),
             min_coverage,
             format,
@@ -464,8 +529,9 @@ fn main() -> Result<()> {
             engine,
             bdd_order,
             bdd_max_nodes,
+            jobs,
             json,
-        } => commands::verify::cmd_verify(&path, &engine, &bdd_order, bdd_max_nodes, json),
+        } => commands::verify::cmd_verify(&path, &engine, &bdd_order, bdd_max_nodes, jobs, json),
         Commands::Belnap { cmd } => commands::belnap::cmd_belnap(cmd),
         Commands::Repl { algebra } => {
             let alg_name = algebra.unwrap_or(cli.algebra);
@@ -573,17 +639,29 @@ pub(crate) fn assignment_json(asg: &Assignment) -> serde_json::Value {
 /// ```
 pub(crate) fn timing_model(
     library: Option<&std::path::Path>,
+    sdf: Option<&std::path::Path>,
     delay: u32,
     load_delay: Option<u32>,
 ) -> Result<trit_circuit::timing::TimingModel> {
-    let mut model = match library {
-        Some(library) => {
+    let mut model = match (library, sdf) {
+        (Some(_), Some(_)) => {
+            anyhow::bail!("--library 与 --sdf 只能选一个");
+        }
+        (Some(library), None) => {
             let text = std::fs::read_to_string(library)
                 .with_context(|| format!("无法读取时序库 {}", library.display()))?;
             trit_circuit::timing::TimingModel::from_json(&text)
                 .with_context(|| format!("时序库解析失败：{}", library.display()))?
         }
-        None => trit_circuit::timing::TimingModel {
+        (None, Some(sdf)) => {
+            let text = std::fs::read_to_string(sdf)
+                .with_context(|| format!("无法读取 SDF {}", sdf.display()))?;
+            let mut model = trit_circuit::sdf::timing_model_from_sdf(&text)
+                .with_context(|| format!("SDF 解析失败：{}", sdf.display()))?;
+            model.default_delay = delay;
+            model
+        }
+        (None, None) => trit_circuit::timing::TimingModel {
             default_delay: delay,
             ..Default::default()
         },

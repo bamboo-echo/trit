@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+### Added（0.11 硬超时）
+
+- **全局 `--timeout-ms N`**：CLI 重新执行自身为子进程，超时 `kill` 并退出 **124**；
+  子进程通过 `TRIT_TIMEOUT_CHILD=1` 跳过包装，避免递归。可兜住 ATPG/验证/REPL 等任意子命令。
+- 这是进程级硬超时，不是 varisat 单故障取消；库 API 仍无中断句柄。
+- 测试：`repl` 挂起时 200 ms 超时，断言退出码 124 且 5 s 内结束。
+
+### Added（0.11 Verilog 参数）
+
+- **参数化模块**：模块头 `#(parameter W = 8, ...)`、实例覆盖 `#(.W(4))` / `#(4)`；
+  参数表达式支持 `+ - * / %`、括号与前置负号，用于位宽/下标/实例连接。
+- 解析前做源码特化：每个参数组合一个唯一模块副本（上限 256），再由现有解析/层级展开处理；
+  根模块保留原名，子模块名带 `__pN`。
+- 明确限制：不支持模块体 `parameter`/`localparam`、`signed`/实数/字符串参数、参数化端口类型。
+- 测试：默认值、命名/位置覆盖、父参数下传、同模块多参数实例、算术表达式、未知覆盖/体参数拒绝。
+- 变异门 90 → 94（忽略覆盖、不替换、不归一化位宽、位置覆盖错位）。
+
+### Added（0.11 共享 CNF）
+
+- **`atpg --sat --shared-cnf`**：每个 worker 只建一份 good/faulty CNF，每个故障一个 selector；
+  mux 链注入引脚常量，顺序 at-most-one 保证一次只激活一个故障。按 512 个故障切块，
+  避免单 solver selector 过多导致的病态慢例。
+- 默认逐故障路径不变（见证稳定）；共享路径覆盖/可测性一致，但见证向量可能不同。
+- 10k 门 / 40k 故障、8 线程：**2.6 s**；3000 门 0.26 s；800 门 0.08 s（本机 24 线程）。
+- 测试：共享路径与逐故障在随机小电路上对拍覆盖率/可测性/可观测性，并用 `verify_sat_patterns`
+  验证测试向量真正检出故障；CLI `--shared-cnf` 覆盖率对拍。
+- 变异门 87 → 90（候选不注入、mux 选反、不假设 selector）。
+
+### Added（0.11 SDF-lite 互操作）
+
+- **SDF 读取**：`trit_circuit::sdf::{parse_sdf, timing_model_from_sdf}`；`trit timing` /
+  `trit check` 增加 `--sdf FILE`（与 `--library` 互斥）。只取 `CELL/CELLTYPE/DELAY/ABSOLUTE/
+  IOPATH`，rise/fall 与 `min:typ:max` 取最坏值、`COND` 合并、向上取整；按 celltype 聚合，
+  `TIMESCALE` 不换算，未知 celltype 忽略，无可识别延迟时报错。
+- 测试：语法/缺延迟/负值拒绝、跨实例与条件弧最坏值、`min:typ:max`、CLI `timing`/`check`。
+- 变异门 83 → 87（新增：取最小值、floor、跨实例取最小、放行负值）。
+
+### Added（0.11 并行 SAT）
+
+- **并行 ATPG / 桥接 SAT**：`generate_tests_sat_with_jobs` 与
+  `generate_bridge_tests_sat_with_jobs`；CLI `atpg --sat --jobs N`、`bridge --sat --jobs N`
+  （`0` = 自动，`1` = 串行）。按故障/桥接对分块，`std::thread::scope` 独立 CNF/solver，
+  按原顺序合并，输出与串行逐字段一致；wasm32 强制串行。
+- **策略断言并行**：`trit-core::parallel` 下沉为公共并发原语；`Policy::verify_with_bdd_config_and_jobs`、
+  CLI `verify --jobs N`。前提只检查一次，断言顺序不变。
+- **减少重复工作**：SAT CNF 复用调用方算好的拓扑序，`Cnf::new_with_order`；不再每个故障重跑
+  `validate` / `topological_order`。
+- 测速（本机 24 线程）：800 门串行 6.6 s → 2.5 s（拓扑序复用），`jobs=8` 0.37 s（并行 6.97×）；
+  3000 门 34.4 s → 4.68 s（7.36×）；2000 条策略断言 0.19 s → 0.07 s。
+- 测试：并行/串行逐字段对拍（ATPG、桥接、策略、CLI JSON）、顺序与错误传播。
+
 ### Added（0.10 STA I/O 约束）
 
 - **时序 I/O 约束**：`TimingConstraints { input_arrival, output_required }`（JSON，拒绝未知字段/名字）；

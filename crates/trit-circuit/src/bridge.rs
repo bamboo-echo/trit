@@ -124,6 +124,43 @@ pub enum BridgeError {
     },
 }
 
+struct BridgeResult {
+    fault: BridgeFault,
+    witness: Option<u64>,
+}
+
+fn solve_bridge(
+    circuit: &Circuit,
+    alg: Algebra,
+    pair: &BridgePair,
+    order: &[usize],
+) -> Result<BridgeResult, BridgeError> {
+    let value = matches!(pair.mode, BridgeMode::Or);
+    let mut cnf = Cnf::new(
+        circuit,
+        alg,
+        Some(SatDefect::Bridge {
+            a: pair.a.clone(),
+            b: pair.b.clone(),
+            value,
+        }),
+        order,
+    )?;
+    cnf.require_good_difference(&pair.a, &pair.b)?;
+    cnf.require_output_difference()?;
+    let witness = cnf.solve()?;
+    Ok(BridgeResult {
+        fault: BridgeFault {
+            a: pair.a.clone(),
+            b: pair.b.clone(),
+            mode: pair.mode,
+            testable: witness.is_some(),
+            witness,
+        },
+        witness,
+    })
+}
+
 /// 生成桥接故障的可测性与测试向量。
 ///
 /// 在二进制主输入空间上判定：存在一个向量，使短路后的某个主输出与正常值不同。
@@ -270,6 +307,16 @@ pub fn generate_bridge_tests_sat(
     alg: Algebra,
     pairs: &[BridgePair],
 ) -> Result<BridgeReport, BridgeError> {
+    generate_bridge_tests_sat_with_jobs(circuit, alg, pairs, 1)
+}
+
+/// 同 [`generate_bridge_tests_sat`]，但按 `jobs` 并行求解（0 = 自动，1 = 串行）。
+pub fn generate_bridge_tests_sat_with_jobs(
+    circuit: &Circuit,
+    alg: Algebra,
+    pairs: &[BridgePair],
+    jobs: usize,
+) -> Result<BridgeReport, BridgeError> {
     validate(circuit)?;
     if pairs.is_empty() {
         return Err(BridgeError::NoPairs);
@@ -301,32 +348,16 @@ pub fn generate_bridge_tests_sat(
         }
     }
 
-    let mut bridges = Vec::with_capacity(pairs.len());
+    let order = crate::circuit::topological_order(circuit)?;
+    let results =
+        trit_core::parallel::map(pairs, jobs, |pair| solve_bridge(circuit, alg, pair, &order))?;
+    let mut bridges = Vec::with_capacity(results.len());
     let mut by_mask: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
-    for pair in pairs {
-        let value = matches!(pair.mode, BridgeMode::Or);
-        let mut cnf = Cnf::new(
-            circuit,
-            alg,
-            Some(SatDefect::Bridge {
-                a: pair.a.clone(),
-                b: pair.b.clone(),
-                value,
-            }),
-        )?;
-        cnf.require_good_difference(&pair.a, &pair.b)?;
-        cnf.require_output_difference()?;
-        let witness = cnf.solve()?;
-        if let Some(mask) = witness {
-            by_mask.entry(mask).or_default().push(bridges.len());
+    for (index, result) in results.into_iter().enumerate() {
+        if let Some(mask) = result.witness {
+            by_mask.entry(mask).or_default().push(index);
         }
-        bridges.push(BridgeFault {
-            a: pair.a.clone(),
-            b: pair.b.clone(),
-            mode: pair.mode,
-            testable: witness.is_some(),
-            witness,
-        });
+        bridges.push(result.fault);
     }
     let testable = bridges.iter().filter(|bridge| bridge.testable).count();
     let coverage = testable as f64 / bridges.len() as f64;
@@ -627,5 +658,54 @@ mod tests {
             error,
             BridgeError::Circuit(CircuitError::BinaryInputLimit { max: 64, .. })
         ));
+    }
+}
+
+#[cfg(test)]
+mod parallel_tests {
+    use super::*;
+    use crate::circuit::{Gate, GateKind, Signal};
+
+    fn sig(name: &str) -> Signal {
+        Signal::new(name)
+    }
+
+    #[test]
+    fn sat_jobs_match_serial() {
+        let mut circuit = Circuit::new("parallel_bridge");
+        for index in 0..8 {
+            circuit.add_input(sig(&format!("i{index}")));
+        }
+        let mut previous = sig("i0");
+        for index in 1..8 {
+            let output = if index == 7 {
+                sig("out")
+            } else {
+                sig(&format!("n{index}"))
+            };
+            circuit.add_gate(Gate::new(
+                GateKind::And,
+                vec![previous, sig(&format!("i{index}"))],
+                output.clone(),
+            ));
+            previous = output;
+        }
+        circuit.add_output(sig("out"));
+        let pairs: Vec<BridgePair> = (0..8)
+            .map(|index| BridgePair {
+                a: format!("i{index}"),
+                b: "out".to_string(),
+                mode: if index % 2 == 0 {
+                    BridgeMode::Or
+                } else {
+                    BridgeMode::And
+                },
+            })
+            .collect();
+        let serial =
+            generate_bridge_tests_sat_with_jobs(&circuit, Algebra::Kleene, &pairs, 1).unwrap();
+        let parallel =
+            generate_bridge_tests_sat_with_jobs(&circuit, Algebra::Kleene, &pairs, 4).unwrap();
+        assert_eq!(serial, parallel);
     }
 }

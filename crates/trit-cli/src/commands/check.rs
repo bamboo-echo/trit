@@ -14,6 +14,7 @@ pub(crate) fn cmd_check(
     delay: u32,
     load_delay: Option<u32>,
     library: Option<&std::path::Path>,
+    sdf: Option<&std::path::Path>,
     constraints: Option<&std::path::Path>,
     min_coverage: f64,
     format: Format,
@@ -24,7 +25,7 @@ pub(crate) fn cmd_check(
         bail!("--min-coverage 必须在 [0, 1] 内，当前 {min_coverage}");
     }
     let circuit = load_circuit(path, from)?;
-    let model = timing_model(library, delay, load_delay)?;
+    let model = timing_model(library, sdf, delay, load_delay)?;
     let constraints = crate::load_timing_constraints(constraints)?;
     let timing = trit_circuit::timing::analyze_timing_with_constraints(
         &circuit,

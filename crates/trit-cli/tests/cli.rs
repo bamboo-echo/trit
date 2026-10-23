@@ -892,3 +892,162 @@ fn timing_constraints_shift_arrival_and_slack() {
     ]);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 }
+
+#[test]
+fn jobs_do_not_change_atpg_or_bridge_output() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let netlist = dir.join("and2.net");
+    let path = netlist.to_str().unwrap();
+
+    let serial = run(&["atpg", path, "--sat", "--jobs", "1", "--format", "json"]);
+    let parallel = run(&["atpg", path, "--sat", "--jobs", "4", "--format", "json"]);
+    assert_eq!(serial.2, 0, "stdout={} stderr={}", serial.0, serial.1);
+    assert_eq!(parallel.2, 0, "stdout={} stderr={}", parallel.0, parallel.1);
+    assert_eq!(serial.0, parallel.0);
+
+    let serial = run(&[
+        "bridge",
+        path,
+        "--sat",
+        "--max-pairs",
+        "8",
+        "--jobs",
+        "1",
+        "--format",
+        "json",
+    ]);
+    let parallel = run(&[
+        "bridge",
+        path,
+        "--sat",
+        "--max-pairs",
+        "8",
+        "--jobs",
+        "4",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(serial.2, 0, "stdout={} stderr={}", serial.0, serial.1);
+    assert_eq!(parallel.2, 0, "stdout={} stderr={}", parallel.0, parallel.1);
+    assert_eq!(serial.0, parallel.0);
+}
+
+#[test]
+fn sdf_delays_feed_timing_and_check() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let netlist = dir.join("and2.net");
+    let sdf = dir.join("and2.sdf");
+    let (stdout, stderr, code) = run(&[
+        "timing",
+        netlist.to_str().unwrap(),
+        "--sdf",
+        sdf.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("\"critical_path\": 3"), "{stdout}");
+    assert!(stdout.contains("\"arrival\": 3"), "{stdout}");
+
+    let (stdout, stderr, code) = run(&[
+        "check",
+        netlist.to_str().unwrap(),
+        "--sdf",
+        sdf.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let (_, _, code) = run(&[
+        "timing",
+        netlist.to_str().unwrap(),
+        "--sdf",
+        sdf.to_str().unwrap(),
+        "--library",
+        dir.join("timing_constraints.json").to_str().unwrap(),
+    ]);
+    assert_ne!(code, 0, "--sdf 与 --library 必须互斥");
+}
+
+#[test]
+fn verify_jobs_match_serial_output() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let policy = dir.join("admission.json");
+    let path = policy.to_str().unwrap();
+    let serial = run(&["verify", path, "--json"]);
+    let parallel = run(&["verify", path, "--json", "--jobs", "4"]);
+    assert_eq!(serial.2, 0, "stdout={} stderr={}", serial.0, serial.1);
+    assert_eq!(parallel.2, 0, "stdout={} stderr={}", parallel.0, parallel.1);
+    assert_eq!(serial.0, parallel.0);
+}
+
+#[test]
+fn shared_cnf_atpg_matches_coverage() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let netlist = dir.join("and2.net");
+    let path = netlist.to_str().unwrap();
+    let default = run(&["atpg", path, "--sat", "--jobs", "1", "--format", "json"]);
+    let shared = run(&[
+        "atpg",
+        path,
+        "--sat",
+        "--shared-cnf",
+        "--jobs",
+        "4",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(default.2, 0, "stdout={} stderr={}", default.0, default.1);
+    assert_eq!(shared.2, 0, "stdout={} stderr={}", shared.0, shared.1);
+    let default_json: serde_json::Value = serde_json::from_str(&default.0).unwrap();
+    let shared_json: serde_json::Value = serde_json::from_str(&shared.0).unwrap();
+    assert_eq!(default_json["testable"], shared_json["testable"]);
+    assert_eq!(default_json["coverage"], shared_json["coverage"]);
+    assert_eq!(shared_json["shared_cnf"], true);
+}
+
+#[test]
+fn verilog_parameters_expand_before_netlist_export() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let path = dir.join("params.v");
+    let (stdout, stderr, code) = run(&[
+        "netlist",
+        path.to_str().unwrap(),
+        "--from",
+        "verilog",
+        "--to",
+        "json",
+    ]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let buses = json["buses"].as_object().unwrap();
+    assert_eq!(buses["y"]["width"], 3, "{json}");
+}
+
+#[test]
+fn timeout_kills_long_running_command_with_124() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let mut child = Command::new(trit_bin())
+        .args(["repl", "--timeout-ms", "200"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn trit");
+    let _stdin = child.stdin.take().expect("stdin pipe");
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            break status;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("timeout wrapper did not terminate the child");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(status.code(), Some(124));
+    assert!(started.elapsed() < Duration::from_secs(5));
+}

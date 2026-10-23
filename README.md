@@ -92,6 +92,10 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 
 ## 资源预算与变异门
 
+所有子命令支持全局 `--timeout-ms N`：把本次调用重新执行为子进程，超时后杀掉并退出 **124**。
+这是**进程级硬超时**（能兜住整个 ATPG/验证/REPL），不是单故障取消；子进程用
+`TRIT_TIMEOUT_CHILD=1` 跳过二次包装。
+
 所有入口共用 `trit_core::Limits`（默认：深度 256 / 节点 100 000 / 枚举 12 变量 / 100 万行）：
 
 - 解析器在**构造 AST 的过程中**扣节点预算：右结合蕴含链、扁平二元链、`!` 链与深括号
@@ -235,6 +239,15 @@ trit check design.net --constraints io.json --min-coverage 0.9
 `delays` / `default_delay`。`trit check --library` 使用同一份模型。
 `--paths N` 列出最慢的 N 条路径（信号序列 + 延迟）；JSON 里是 `paths`。
 
+`--sdf file.sdf` 直接读 SDF 的 IOPATH 延迟（与 `--library` 互斥）：
+
+- 只取 `(CELL (CELLTYPE ...) (DELAY (ABSOLUTE (IOPATH ...))))`；rise/fall、`min:typ:max`
+  都取**最坏值**，`COND` 条件弧并入同一 celltype，最后**向上取整**为整数周期。
+- 按 celltype（`AND2` / `NAND3` / `INV` / `BUF` ...）聚合，同一类型取所有实例的最坏值；
+  不保留 per-instance 差异。`TIMESCALE` 不换算，SDF 未覆盖的门类型回退到 `--delay`。
+- 未知 celltype（如触发器）忽略；一个可识别延迟都没有时明确报错。
+- 这是 **SDF-lite**：用于把综合/布局后的延迟粗注进 STA-lite，不是签核级 SDF 语义。
+
 ## BDD 引擎（`--bdd`）
 
 第三条等价路径：把双导轨直接建成 BDD，差集 BDD 为 false 即等价。BDD 是 canonical 的，
@@ -335,6 +348,10 @@ python -m http.server 8765 --directory playground
   跨方向连接按**位序**映射（Verilog 左界是 MSB），宽度不匹配或把向量端口接到单比特都会明确报错；
   单模块且无实例时保留原有完整向量行为；
 - 展开后的内部信号名加 `实例名__` 前缀；与用户信号冲突时显式报错，不静默复用；
+- **参数化模块（受限子集）**：模块头 `#(parameter W = 8, ...)`、实例覆盖 `#(.W(4))` 或
+  `#(4)`；`W-1`、`W*2`、`(W+1)/2` 等整数表达式可用于位宽/下标/连接。每个参数组合生成
+  独立模块副本（上限 256），参数名不得与信号名混用。模块体里的 `parameter`/`localparam`、
+  `signed`/实数/字符串参数、参数化端口类型都不支持；
 - 门数上限 10 万、嵌套 256 层，均在展开过程中检查，不是展开完再判。
 
 库侧 `trit_circuit::analyze_faults` 只做故障分析，不做 `3^n` 输出域枚举。
@@ -359,6 +376,25 @@ SAT 给出测试向量；UNSAT 证明不可测（原因记 `proven`）。上限 
 `GateKind::Xor` 按所选代数编码：Ł3 在 0/1 上退化为 OR，K3/B3 退化为 AND。
 当前未设单故障求解超时；极端难例可能长时间运行。
 
+`--jobs N` 按故障并行求解（`0` = 自动取可用并行度，`1` = 串行，默认 `0`）。默认路径每个线程
+独立建 CNF/solver，结果按原故障顺序合并，所以 JSON/CSV 与串行**逐字段一致**；wasm32 强制串行。
+拓扑序/结构校验只算一次并复用于每个故障。
+
+大规模用 `--shared-cnf`：每个 worker 只建一份 good/faulty CNF，用 selector 逐故障激活，
+按 512 个故障切块（避免单个 solver 的 selector 过多）。覆盖率和可测性不变，但**见证向量
+可能与默认路径不同**（仍是有效测试）；默认路径保持稳定见证。
+
+可复现测速：`cargo run --release --example parallel_atpg [门数]`（本机 24 线程、16 输入）：
+
+| 路径 | 800 门 | 3000 门 | 10000 门 |
+|---|---|---|---|
+| 默认逐故障，串行 | 2.5 s | 34.4 s | 未跑 |
+| 默认逐故障，jobs=8 | 0.37 s | 4.68 s | 未跑 |
+| `--shared-cnf`，串行 | 2.1 s | 30.8 s | 未跑 |
+| `--shared-cnf`，jobs=8 | 0.08 s | 0.26 s | **2.6 s（40k 故障）** |
+
+（优化前 800 门串行 6.6 s；复用拓扑序后 2.5 s。绝对值与机器相关，CI 不做性能门禁。）
+
 ### 桥接故障（`trit bridge`）
 
 把两条网络短路建模为 **wired-AND**（都拉到 0）或 **wired-OR**（都拉到 1）：只有当某个
@@ -367,6 +403,7 @@ SAT 给出测试向量；UNSAT 证明不可测（原因记 `proven`）。上限 
 
 `--sat`：逐桥接构造 good / faulty CNF，要求两端在 good 下取值不同且至少一个主输出不同；
 SAT 给出见证，UNSAT 证明不可测。支持 **≤64 个主输入**；默认枚举路径仍是 ≤10。
+同样支持 `--jobs N` 按桥接对并行，输出与串行一致。
 
 `--pairs` 给桥接对 JSON（`mode` 可写 `and`/`or` 或 `wired-and`/`wired-or`）：
 
@@ -448,7 +485,8 @@ OK     free slot must not reject on unknown hopelessness
 - `binary` 里的变量只在 0/1 上取值；其余变量按三值（含 X）检查——所以断言比二值布尔更强。
 - 可选 `assumptions`：前提必须同时**可满足**，断言只在满足前提的赋值上检查；前提不一致直接判错。
   注意前提不会把 X 变成 0/1，需要二值语义就写进 `binary`。
-- `--engine bdd` 切 canonical BDD；`--json` 给 CI 用。
+- `--engine bdd` 切 canonical BDD；`--jobs N` 并行检查断言（0=自动，1=串行；结果顺序不变）。
+  前提只检查一次，断言之间互不依赖；`--json` 给 CI 用。本机 2000 条小断言：0.19 s → 0.07 s（8 线程）。
 `--bdd-order` 可选 appearance（默认）/ reverse / frequency / frequency-asc / best，仅 `--engine bdd` 生效；
 `best` 会跑四种排序，取断言 BDD 节点总数最少的一组。
 - 可复用 Action（在目标仓里）：

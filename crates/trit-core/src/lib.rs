@@ -7,6 +7,7 @@ pub mod ast;
 pub mod bits;
 pub mod bulk;
 pub mod limits;
+pub mod parallel;
 pub mod parser;
 pub mod value;
 

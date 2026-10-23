@@ -1,0 +1,9 @@
+(DELAYFILE
+  (SDFVERSION "3.0")
+  (DESIGN "and2")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "AND2")
+    (INSTANCE u1)
+    (DELAY (ABSOLUTE (IOPATH a y (2.0) (3.0)))))
+)
