@@ -508,6 +508,7 @@ mod tests {
                 })
                 .collect(),
             load_delay: 0,
+            instance_delays: BTreeMap::new(),
         }
     }
 

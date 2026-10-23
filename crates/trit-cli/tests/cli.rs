@@ -1051,3 +1051,26 @@ fn timeout_kills_long_running_command_with_124() {
     assert_eq!(status.code(), Some(124));
     assert!(started.elapsed() < Duration::from_secs(5));
 }
+
+#[test]
+fn sdf_per_instance_delays_reach_each_output() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let netlist = dir.join("two_leaves.v");
+    let sdf = dir.join("two_leaves.sdf");
+    let (stdout, stderr, code) = run(&[
+        "timing",
+        netlist.to_str().unwrap(),
+        "--from",
+        "verilog",
+        "--sdf",
+        sdf.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("\"name\": \"y1\""), "{stdout}");
+    assert!(stdout.contains("\"arrival\": 2"), "{stdout}");
+    assert!(stdout.contains("\"name\": \"y2\""), "{stdout}");
+    assert!(stdout.contains("\"arrival\": 5"), "{stdout}");
+    assert!(stdout.contains("\"critical_path\": 5"), "{stdout}");
+}

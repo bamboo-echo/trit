@@ -61,6 +61,9 @@ pub struct TimingModel {
     pub arcs: BTreeMap<String, Vec<u32>>,
     /// 每个扇出（门输入引用）追加的延迟；0 表示不看负载。
     pub load_delay: u32,
+    /// 门实例（按输出信号名）到该实例最坏延迟的覆盖；优先于 `arcs`/`delays`。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub instance_delays: BTreeMap<String, u32>,
 }
 
 impl Default for TimingModel {
@@ -70,6 +73,7 @@ impl Default for TimingModel {
             delays: BTreeMap::new(),
             arcs: BTreeMap::new(),
             load_delay: 0,
+            instance_delays: BTreeMap::new(),
         }
     }
 }
@@ -98,6 +102,43 @@ impl TimingModel {
                 .unwrap_or_else(|| self.delay_for(kind)),
             None => self.delay_for(kind),
         }
+    }
+
+    /// 门实例的覆盖延迟；顶层门/未覆盖时返回 `None`。
+    pub fn instance_delay(&self, gate: &crate::circuit::Gate) -> Option<u32> {
+        if gate.kind == GateKind::Const {
+            return None;
+        }
+        self.instance_delays.get(gate.output.name()).copied()
+    }
+
+    /// 门实例优先的引脚弧延迟；实例覆盖时所有引脚用同一最坏值。
+    pub fn arc_delay_for_gate(&self, gate: &crate::circuit::Gate, input_index: usize) -> u32 {
+        if let Some(delay) = self.instance_delay(gate) {
+            return delay;
+        }
+        self.arc_delay(gate.kind, input_index)
+    }
+
+    /// 门实例优先的输出到达时间。
+    pub fn output_arrival_for_gate(
+        &self,
+        gate: &crate::circuit::Gate,
+        inputs: &[u32],
+        fanout: usize,
+    ) -> u64 {
+        if gate.kind == GateKind::Const {
+            return 0;
+        }
+        let start = inputs
+            .iter()
+            .enumerate()
+            .map(|(index, arrival)| {
+                u64::from(*arrival) + u64::from(self.arc_delay_for_gate(gate, index))
+            })
+            .max()
+            .unwrap_or(0);
+        start + u64::from(self.load_delay) * fanout as u64
     }
 
     /// 某类门在给定扇出下的延迟：单元延迟 + `load_delay × fanout`（u64，避免静默饱和）。
@@ -162,6 +203,7 @@ impl TimingModel {
             delays,
             arcs,
             load_delay: self.load_delay,
+            instance_delays: self.instance_delays,
         })
     }
 
@@ -286,7 +328,7 @@ pub fn critical_paths_with_constraints(
         } else {
             for (input_index, input) in gate.inputs.iter().enumerate() {
                 if let Some(paths) = best.get(input.name()) {
-                    let arc = u64::from(model.arc_delay(gate.kind, input_index));
+                    let arc = u64::from(model.arc_delay_for_gate(gate, input_index));
                     for (path_delay, signals) in paths {
                         let mut path = signals.clone();
                         path.push(output.clone());
@@ -361,7 +403,7 @@ pub fn analyze_timing_with_constraints(
             .map(|signal| arrival.get(signal.name()).copied().unwrap_or(0))
             .collect();
         let fanout = fanouts.get(gate.output.name()).copied().unwrap_or(0);
-        let next = model.output_arrival(gate.kind, &input_arrivals, fanout);
+        let next = model.output_arrival_for_gate(gate, &input_arrivals, fanout);
         let next = u32::try_from(next).map_err(|_| TimingError::Overflow)?;
         arrival.insert(gate.output.name().to_string(), next);
     }
@@ -390,7 +432,7 @@ pub fn analyze_timing_with_constraints(
         let fanout = fanouts.get(gate.output.name()).copied().unwrap_or(0);
         let load = u64::from(model.load_delay) * fanout as u64;
         for (input_index, input) in gate.inputs.iter().enumerate() {
-            let delay = u64::from(model.arc_delay(gate.kind, input_index)) + load;
+            let delay = u64::from(model.arc_delay_for_gate(gate, input_index)) + load;
             let delay = u32::try_from(delay).unwrap_or(u32::MAX);
             let input_required = output_required.saturating_sub(delay);
             let entry = required

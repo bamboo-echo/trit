@@ -19,7 +19,7 @@ pub(crate) fn cmd_timing(
     format: Format,
 ) -> Result<()> {
     let circuit = load_circuit(path, from)?;
-    let model = timing_model(library, sdf, delay, load_delay)?;
+    let model = timing_model(library, sdf, delay, load_delay, &circuit)?;
     let constraints = crate::load_timing_constraints(constraints)?;
     let report = trit_circuit::timing::analyze_timing_with_constraints(
         &circuit,

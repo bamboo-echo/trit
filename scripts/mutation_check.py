@@ -766,6 +766,22 @@ MUTANTS = [
         "new": "            let Some(param) = child.params.get(positional + 1) else {\n",
         "pkg": "trit-circuit",
         "filter": "parent_parameter_flows_to_positional_child_override"
+    },
+    {
+        "name": "sdf: 不按实例覆盖",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "        if let Some(delay) = best {\n            model\n                .instance_delays\n                .insert(gate.output.name().to_string(), delay);\n        }\n",
+        "new": "        if let Some(_delay) = best {}\n",
+        "pkg": "trit-circuit",
+        "filter": "instance_delays_override_celltype_in_sta"
+    },
+    {
+        "name": "sdf: 实例路径只做全等",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "    if sdf == gate {\n        return true;\n    }\n    sdf.strip_suffix(gate)\n        .is_some_and(|prefix| prefix.ends_with('.') || prefix.ends_with('/'))\n",
+        "new": "    sdf == gate\n",
+        "pkg": "trit-circuit",
+        "filter": "instance_path_accepts_a_design_prefix"
     }
 ]
 

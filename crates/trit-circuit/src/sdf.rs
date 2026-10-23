@@ -7,8 +7,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::circuit::GateKind;
+use crate::circuit::{Circuit, GateKind};
 use crate::timing::TimingModel;
+
+type InstanceDelayMap = BTreeMap<(String, String), f64>;
 
 /// SDF 读取错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -29,23 +31,20 @@ pub enum SdfError {
     InvalidDelay(String),
 }
 
+/// SDF 中一个实例的最坏延迟（周期，向上取整）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SdfInstance {
+    /// 实例路径（保留 SDF 的 `.` / `/` 分隔符）。
+    pub instance: String,
+    /// 原始 celltype 名。
+    pub celltype: String,
+    /// 最坏 IOPATH 延迟。
+    pub delay: u32,
+}
+
 /// 解析 SDF，返回门类型短名（`AND` / `NOT` / ...）到最坏延迟（周期，向上取整）。
 pub fn parse_sdf(text: &str) -> Result<BTreeMap<String, u32>, SdfError> {
-    let nodes = Parser::new(text).parse_all()?;
-    let mut raw: BTreeMap<String, f64> = BTreeMap::new();
-    let mut found_file = false;
-    for node in &nodes {
-        if is_head(node, "DELAYFILE") {
-            found_file = true;
-            collect(node, None, &mut raw)?;
-        }
-    }
-    if !found_file {
-        return Err(SdfError::Syntax {
-            at: 0,
-            message: "缺少 (DELAYFILE ...)".to_string(),
-        });
-    }
+    let (raw, _) = collect_sdf(text)?;
     if raw.is_empty() {
         return Err(SdfError::NoDelays);
     }
@@ -54,11 +53,7 @@ pub fn parse_sdf(text: &str) -> Result<BTreeMap<String, u32>, SdfError> {
         let Some(kind) = map_celltype(&cell) else {
             continue;
         };
-        let rounded = value.ceil();
-        if !rounded.is_finite() || rounded > f64::from(u32::MAX) {
-            return Err(SdfError::InvalidDelay(cell));
-        }
-        let delay = rounded as u32;
+        let delay = rounded_delay(value, &cell)?;
         delays
             .entry(kind.as_str().to_string())
             .and_modify(|current: &mut u32| *current = (*current).max(delay))
@@ -70,6 +65,23 @@ pub fn parse_sdf(text: &str) -> Result<BTreeMap<String, u32>, SdfError> {
     Ok(delays)
 }
 
+/// 解析每个 `(CELLTYPE, INSTANCE)` 的最坏延迟；没有 `INSTANCE` 的 CELL 不返回。
+pub fn parse_sdf_instances(text: &str) -> Result<Vec<SdfInstance>, SdfError> {
+    let (_, instances) = collect_sdf(text)?;
+    let mut out = Vec::with_capacity(instances.len());
+    for ((celltype, instance), value) in instances {
+        if map_celltype(&celltype).is_none() {
+            continue;
+        }
+        out.push(SdfInstance {
+            instance,
+            celltype: celltype.clone(),
+            delay: rounded_delay(value, &celltype)?,
+        });
+    }
+    Ok(out)
+}
+
 /// 从 SDF 构造 `TimingModel`：延迟按 celltype 取最坏值，负载延迟为 0。
 ///
 /// SDF 未覆盖的门类型回退到 `default_delay = 1`。
@@ -79,7 +91,74 @@ pub fn timing_model_from_sdf(text: &str) -> Result<TimingModel, SdfError> {
         delays: parse_sdf(text)?,
         arcs: BTreeMap::new(),
         load_delay: 0,
+        instance_delays: BTreeMap::new(),
     })
+}
+
+/// 同 [`timing_model_from_sdf`]，并把 `INSTANCE` 对齐到层级展开后的门。
+///
+/// 匹配规则：SDF 实例路径等于 `Gate::instance`，或 SDF 路径以 `.<Gate::instance>` 结尾
+/// （容忍 SDF 带顶层前缀）。同一实例只保留同 celltype 的最坏值；匹配不到时保留 celltype 回退。
+pub fn timing_model_from_sdf_for(text: &str, circuit: &Circuit) -> Result<TimingModel, SdfError> {
+    let mut model = timing_model_from_sdf(text)?;
+    let instances = parse_sdf_instances(text)?;
+    for gate in &circuit.gates {
+        let Some(path) = &gate.instance else {
+            continue;
+        };
+        let mut best: Option<u32> = None;
+        for sdf in &instances {
+            if !instance_matches(&sdf.instance, path) {
+                continue;
+            }
+            if map_celltype(&sdf.celltype) != Some(gate.kind) {
+                continue;
+            }
+            best = Some(best.map_or(sdf.delay, |current| current.max(sdf.delay)));
+        }
+        if let Some(delay) = best {
+            model
+                .instance_delays
+                .insert(gate.output.name().to_string(), delay);
+        }
+    }
+    Ok(model)
+}
+
+fn instance_matches(sdf: &str, gate: &str) -> bool {
+    if sdf == gate {
+        return true;
+    }
+    sdf.strip_suffix(gate)
+        .is_some_and(|prefix| prefix.ends_with('.') || prefix.ends_with('/'))
+}
+
+fn rounded_delay(value: f64, name: &str) -> Result<u32, SdfError> {
+    let rounded = value.ceil();
+    if !rounded.is_finite() || rounded > f64::from(u32::MAX) {
+        return Err(SdfError::InvalidDelay(name.to_string()));
+    }
+    Ok(rounded as u32)
+}
+
+fn collect_sdf(text: &str) -> Result<(BTreeMap<String, f64>, InstanceDelayMap), SdfError> {
+    let nodes = Parser::new(text).parse_all()?;
+    let mut raw = BTreeMap::new();
+    let mut instances = BTreeMap::new();
+    let mut found_file = false;
+    for node in &nodes {
+        if is_head(node, "DELAYFILE") {
+            found_file = true;
+            collect(node, None, None, &mut raw, &mut instances)?;
+        }
+    }
+    if !found_file {
+        return Err(SdfError::Syntax {
+            at: 0,
+            message: "缺少 (DELAYFILE ...)".to_string(),
+        });
+    }
+    Ok((raw, instances))
 }
 
 fn map_celltype(name: &str) -> Option<GateKind> {
@@ -110,7 +189,9 @@ fn map_celltype(name: &str) -> Option<GateKind> {
 fn collect(
     node: &Node,
     cell: Option<&str>,
+    instance: Option<&str>,
     out: &mut BTreeMap<String, f64>,
+    instances: &mut InstanceDelayMap,
 ) -> Result<(), SdfError> {
     let Node::List(items) = node else {
         return Ok(());
@@ -118,15 +199,10 @@ fn collect(
     let head = items.first().and_then(atom);
     match head {
         Some("CELL") => {
-            let celltype = items.iter().find_map(|item| match list_head(item) {
-                Some("CELLTYPE") => list_items(item)
-                    .and_then(|values| values.get(1))
-                    .and_then(atom),
-                _ => None,
-            });
-            let current = celltype.or(cell);
+            let celltype = child_atom(items, "CELLTYPE").or(cell);
+            let current_instance = child_atom(items, "INSTANCE").or(instance);
             for item in items {
-                collect(item, current, out)?;
+                collect(item, celltype, current_instance, out, instances)?;
             }
         }
         Some("IOPATH") => {
@@ -152,15 +228,30 @@ fn collect(
                 out.entry(cell.to_string())
                     .and_modify(|current| *current = current.max(worst))
                     .or_insert(worst);
+                if let Some(instance) = instance {
+                    instances
+                        .entry((cell.to_string(), instance.to_string()))
+                        .and_modify(|current| *current = current.max(worst))
+                        .or_insert(worst);
+                }
             }
         }
         _ => {
             for item in items {
-                collect(item, cell, out)?;
+                collect(item, cell, instance, out, instances)?;
             }
         }
     }
     Ok(())
+}
+
+fn child_atom<'a>(items: &'a [Node], name: &str) -> Option<&'a str> {
+    items.iter().find_map(|item| match list_head(item) {
+        Some(head) if head == name => list_items(item)
+            .and_then(|values| values.get(1))
+            .and_then(atom),
+        _ => None,
+    })
 }
 
 fn parse_delay(text: &str) -> Result<f64, SdfError> {
@@ -430,5 +521,83 @@ mod tests {
         assert_eq!(model.default_delay, 1);
         assert_eq!(model.delays["AND"], 2);
         assert_eq!(model.load_delay, 0);
+    }
+}
+
+#[cfg(test)]
+mod instance_tests {
+    use super::*;
+    use crate::timing::analyze_timing;
+
+    const TWO_LEAVES: &str = "module leaf(input a, input b, output y);\n\
+        assign y = a & b;\n\
+        endmodule\n\
+        module top(input a, input b, input c, input d, output y1, output y2);\n\
+        leaf u1 (.a(a), .b(b), .y(y1));\n\
+        leaf u2 (.a(c), .b(d), .y(y2));\n\
+        endmodule\n";
+
+    const TWO_LEAVES_SDF: &str = r#"
+        (DELAYFILE
+          (SDFVERSION "3.0")
+          (DESIGN "top")
+          (CELL (CELLTYPE "AND2") (INSTANCE u1)
+            (DELAY (ABSOLUTE (IOPATH a y (2.0) (2.0)))))
+          (CELL (CELLTYPE "AND2") (INSTANCE u2)
+            (DELAY (ABSOLUTE (IOPATH a y (5.0) (5.0)))))
+        )
+    "#;
+
+    #[test]
+    fn parses_per_instance_delays() {
+        let instances = parse_sdf_instances(TWO_LEAVES_SDF).unwrap();
+        assert_eq!(instances.len(), 2);
+        assert!(
+            instances
+                .iter()
+                .any(|item| item.instance == "u1" && item.delay == 2)
+        );
+        assert!(
+            instances
+                .iter()
+                .any(|item| item.instance == "u2" && item.delay == 5)
+        );
+    }
+
+    #[test]
+    fn instance_delays_override_celltype_in_sta() {
+        let circuit = crate::parse_verilog(TWO_LEAVES).unwrap();
+        assert_eq!(
+            circuit
+                .gates
+                .iter()
+                .find(|gate| gate.output.name() == "y1")
+                .unwrap()
+                .instance
+                .as_deref(),
+            Some("u1")
+        );
+        let model = timing_model_from_sdf_for(TWO_LEAVES_SDF, &circuit).unwrap();
+        assert_eq!(model.instance_delays["y1"], 2);
+        assert_eq!(model.instance_delays["y2"], 5);
+        let report = analyze_timing(&circuit, model, None).unwrap();
+        let arrival = |name: &str| {
+            report
+                .outputs
+                .iter()
+                .find(|output| output.name == name)
+                .unwrap()
+                .arrival
+        };
+        assert_eq!(arrival("y1"), 2);
+        assert_eq!(arrival("y2"), 5);
+        assert_eq!(report.critical_path, 5);
+    }
+
+    #[test]
+    fn instance_path_accepts_a_design_prefix() {
+        assert!(instance_matches("top.u1", "u1"));
+        assert!(instance_matches("top/u1", "u1"));
+        assert!(!instance_matches("top.u10", "u1"));
     }
 }

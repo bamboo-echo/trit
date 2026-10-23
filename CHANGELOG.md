@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added（SDF per-instance）
+
+- **门实例元数据**：`Gate.instance`（`u1` / `u1.u2`），层级展开时写入；JSON 可选字段，
+  顶层门为 `None`。
+- **SDF 实例对齐**：`parse_sdf_instances` / `timing_model_from_sdf_for`；按 `INSTANCE` 匹配
+  `Gate::instance`（容忍 `top.u1` 前缀），实例最坏 IOPATH 优先于 celltype；匹配不到回退 celltype。
+- **STA**：`TimingModel::instance_delays` + `arc_delay_for_gate` / `output_arrival_for_gate`；
+  同一实例的 rise/fall/条件弧仍合并为一个最坏值，不做引脚级差异。
+- 测试：两实例 2/5 周期分别到达 y1/y2；SDF 前缀匹配；CLI `timing --sdf`。
+- 变异门 94 → 96（不按实例覆盖、实例路径只做全等）。
+
 ### Added（0.11 硬超时）
 
 - **全局 `--timeout-ms N`**：CLI 重新执行自身为子进程，超时 `kill` 并退出 **124**；

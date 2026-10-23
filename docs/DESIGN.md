@@ -59,7 +59,7 @@
 | CLI 硬超时 | 任意子命令 | 重执行子进程 + kill；退出码 124 |
 | 位切片批量 | 任意长度 | 2 bit/elem、按字运算 |
 | 二进制互操作 | 任意长度 | `Option<unknowns>` + move-only 视图 |
-| SDF 延迟注入 | celltype 粒度 | 最坏 IOPATH、向上取整；不做 per-instance |
+| SDF 延迟注入 | celltype + per-instance | 实例最坏 IOPATH 优先；不做引脚级 |
 
 ## 非目标
 
