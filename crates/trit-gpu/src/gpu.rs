@@ -74,6 +74,9 @@ async fn run_async(trits: usize) -> Option<Report> {
     let (b_pos_data, b_neg_data) = pack_dual_rail(&values_b);
     let expected = dot_scalar(&values_a, &values_b);
     let blocks = a_pos_data.len();
+    // naive 一字一线程；fast 用网格步进，每个 workgroup 只做一次 atomic。
+    let grid_naive = blocks.div_ceil(WORKGROUP as usize) as u32;
+    let grid = grid_naive.min(4096);
     debug_assert!(blocks * WORDS_PER_TRIT_BLOCK >= trits, "打包尺寸");
 
     let usage = wgpu::BufferUsages::STORAGE;
@@ -107,6 +110,7 @@ async fn run_async(trits: usize) -> Option<Report> {
             storage(2, true),
             storage(3, true),
             storage(4, false),
+            uniform(5),
         ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -115,12 +119,35 @@ async fn run_async(trits: usize) -> Option<Report> {
         immediate_size: 0,
     });
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("ternary"),
+        label: Some("ternary-fast"),
         layout: Some(&pipeline_layout),
         module: &shader,
         entry_point: Some("main"),
         compilation_options: Default::default(),
         cache: None,
+    });
+    let pipeline_popc2 = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("ternary-popc2"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: Some("main_popc2"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let pipeline_naive = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("ternary-naive"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: Some("main_naive"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    // 三值内核用网格步进：params = [字数, 网格数]。
+    let word_params: [u32; 2] = [blocks as u32, grid];
+    let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&word_params),
+        usage: wgpu::BufferUsages::UNIFORM,
     });
     let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
@@ -146,12 +173,15 @@ async fn run_async(trits: usize) -> Option<Report> {
                 binding: 4,
                 resource: out.as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: params.as_entire_binding(),
+            },
         ],
     });
-    let grid = blocks.div_ceil(WORKGROUP as usize) as u32;
 
     // 一次「提交但不等待」的派发；计时时连续提交后统一等待。
-    let submit = |zero: bool| {
+    let submit_with = |pipeline: &wgpu::ComputePipeline, grid: u32, zero: bool| {
         if zero {
             queue.write_buffer(&out, 0, &[0u8; 4]);
         }
@@ -159,16 +189,35 @@ async fn run_async(trits: usize) -> Option<Report> {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-            pass.set_pipeline(&pipeline);
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind, &[]);
             pass.dispatch_workgroups(grid, 1, 1);
         }
         queue.submit([encoder.finish()]);
     };
+    let submit = |zero: bool| submit_with(&pipeline, grid, zero);
 
-    let gpu_ns_per_trit = median_ns_per(&device, trits, || submit(false));
+    // 预热：GPU 时钟爬坡会让“第一个被测内核”系统性偏慢，先把三个内核都跑热。
+    for _ in 0..20 {
+        submit_with(&pipeline_naive, grid_naive, false);
+        submit_with(&pipeline_popc2, grid_naive, false);
+        submit_with(&pipeline, grid, false);
+    }
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("poll");
 
-    submit(true);
+    // A（默认，实测最快）：四组 POPC + 每字 atomic。
+    let gpu_ns_per_trit = median_ns_per(&device, trits, || {
+        submit_with(&pipeline_naive, grid_naive, false)
+    });
+    // C：合并 POPC + workgroup 归约（对照，实测更慢）。
+    let gpu_reduce_ns_per_trit = median_ns_per(&device, trits, || submit(false));
+    let gpu_popc2_ns_per_trit = median_ns_per(&device, trits, || {
+        submit_with(&pipeline_popc2, grid_naive, false)
+    });
+
+    submit_with(&pipeline_naive, grid_naive, true);
     device
         .poll(wgpu::PollType::wait_indefinitely())
         .expect("poll");
@@ -194,10 +243,10 @@ async fn run_async(trits: usize) -> Option<Report> {
         usage: usage | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
-    let params: [u32; 2] = [trits as u32, fgrid];
+    let float_params: [u32; 2] = [trits as u32, fgrid];
     let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
-        contents: bytemuck::cast_slice(&params),
+        contents: bytemuck::cast_slice(&float_params),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let fshader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -304,6 +353,8 @@ async fn run_async(trits: usize) -> Option<Report> {
         gpu: gpu_value,
         matches: gpu_value == expected,
         gpu_ns_per_trit,
+        gpu_reduce_ns_per_trit,
+        gpu_popc2_ns_per_trit,
         cpu_ns_per_trit,
         gpu_f32_ns_per_element,
         cpu_f32_ns_per_element,

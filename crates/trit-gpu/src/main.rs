@@ -37,6 +37,16 @@ fn bench(trits: usize) -> Result<(), String> {
         report.gpu_ns_per_trit * 1000.0
     );
     println!(
+        "    · B 只合并 POPC（2 组 + 每字 atomic）{:>10.5} ps/trit（{:+.1}%）",
+        report.gpu_popc2_ns_per_trit * 1000.0,
+        (report.gpu_ns_per_trit / report.gpu_popc2_ns_per_trit - 1.0) * 100.0
+    );
+    println!(
+        "    · C 合并 POPC + workgroup 归约      {:>10.5} ps/trit（{:+.1}%）",
+        report.gpu_reduce_ns_per_trit * 1000.0,
+        (report.gpu_ns_per_trit / report.gpu_reduce_ns_per_trit - 1.0) * 100.0
+    );
+    println!(
         "  CPU 1 号（三值）      {:>10.5} ps/trit",
         report.cpu_ns_per_trit * 1000.0
     );
