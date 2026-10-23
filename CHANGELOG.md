@@ -43,6 +43,18 @@
 - 变异门 `preflight` 增加规则：锚点落在 `#[cfg(test)] mod ...` 之后直接报错——
   改测试代码不改变产品行为，不该算覆盖。
 
+### Added（底层补齐：`Ternary` 运算符 + `View::copy_into`）
+
+- `trit-core`：`Ternary` 现在实现 `Default`（`False`）、`From<bool>`、`Not`、
+  `BitAnd` / `BitOr`（**Kleene**）、`BitXor`（**经典异或**，任一侧 `X` 则 `X`）。
+  Ł3 / B3 的差异仍走 [`Algebra`]，运算符只给三套语义一致的默认值；测试逐条断言。
+  这让值层能直接写 `!a | (b & c)`，不必为每个门手写 match。
+- `trit-codec`：`View::copy_into(&mut [Ternary])` 顺序批量拷贝——Binary / Packed 走专用循环，
+  Sparse 先填 `X` 再回填非零位；`decode` 改用它（不再逐元素 `get`）。
+  稀疏 1% 的「整条解码 + 随机取」从 **417 µs → 22.8 µs（18×）**；
+  零拷贝视图相对它的优势相应从 242× 收窄到 **11.7×**——视图仍是随机访问最优，物化现在是廉价选项。
+- 变异门 166 → **168**，两条新变异按**断言**判红（复核过不是编译错误导致的假红）。
+
 ### Added（零拷贝解码 `plan::View`）
 
 - `plan::View::new(encoding, bytes, len)`：只校验、**不分配、不拷贝**；`get(i)` 按需从字节算。

@@ -1343,6 +1343,22 @@ MUTANTS = [
         "new": "        .map(|(x, y)| i64::from(*x) + i64::from(*y))",
         "pkg": "trit-gpu",
         "filter": "packing_round_trips_across_word_boundaries"
+    },
+    {
+        "name": "core: 取反把 X 变成 0",
+        "file": "crates/trit-core/src/value.rs",
+        "old": "            Self::Unknown => Self::Unknown,\n        }\n    }\n}\n\n/// **Kleene** 合取",
+        "new": "            Self::Unknown => Self::False,\n        }\n    }\n}\n\n/// **Kleene** 合取",
+        "pkg": "trit-core",
+        "filter": "operators_use_kleene_and_classic_xor"
+    },
+    {
+        "name": "codec: 稀疏批量拷贝不先填 X",
+        "file": "crates/trit-codec/src/plan.rs",
+        "old": "                out.fill(Ternary::Unknown);",
+        "new": "                out.fill(Ternary::False);",
+        "pkg": "trit-codec",
+        "filter": "bulk_copy_matches_decode"
     }
 ]
 

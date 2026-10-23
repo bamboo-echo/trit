@@ -269,6 +269,59 @@ impl<'a> View<'a> {
         }
     }
 
+    /// 顺序批量拷贝到 `out`：按编码走专用循环，不分配、不逐元素做边界判断。
+    ///
+    /// `out.len()` 必须等于 [`View::len`]。
+    pub fn copy_into(&self, out: &mut [Ternary]) -> Result<(), CodecError> {
+        if out.len() != self.len {
+            return Err(CodecError::Length {
+                expected: self.len,
+                available: out.len(),
+            });
+        }
+        match self.encoding {
+            Encoding::Binary => {
+                for (index, slot) in out.iter_mut().enumerate() {
+                    *slot = if (self.bytes[index / 8] >> (index % 8)) & 1 == 1 {
+                        Ternary::True
+                    } else {
+                        Ternary::False
+                    };
+                }
+            }
+            Encoding::Packed => {
+                for (index, slot) in out.iter_mut().enumerate() {
+                    let byte = self.bytes[index / pack::TRITS_PER_BYTE];
+                    let digit = (u16::from(byte) / POW3[index % pack::TRITS_PER_BYTE]) % 3;
+                    *slot = match digit {
+                        0 => Ternary::False,
+                        1 => Ternary::Unknown,
+                        _ => Ternary::True,
+                    };
+                }
+            }
+            Encoding::Sparse => {
+                out.fill(Ternary::Unknown);
+                let count =
+                    u32::from_le_bytes(self.bytes[4..8].try_into().expect("4 字节")) as usize;
+                let indices = &self.bytes[8..8 + count * 4];
+                let signs = &self.bytes[8 + count * 4..];
+                for position in 0..count {
+                    let offset = position * 4;
+                    let index =
+                        u32::from_le_bytes(indices[offset..offset + 4].try_into().expect("4 字节"))
+                            as usize;
+                    out[index] = if (signs[position / 8] >> (position % 8)) & 1 == 1 {
+                        Ternary::True
+                    } else {
+                        Ternary::False
+                    };
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// 逐元素迭代（不分配）。
     pub fn iter(&self) -> impl Iterator<Item = Ternary> + '_ {
         (0..self.len).map(move |index| self.get(index).expect("下标在范围内"))
@@ -279,7 +332,10 @@ const POW3: [u16; 5] = [1, 3, 9, 27, 81];
 
 /// 解码成拥有所有权的向量（内部就是视图 + 收集）。
 pub fn decode(encoding: Encoding, bytes: &[u8], len: usize) -> Result<Vec<Ternary>, CodecError> {
-    Ok(View::new(encoding, bytes, len)?.iter().collect())
+    let view = View::new(encoding, bytes, len)?;
+    let mut out = vec![Ternary::Unknown; len];
+    view.copy_into(&mut out)?;
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -392,6 +448,41 @@ mod tests {
                 decode(encoding, &bytes, values.len()).unwrap().as_slice(),
                 values.as_slice()
             );
+        }
+    }
+
+    #[test]
+    fn bulk_copy_matches_decode() {
+        let binary: Vec<Ternary> = (0..777usize)
+            .map(|i| {
+                if i.is_multiple_of(3) {
+                    Ternary::True
+                } else {
+                    Ternary::False
+                }
+            })
+            .collect();
+        let packed: Vec<Ternary> = (0..777)
+            .map(|i| match i % 3 {
+                0 => Ternary::False,
+                1 => Ternary::Unknown,
+                _ => Ternary::True,
+            })
+            .collect();
+        // 稀疏样本必须真的走到 Sparse 分支（非零 < 4.85%）。
+        let mut sparse = vec![Ternary::Unknown; 7777];
+        sparse[3] = Ternary::True;
+        sparse[7776] = Ternary::False;
+        for values in [&binary, &packed, &sparse] {
+            let (encoding, bytes) = encode(values);
+            let view = View::new(encoding, &bytes, values.len()).unwrap();
+            let mut out = vec![Ternary::False; values.len()];
+            view.copy_into(&mut out).unwrap();
+            assert_eq!(out.as_slice(), (*values).as_slice(), "{encoding:?}");
+            assert!(matches!(
+                view.copy_into(&mut out[..values.len() - 1]),
+                Err(CodecError::Length { .. })
+            ));
         }
     }
 

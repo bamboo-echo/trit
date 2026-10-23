@@ -24,6 +24,72 @@ pub enum Ternary {
     True,
 }
 
+/// 默认值是 `False`：二进制视图下「没有 unknowns」的自然选择。
+impl Default for Ternary {
+    fn default() -> Self {
+        Self::False
+    }
+}
+
+impl From<bool> for Ternary {
+    fn from(value: bool) -> Self {
+        Self::from_bool(value)
+    }
+}
+
+/// 三值取反；在 Kleene / Ł3 / B3 三套语义下相同。
+impl std::ops::Not for Ternary {
+    type Output = Self;
+
+    fn not(self) -> Self {
+        match self {
+            Self::False => Self::True,
+            Self::True => Self::False,
+            Self::Unknown => Self::Unknown,
+        }
+    }
+}
+
+/// **Kleene** 合取（`False ∧ X = False`）。Ł3 / B3 请走 [`crate::algebra::Algebra`]。
+impl std::ops::BitAnd for Ternary {
+    type Output = Self;
+
+    fn bitand(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::False, _) | (_, Self::False) => Self::False,
+            (Self::True, Self::True) => Self::True,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// **Kleene** 析取（`True ∨ X = True`）。
+impl std::ops::BitOr for Ternary {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::True, _) | (_, Self::True) => Self::True,
+            (Self::False, Self::False) => Self::False,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// **经典** 异或：任一为 `X` 则 `X`（对应 `GateKind::XorClassic`）。
+/// Ł3 的强加法（`X ⊕ X = 1`）不是这个语义，请用 `Algebra::Lukasiewicz`。
+impl std::ops::BitXor for Ternary {
+    type Output = Self;
+
+    fn bitxor(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Unknown, _) | (_, Self::Unknown) => Self::Unknown,
+            (Self::True, Self::True) | (Self::False, Self::False) => Self::False,
+            _ => Self::True,
+        }
+    }
+}
+
 impl Ternary {
     /// 逻辑常量假。
     pub const FALSE: Self = Self::False;
@@ -142,6 +208,23 @@ impl fmt::Display for Ternary {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn operators_use_kleene_and_classic_xor() {
+        use Ternary::{False, True, Unknown};
+        assert_eq!(!True, False);
+        assert_eq!(!Unknown, Unknown);
+        assert_eq!(False & Unknown, False);
+        assert_eq!(True & Unknown, Unknown);
+        assert_eq!(True | Unknown, True);
+        assert_eq!(False | Unknown, Unknown);
+        assert_eq!(True ^ True, False);
+        assert_eq!(True ^ False, True);
+        assert_eq!(Unknown ^ True, Unknown);
+        assert_eq!(Ternary::default(), False);
+        assert_eq!(Ternary::from(true), True);
+    }
+
     use super::*;
 
     #[test]
