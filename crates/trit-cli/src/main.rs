@@ -212,6 +212,9 @@ enum Commands {
         /// 时序库 JSON（`default_delay` + `delays`），形如 `{"default_delay":1,"delays":{"AND":2}}`。
         #[arg(long, value_name = "FILE")]
         library: Option<std::path::PathBuf>,
+        /// I/O 时序约束 JSON（`input_arrival` / `output_required`）。
+        #[arg(long, value_name = "FILE")]
+        constraints: Option<std::path::PathBuf>,
         /// 列出最慢的 N 条路径（0 = 不列）。
         #[arg(long, default_value_t = 0)]
         paths: usize,
@@ -258,6 +261,9 @@ enum Commands {
         /// 时序库 JSON。
         #[arg(long, value_name = "FILE")]
         library: Option<std::path::PathBuf>,
+        /// I/O 时序约束 JSON（`input_arrival` / `output_required`）。
+        #[arg(long, value_name = "FILE")]
+        constraints: Option<std::path::PathBuf>,
         /// ATPG 覆盖率下限（0..=1）。
         #[arg(long, default_value_t = 0.0)]
         min_coverage: f64,
@@ -408,6 +414,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library,
+            constraints,
             paths,
             format,
         } => commands::timing::cmd_timing(
@@ -417,6 +424,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library.as_deref(),
+            constraints.as_deref(),
             paths,
             format,
         ),
@@ -435,6 +443,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library,
+            constraints,
             min_coverage,
             format,
         } => commands::check::cmd_check(
@@ -444,6 +453,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library.as_deref(),
+            constraints.as_deref(),
             min_coverage,
             format,
             &cli.algebra,
@@ -582,6 +592,17 @@ pub(crate) fn timing_model(
         model.load_delay = load;
     }
     Ok(model)
+}
+
+pub(crate) fn load_timing_constraints(
+    path: Option<&std::path::Path>,
+) -> Result<trit_circuit::timing::TimingConstraints> {
+    let Some(path) = path else {
+        return Ok(Default::default());
+    };
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("无法读取时序约束 {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("时序约束 JSON 无效：{}", path.display()))
 }
 
 pub(crate) fn load_circuit(path: &std::path::Path, from: &str) -> Result<Circuit> {

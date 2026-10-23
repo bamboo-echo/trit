@@ -654,6 +654,30 @@ MUTANTS = [
         "new": "                MapStrategy::Area => (candidate.cells as u64, candidate.arrival as u64),\n",
         "pkg": "trit-circuit",
         "filter": "area_first_uses_declared_area"
+    },
+    {
+        "name": "timing: 忽略输入到达约束",
+        "file": "crates/trit-circuit/src/timing.rs",
+        "old": "            let arrival = constraints\n                .input_arrival\n                .get(signal.name())\n                .copied()\n                .unwrap_or(0);\n",
+        "new": "            let arrival = 0;\n",
+        "pkg": "trit-circuit",
+        "filter": "input_arrival_and_output_required_constraints"
+    },
+    {
+        "name": "timing: 忽略逐输出 required",
+        "file": "crates/trit-circuit/src/timing.rs",
+        "old": "            let required = constraints\n                .output_required\n                .get(signal.name())\n                .copied()\n                .unwrap_or(clock);\n",
+        "new": "            let required = clock;\n",
+        "pkg": "trit-circuit",
+        "filter": "per_output_required_times_are_independent"
+    },
+    {
+        "name": "timing: --paths 忽略输入到达",
+        "file": "crates/trit-circuit/src/timing.rs",
+        "old": "        let arrival = constraints\n            .input_arrival\n            .get(input.name())\n            .copied()\n            .unwrap_or(0);\n",
+        "new": "        let arrival = 0;\n",
+        "pkg": "trit-circuit",
+        "filter": "input_arrival_and_output_required_constraints"
     }
 ]
 

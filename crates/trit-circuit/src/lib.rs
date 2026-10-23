@@ -31,7 +31,8 @@ pub use map::{
 };
 pub use netlist::{NetlistError, from_json, parse_netlist, to_json, to_netlist};
 pub use timing::{
-    OutputTiming, TimingModel, TimingModelError, TimingPath, TimingReport, analyze_timing,
-    critical_paths,
+    OutputTiming, TimingConstraints, TimingError, TimingModel, TimingModelError, TimingPath,
+    TimingReport, analyze_timing, analyze_timing_with_constraints, critical_paths,
+    critical_paths_with_constraints,
 };
 pub use verilog::{VerilogError, VerilogErrorKind, parse_verilog, to_verilog};

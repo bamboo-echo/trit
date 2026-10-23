@@ -865,3 +865,30 @@ fn bridge_sat_matches_small_fixture() {
     assert!(stdout.contains("SAT 逐桥接"), "{stdout}");
     assert!(stdout.contains("覆盖率 50.0%"), "{stdout}");
 }
+
+#[test]
+fn timing_constraints_shift_arrival_and_slack() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let netlist = dir.join("and2.net");
+    let constraints = dir.join("timing_constraints.json");
+    let (stdout, stderr, code) = run(&[
+        "timing",
+        netlist.to_str().unwrap(),
+        "--constraints",
+        constraints.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("\"arrival\": 3"), "{stdout}");
+    assert!(stdout.contains("\"required\": 5"), "{stdout}");
+    assert!(stdout.contains("\"slack\": 2"), "{stdout}");
+
+    let (stdout, stderr, code) = run(&[
+        "check",
+        netlist.to_str().unwrap(),
+        "--constraints",
+        constraints.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+}

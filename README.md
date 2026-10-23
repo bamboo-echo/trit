@@ -207,12 +207,20 @@ trit check design.net --clock 4 --library cells.json --format json
 
 ## 时序估算（`trit timing`）
 
-组合、单位延迟的 STA-lite：输入到达 0，每个非常量门加 `--delay`（默认 1），
+组合、单位延迟的 STA-lite：默认输入到达 0，每个非常量门加 `--delay`（默认 1），
 `--clock N` 给出周期时按反向传播算 required/slack，负 slack 记为违例。
 
+`--constraints io.json` 给 I/O 时序约束；未列出的输入按 0，未列出的输出按 `--clock`
+（省略 clock 时按关键路径）。`--paths` 也从输入到达时间开始计：
+
+```json
+{ "input_arrival": { "a": 2 }, "output_required": { "y": 10 } }
+```
+
 ```bash
-trit timing design.net --clock 10
+trit timing design.net --clock 10 --constraints io.json
 trit timing design.v --from verilog --delay 2 --format json
+trit check design.net --constraints io.json --min-coverage 0.9
 ```
 
 `--library cells.json` 可按门类型给延迟（`{"default_delay":1,"delays":{"AND":2}}`），优先于 `--delay`；
