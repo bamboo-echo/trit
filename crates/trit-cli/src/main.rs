@@ -642,6 +642,7 @@ pub(crate) fn timing_model(
     sdf: Option<&std::path::Path>,
     delay: u32,
     load_delay: Option<u32>,
+    circuit: &Circuit,
 ) -> Result<trit_circuit::timing::TimingModel> {
     let mut model = match (library, sdf) {
         (Some(_), Some(_)) => {
@@ -656,7 +657,7 @@ pub(crate) fn timing_model(
         (None, Some(sdf)) => {
             let text = std::fs::read_to_string(sdf)
                 .with_context(|| format!("无法读取 SDF {}", sdf.display()))?;
-            let mut model = trit_circuit::sdf::timing_model_from_sdf(&text)
+            let mut model = trit_circuit::sdf::timing_model_from_sdf_for(&text, circuit)
                 .with_context(|| format!("SDF 解析失败：{}", sdf.display()))?;
             model.default_delay = delay;
             model

@@ -448,6 +448,7 @@ fn non_const_gate_with_value_is_rejected() {
         inputs: vec![sig("a")],
         output: sig("y"),
         const_value: Some(Ternary::True),
+        instance: None,
     });
     assert_eq!(
         circuit.validate(),

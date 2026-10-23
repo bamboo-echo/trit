@@ -179,6 +179,9 @@ fn instantiate(
             )));
         }
         let mut gate = gate.clone();
+        if !prefix.is_empty() {
+            gate.instance = Some(prefix.trim_end_matches("__").replace("__", "."));
+        }
         let mut renamed_inputs = Vec::with_capacity(gate.inputs.len());
         for sig in &gate.inputs {
             renamed_inputs.push(Signal::new(rename_signal(

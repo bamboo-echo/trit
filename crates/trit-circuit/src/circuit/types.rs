@@ -144,6 +144,9 @@ pub struct Gate {
     pub output: Signal,
     /// 常量门的取值。
     pub const_value: Option<Ternary>,
+    /// 层级实例路径（`u1` / `u1.u2`）；顶层门为 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
 }
 
 impl Gate {
@@ -154,6 +157,7 @@ impl Gate {
             inputs,
             output,
             const_value: None,
+            instance: None,
         }
     }
 
@@ -164,6 +168,7 @@ impl Gate {
             inputs: Vec::new(),
             output,
             const_value: Some(value),
+            instance: None,
         }
     }
 }
