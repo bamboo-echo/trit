@@ -12,7 +12,7 @@ pub use crate::pattern::TestPattern;
 mod compact;
 mod sat;
 use compact::compact_patterns;
-pub use sat::generate_tests_sat;
+pub use sat::{generate_tests_sat, generate_tests_sat_with_jobs};
 
 /// 按门类型统计的覆盖率。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

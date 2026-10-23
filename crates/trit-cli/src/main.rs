@@ -172,6 +172,9 @@ enum Commands {
         /// 用 SAT 逐故障求解（支持 ≤64 主输入；不可测由 UNSAT 证明）。
         #[arg(long)]
         sat: bool,
+        /// 并行工作线程数（0 = 自动，1 = 串行）。
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        jobs: usize,
     },
     /// 桥接故障（wired-AND / wired-OR）可测性与测试向量。
     Bridge {
@@ -189,6 +192,9 @@ enum Commands {
         /// 用 SAT 逐桥接求解（支持 ≤64 主输入）。
         #[arg(long)]
         sat: bool,
+        /// 并行工作线程数（0 = 自动，1 = 串行）。
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        jobs: usize,
         /// 输出格式。
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
@@ -390,13 +396,15 @@ fn main() -> Result<()> {
             from,
             format,
             sat,
-        } => commands::atpg::cmd_atpg(&path, format, &cli.algebra, &from, sat),
+            jobs,
+        } => commands::atpg::cmd_atpg(&path, format, &cli.algebra, &from, sat, jobs),
         Commands::Bridge {
             path,
             from,
             pairs,
             max_pairs,
             sat,
+            jobs,
             format,
         } => commands::bridge::cmd_bridge(
             &path,
@@ -406,6 +414,7 @@ fn main() -> Result<()> {
             pairs.as_deref(),
             max_pairs,
             sat,
+            jobs,
         ),
         Commands::Timing {
             path,

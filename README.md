@@ -359,6 +359,11 @@ SAT 给出测试向量；UNSAT 证明不可测（原因记 `proven`）。上限 
 `GateKind::Xor` 按所选代数编码：Ł3 在 0/1 上退化为 OR，K3/B3 退化为 AND。
 当前未设单故障求解超时；极端难例可能长时间运行。
 
+`--jobs N` 按故障并行求解（`0` = 自动取可用并行度，`1` = 串行，默认 `0`）。每个线程独立建
+CNF/solver，结果按原故障顺序合并，所以 JSON/CSV 与串行**逐字段一致**；wasm32 强制串行。
+可复现测速：`cargo run --release --example parallel_atpg`（本机 24 线程、800 门/16 输入：
+串行 6.7 s，`--jobs 8` 1.0 s，约 6.5×；另一台机器的绝对值会不同）。
+
 ### 桥接故障（`trit bridge`）
 
 把两条网络短路建模为 **wired-AND**（都拉到 0）或 **wired-OR**（都拉到 1）：只有当某个
@@ -367,6 +372,7 @@ SAT 给出测试向量；UNSAT 证明不可测（原因记 `proven`）。上限 
 
 `--sat`：逐桥接构造 good / faulty CNF，要求两端在 good 下取值不同且至少一个主输出不同；
 SAT 给出见证，UNSAT 证明不可测。支持 **≤64 个主输入**；默认枚举路径仍是 ≤10。
+同样支持 `--jobs N` 按桥接对并行，输出与串行一致。
 
 `--pairs` 给桥接对 JSON（`mode` 可写 `and`/`or` 或 `wired-and`/`wired-or`）：
 

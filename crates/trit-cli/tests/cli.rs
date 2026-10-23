@@ -892,3 +892,42 @@ fn timing_constraints_shift_arrival_and_slack() {
     ]);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 }
+
+#[test]
+fn jobs_do_not_change_atpg_or_bridge_output() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let netlist = dir.join("and2.net");
+    let path = netlist.to_str().unwrap();
+
+    let serial = run(&["atpg", path, "--sat", "--jobs", "1", "--format", "json"]);
+    let parallel = run(&["atpg", path, "--sat", "--jobs", "4", "--format", "json"]);
+    assert_eq!(serial.2, 0, "stdout={} stderr={}", serial.0, serial.1);
+    assert_eq!(parallel.2, 0, "stdout={} stderr={}", parallel.0, parallel.1);
+    assert_eq!(serial.0, parallel.0);
+
+    let serial = run(&[
+        "bridge",
+        path,
+        "--sat",
+        "--max-pairs",
+        "8",
+        "--jobs",
+        "1",
+        "--format",
+        "json",
+    ]);
+    let parallel = run(&[
+        "bridge",
+        path,
+        "--sat",
+        "--max-pairs",
+        "8",
+        "--jobs",
+        "4",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(serial.2, 0, "stdout={} stderr={}", serial.0, serial.1);
+    assert_eq!(parallel.2, 0, "stdout={} stderr={}", parallel.0, parallel.1);
+    assert_eq!(serial.0, parallel.0);
+}

@@ -8,6 +8,7 @@ use trit_circuit::circuit::Circuit;
 use crate::output::Format;
 use crate::{load_circuit, resolve_algebra};
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cmd_bridge(
     path: &std::path::Path,
     format: Format,
@@ -16,6 +17,7 @@ pub(crate) fn cmd_bridge(
     pairs_path: Option<&std::path::Path>,
     max_pairs: usize,
     sat: bool,
+    jobs: usize,
 ) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
     let circuit = load_circuit(path, from)?;
@@ -35,7 +37,7 @@ pub(crate) fn cmd_bridge(
                 circuit.input_count()
             );
         }
-        trit_circuit::generate_bridge_tests_sat(&circuit, alg, &pairs)
+        trit_circuit::generate_bridge_tests_sat_with_jobs(&circuit, alg, &pairs, jobs)
     } else {
         if circuit.input_count() > 10 {
             bail!(

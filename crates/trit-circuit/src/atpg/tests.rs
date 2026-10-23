@@ -692,3 +692,31 @@ fn sat_tests_the_constant_pin_and_proves_the_rest() {
             .all(|fault| fault.reason == Some(crate::circuit::UntestableReason::Proven))
     );
 }
+
+#[test]
+fn sat_jobs_match_serial_and_are_deterministic() {
+    let mut circuit = Circuit::new("parallel_atpg");
+    for index in 0..8 {
+        circuit.add_input(sig(&format!("i{index}")));
+    }
+    let mut previous = sig("i0");
+    for index in 1..8 {
+        let output = if index == 7 {
+            sig("out")
+        } else {
+            sig(&format!("n{index}"))
+        };
+        circuit.add_gate(Gate::new(
+            GateKind::And,
+            vec![previous, sig(&format!("i{index}"))],
+            output.clone(),
+        ));
+        previous = output;
+    }
+    circuit.add_output(sig("out"));
+
+    let serial = generate_tests_sat_with_jobs(&circuit, Algebra::Kleene, 1).unwrap();
+    let parallel = generate_tests_sat_with_jobs(&circuit, Algebra::Kleene, 4).unwrap();
+    assert_eq!(serial, parallel, "并行结果必须与串行逐字段一致");
+    assert!(serial.faults.len() >= 24, "需要足够多的故障覆盖线程切分");
+}

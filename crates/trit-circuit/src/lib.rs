@@ -10,17 +10,21 @@ pub mod circuit;
 mod coverage;
 pub mod map;
 pub mod netlist;
+mod parallel;
 mod pattern;
 mod sat_cnf;
 pub mod timing;
 pub mod verilog;
 
 pub use aiger::{AigerError, parse_aiger, to_aiger};
-pub use atpg::{AtpgReport, CoverageStat, TestPattern, generate_tests, generate_tests_sat};
+pub use atpg::{
+    AtpgReport, CoverageStat, TestPattern, generate_tests, generate_tests_sat,
+    generate_tests_sat_with_jobs,
+};
 pub use blif::{BlifError, parse_blif, to_blif};
 pub use bridge::{
     BridgeError, BridgeFault, BridgeMode, BridgePair, BridgeReport, generate_bridge_tests,
-    generate_bridge_tests_sat,
+    generate_bridge_tests_sat, generate_bridge_tests_sat_with_jobs,
 };
 pub use circuit::{
     Bus, Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,

@@ -14,6 +14,7 @@ pub(crate) fn cmd_atpg(
     alg_name: &str,
     from: &str,
     sat: bool,
+    jobs: usize,
 ) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
     let circuit = load_circuit(path, from)?;
@@ -24,7 +25,7 @@ pub(crate) fn cmd_atpg(
                 circuit.input_count()
             );
         }
-        trit_circuit::generate_tests_sat(&circuit, alg)
+        trit_circuit::generate_tests_sat_with_jobs(&circuit, alg, jobs)
     } else {
         if circuit.input_count() > 10 {
             bail!(

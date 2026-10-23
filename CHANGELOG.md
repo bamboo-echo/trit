@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added（0.11 并行 SAT）
+
+- **并行 ATPG / 桥接 SAT**：`generate_tests_sat_with_jobs` 与
+  `generate_bridge_tests_sat_with_jobs`；CLI `atpg --sat --jobs N`、`bridge --sat --jobs N`
+  （`0` = 自动，`1` = 串行）。按故障/桥接对分块，`std::thread::scope` 独立 CNF/solver，
+  按原顺序合并，输出与串行逐字段一致；wasm32 强制串行。
+- 测速：`cargo run --release --example parallel_atpg`（800 门/16 输入；本机 24 线程
+  6.7 s → 1.0 s，约 6.5×）。
+- 测试：并行/串行逐字段对拍（ATPG、桥接、CLI JSON）、顺序与错误传播。
+
 ### Added（0.10 STA I/O 约束）
 
 - **时序 I/O 约束**：`TimingConstraints { input_arrival, output_required }`（JSON，拒绝未知字段/名字）；

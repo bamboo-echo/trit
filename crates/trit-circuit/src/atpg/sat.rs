@@ -60,11 +60,75 @@ fn report(
     }
 }
 
+/// 一个待求解的 stuck-at 故障。
+#[derive(Clone, Copy)]
+struct FaultTask {
+    gate_index: usize,
+    input_index: usize,
+    stuck: bool,
+}
+
+struct FaultResult {
+    fault: Fault,
+    witness: Option<u64>,
+}
+
+fn solve_fault(
+    circuit: &Circuit,
+    alg: Algebra,
+    task: FaultTask,
+) -> Result<FaultResult, CircuitError> {
+    let gate = &circuit.gates[task.gate_index];
+    let signal = &gate.inputs[task.input_index];
+    let mut cnf = Cnf::new(
+        circuit,
+        alg,
+        Some(SatDefect::StuckAt {
+            gate: task.gate_index,
+            pin: task.input_index,
+            stuck: task.stuck,
+        }),
+    )?;
+    cnf.require_output_difference()?;
+    let witness = cnf.solve()?;
+    Ok(FaultResult {
+        fault: Fault {
+            gate: gate.output.name().to_string(),
+            input: signal.name().to_string(),
+            input_index: task.input_index,
+            stuck_at: if task.stuck {
+                Ternary::True
+            } else {
+                Ternary::False
+            },
+            observable: witness.is_some(),
+            witness,
+            reason: if witness.is_some() {
+                None
+            } else {
+                Some(UntestableReason::Proven)
+            },
+        },
+        witness,
+    })
+}
+
 /// 用 SAT 逐故障生成测试向量；支持最多 64 个主输入。
 ///
 /// 与枚举路径不同：UNSAT 是**证明**不可测，原因统一标为
 /// [`UntestableReason::Proven`]，不细分 redundant / unobserved / masked。
 pub fn generate_tests_sat(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, CircuitError> {
+    generate_tests_sat_with_jobs(circuit, alg, 1)
+}
+
+/// 同 [`generate_tests_sat`]，但按 `jobs` 并行求解。
+///
+/// `jobs = 0` 表示自动取可用并行度，`1` 表示串行。结果顺序与串行完全一致。
+pub fn generate_tests_sat_with_jobs(
+    circuit: &Circuit,
+    alg: Algebra,
+    jobs: usize,
+) -> Result<AtpgReport, CircuitError> {
     validate(circuit)?;
     let input_count = circuit.input_count();
     if input_count > 64 {
@@ -85,43 +149,30 @@ pub fn generate_tests_sat(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport,
     // 组合环单独拒绝，避免给无意义的 SAT 公式。
     topological_order(circuit)?;
 
-    let mut faults = Vec::new();
-    let mut by_mask: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+    let mut tasks = Vec::new();
     for (gate_index, gate) in circuit.gates.iter().enumerate() {
         if gate.kind == GateKind::Const {
             continue;
         }
-        for (input_index, signal) in gate.inputs.iter().enumerate() {
-            for (stuck, value) in [(false, Ternary::False), (true, Ternary::True)] {
-                let mut cnf = Cnf::new(
-                    circuit,
-                    alg,
-                    Some(SatDefect::StuckAt {
-                        gate: gate_index,
-                        pin: input_index,
-                        stuck,
-                    }),
-                )?;
-                cnf.require_output_difference()?;
-                let witness = cnf.solve()?;
-                if let Some(mask) = witness {
-                    by_mask.entry(mask).or_default().push(faults.len());
-                }
-                faults.push(Fault {
-                    gate: gate.output.name().to_string(),
-                    input: signal.name().to_string(),
+        for input_index in 0..gate.inputs.len() {
+            for stuck in [false, true] {
+                tasks.push(FaultTask {
+                    gate_index,
                     input_index,
-                    stuck_at: value,
-                    observable: witness.is_some(),
-                    witness,
-                    reason: if witness.is_some() {
-                        None
-                    } else {
-                        Some(UntestableReason::Proven)
-                    },
+                    stuck,
                 });
             }
         }
+    }
+    let results = crate::parallel::map(&tasks, jobs, |task| solve_fault(circuit, alg, *task))?;
+
+    let mut faults = Vec::with_capacity(results.len());
+    let mut by_mask: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+    for (index, result) in results.into_iter().enumerate() {
+        if let Some(mask) = result.witness {
+            by_mask.entry(mask).or_default().push(index);
+        }
+        faults.push(result.fault);
     }
     let testable = faults.iter().filter(|fault| fault.observable).count();
     let patterns: Vec<TestPattern> = by_mask
