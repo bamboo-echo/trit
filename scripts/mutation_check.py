@@ -842,7 +842,7 @@ MUTANTS = [
     {
         "name": "runtime: 忽略资源配额",
         "file": "crates/trit-schedule/src/runtime.rs",
-        "old": "            state\n                .capacity\n                .map_or(true, |capacity| {\n                    state.requirements[*position].fits_in(capacity, state.used)\n                })\n",
+        "old": "            state\n                .capacity\n                .is_none_or(|capacity| state.requirements[*position].fits_in(capacity, state.used))\n",
         "new": "            true\n",
         "pkg": "trit-schedule",
         "filter": "quota_serializes_tasks_that_do_not_fit_together"
