@@ -29,28 +29,28 @@ fn run(args: &[&str]) -> (String, String, i32) {
 static MODELS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
 
 fn models() -> (String, String) {
-    if let Some(paths) = MODELS.get() {
-        return paths.clone();
-    }
-    let dir = std::env::temp_dir();
-    let cancel = dir.join(format!("trit_net_cancel_{}.json", std::process::id()));
-    let sum = dir.join(format!("trit_net_sum_{}.json", std::process::id()));
-    std::fs::write(
-        &cancel,
-        r#"{"layers":[{"inputs":1,"outputs":2,"weights":[[1],[-1]],"bias":[0,0]},{"inputs":2,"outputs":1,"weights":[[1,1]],"bias":[0]}]}"#,
-    )
-    .expect("write cancel model");
-    std::fs::write(
-        &sum,
-        r#"{"layers":[{"inputs":2,"outputs":1,"weights":[[1,1]],"bias":[0]}]}"#,
-    )
-    .expect("write sum model");
-    let paths = (
-        cancel.to_str().expect("utf-8").to_string(),
-        sum.to_str().expect("utf-8").to_string(),
-    );
-    let _ = MODELS.set(paths.clone());
-    paths
+    // get_or_init 才是原子的：get + set 会让两个并发测试同时写盘，读到半截文件。
+    MODELS
+        .get_or_init(|| {
+            let dir = std::env::temp_dir();
+            let cancel = dir.join(format!("trit_net_cancel_{}.json", std::process::id()));
+            let sum = dir.join(format!("trit_net_sum_{}.json", std::process::id()));
+            std::fs::write(
+                &cancel,
+                r#"{"layers":[{"inputs":1,"outputs":2,"weights":[[1],[-1]],"bias":[0,0]},{"inputs":2,"outputs":1,"weights":[[1,1]],"bias":[0]}]}"#,
+            )
+            .expect("write cancel model");
+            std::fs::write(
+                &sum,
+                r#"{"layers":[{"inputs":2,"outputs":1,"weights":[[1,1]],"bias":[0]}]}"#,
+            )
+            .expect("write sum model");
+            (
+                cancel.to_str().expect("utf-8").to_string(),
+                sum.to_str().expect("utf-8").to_string(),
+            )
+        })
+        .clone()
 }
 
 #[test]

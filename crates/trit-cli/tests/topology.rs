@@ -29,25 +29,24 @@ fn run(args: &[&str]) -> (String, String, i32) {
 static GRAPH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 fn graph() -> String {
-    // 四个测试并行跑：同一个文件只写一次，避免一个测试写盘截断时另一个正在读。
-    if let Some(path) = GRAPH.get() {
-        return path.clone();
-    }
-    let path =
-        std::env::temp_dir().join(format!("trit_topology_probe_{}.json", std::process::id()));
-    std::fs::write(
-        &path,
-        r#"{"nodes":4,"origin":0,"edges":[
+    // get_or_init 才是原子的：get + set 会让两个并发测试同时写盘，读到半截文件。
+    GRAPH
+        .get_or_init(|| {
+            let path = std::env::temp_dir()
+                .join(format!("trit_topology_probe_{}.json", std::process::id()));
+            std::fs::write(
+                &path,
+                r#"{"nodes":4,"origin":0,"edges":[
             {"from":0,"to":1,"value":"1"},
             {"from":1,"to":2,"value":"X"},
             {"from":2,"to":3,"value":"X"},
             {"from":0,"to":3,"value":"1"}
         ]}"#,
-    )
-    .expect("write topology json");
-    let path = path.to_str().expect("utf-8 path").to_string();
-    let _ = GRAPH.set(path.clone());
-    path
+            )
+            .expect("write topology json");
+            path.to_str().expect("utf-8 path").to_string()
+        })
+        .clone()
 }
 
 #[test]

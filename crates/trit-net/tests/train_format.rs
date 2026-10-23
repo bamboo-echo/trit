@@ -29,18 +29,18 @@ fn run(args: &[&str]) -> (String, String, i32) {
 static MODEL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 fn model_path() -> String {
-    if let Some(path) = MODEL.get() {
-        return path.clone();
-    }
-    let path = std::env::temp_dir().join(format!("trit_net_fmt_{}.json", std::process::id()));
-    std::fs::write(
-        &path,
-        r#"{"layers":[{"inputs":3,"outputs":2,"weights":[[1,-1,0],[0,1,1]],"bias":[1,0]},{"inputs":2,"outputs":1,"weights":[[-1,1]],"bias":[-1]}]}"#,
-    )
-    .expect("write model");
-    let path = path.to_str().expect("utf-8").to_string();
-    let _ = MODEL.set(path.clone());
-    path
+    // get_or_init 才是原子的：get + set 会让两个并发测试同时写盘，读到半截文件。
+    MODEL
+        .get_or_init(|| {
+            let path = std::env::temp_dir().join(format!("trit_net_fmt_{}.json", std::process::id()));
+            std::fs::write(
+                &path,
+                r#"{"layers":[{"inputs":3,"outputs":2,"weights":[[1,-1,0],[0,1,1]],"bias":[1,0]},{"inputs":2,"outputs":1,"weights":[[-1,1]],"bias":[-1]}]}"#,
+            )
+            .expect("write model");
+            path.to_str().expect("utf-8").to_string()
+        })
+        .clone()
 }
 
 #[test]
