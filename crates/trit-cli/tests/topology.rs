@@ -26,8 +26,15 @@ fn run(args: &[&str]) -> (String, String, i32) {
     )
 }
 
+static GRAPH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 fn graph() -> String {
-    let path = std::env::temp_dir().join("trit_topology_probe.json");
+    // 四个测试并行跑：同一个文件只写一次，避免一个测试写盘截断时另一个正在读。
+    if let Some(path) = GRAPH.get() {
+        return path.clone();
+    }
+    let path =
+        std::env::temp_dir().join(format!("trit_topology_probe_{}.json", std::process::id()));
     std::fs::write(
         &path,
         r#"{"nodes":4,"origin":0,"edges":[
@@ -38,7 +45,9 @@ fn graph() -> String {
         ]}"#,
     )
     .expect("write topology json");
-    path.to_str().expect("utf-8 path").to_string()
+    let path = path.to_str().expect("utf-8 path").to_string();
+    let _ = GRAPH.set(path.clone());
+    path
 }
 
 #[test]

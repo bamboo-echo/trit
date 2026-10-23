@@ -26,14 +26,23 @@ fn run(args: &[&str]) -> (String, String, i32) {
     )
 }
 
+static NETLIST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 fn netlist() -> String {
-    let path = std::env::temp_dir().join("trit_xpessimism_probe.net");
+    // 多个测试并行跑：同一个文件只写一次，避免写盘截断与读取撞车。
+    if let Some(path) = NETLIST.get() {
+        return path.clone();
+    }
+    let path =
+        std::env::temp_dir().join(format!("trit_xpessimism_probe_{}.net", std::process::id()));
     std::fs::write(
         &path,
         "input a\ninput b\nnot a na\ngate and a na out1\ngate and a b out2\noutput out1\noutput out2\n",
     )
     .expect("write netlist");
-    path.to_str().expect("utf-8 path").to_string()
+    let path = path.to_str().expect("utf-8 path").to_string();
+    let _ = NETLIST.set(path.clone());
+    path
 }
 
 #[test]
