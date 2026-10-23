@@ -12,7 +12,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Progress, ResumableTask, RuntimeMetrics, StepContext};
+use crate::{
+    Dependency, Progress, Resources, ResumableSpec, ResumableTask, RuntimeMetrics, StepContext,
+};
 
 /// 当前检查点格式版本。
 pub const CHECKPOINT_VERSION: u32 = 1;
@@ -76,6 +78,55 @@ impl Checkpoint {
                 expected: CHECKPOINT_VERSION,
             })
         }
+    }
+}
+
+/// 检查点来源；内存存储和文件存储都实现它。
+pub trait CheckpointSource: Send + Sync {
+    /// 读取某任务最新检查点；不存在返回 `None`。
+    fn checkpoint(&self, task_id: &str) -> Result<Option<Checkpoint>, CheckpointError>;
+}
+
+/// 没有检查点时创建新任务。
+pub trait TaskFactory: Send + Sync {
+    /// 按任务 id 创建初始任务。
+    fn create(&self, task_id: &str) -> Result<Box<dyn CheckpointTask>, CheckpointError>;
+}
+
+/// 可恢复任务图的静态描述（不含任务对象）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumableSpecDef {
+    /// 唯一任务名。
+    pub id: String,
+    /// 数值越大越优先。
+    pub priority: i32,
+    /// 三值依赖。
+    pub deps: Vec<Dependency>,
+    /// 资源需求。
+    pub requirements: Resources,
+}
+
+impl ResumableSpecDef {
+    /// 构造描述（优先级 0、无资源需求）。
+    pub fn new(id: impl Into<String>, deps: Vec<Dependency>) -> Self {
+        Self {
+            id: id.into(),
+            priority: 0,
+            deps,
+            requirements: Resources::default(),
+        }
+    }
+
+    /// 设置优先级。
+    pub fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// 设置资源需求。
+    pub fn with_requirements(mut self, requirements: Resources) -> Self {
+        self.requirements = requirements;
+        self
     }
 }
 
@@ -205,6 +256,12 @@ impl<T: CheckpointTask + 'static> ResumableTask for CheckpointedTask<T> {
 #[derive(Debug, Default, Clone)]
 pub struct CheckpointStore {
     checkpoints: BTreeMap<String, Checkpoint>,
+}
+
+impl CheckpointSource for CheckpointStore {
+    fn checkpoint(&self, task_id: &str) -> Result<Option<Checkpoint>, CheckpointError> {
+        Ok(self.get(task_id).cloned())
+    }
 }
 
 impl CheckpointStore {
@@ -474,6 +531,36 @@ impl FileCheckpointStore {
     pub fn is_empty(&self) -> Result<bool, CheckpointError> {
         Ok(self.len()? == 0)
     }
+}
+
+impl CheckpointSource for FileCheckpointStore {
+    fn checkpoint(&self, task_id: &str) -> Result<Option<Checkpoint>, CheckpointError> {
+        self.load(task_id)
+    }
+}
+
+/// 按静态描述从检查点恢复任务图；没有检查点的任务用 factory 新建。
+pub fn restore_specs(
+    defs: Vec<ResumableSpecDef>,
+    source: &dyn CheckpointSource,
+    restorer: &dyn TaskRestorer,
+    factory: &dyn TaskFactory,
+) -> Result<Vec<ResumableSpec>, CheckpointError> {
+    defs.into_iter()
+        .map(|def| {
+            let task = match source.checkpoint(&def.id)? {
+                Some(checkpoint) => restore_checkpoint(restorer, &checkpoint)?,
+                None => factory.create(&def.id)?,
+            };
+            Ok(ResumableSpec {
+                id: def.id,
+                priority: def.priority,
+                deps: def.deps,
+                requirements: def.requirements,
+                task,
+            })
+        })
+        .collect()
 }
 
 fn io_error(error: std::io::Error) -> CheckpointError {
@@ -872,5 +959,137 @@ mod lock_tests {
         drop(lock);
         drop(second.try_lock().unwrap().expect("释放后可获取"));
         let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use crate::{CancelToken, RuntimeConfig, run_resumable};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    struct Counter {
+        done: usize,
+        target: usize,
+    }
+
+    impl ResumableTask for Counter {
+        fn step(&mut self, _ctx: &StepContext) -> Progress {
+            self.done += 1;
+            if self.done >= self.target {
+                Progress::Done
+            } else {
+                Progress::Yield
+            }
+        }
+    }
+
+    impl CheckpointTask for Counter {
+        fn save_state(&self) -> Result<Vec<u8>, CheckpointError> {
+            Ok(self.done.to_le_bytes().to_vec())
+        }
+    }
+
+    struct Restorer;
+
+    impl TaskRestorer for Restorer {
+        fn restore(
+            &self,
+            task_id: &str,
+            state: &[u8],
+        ) -> Result<Box<dyn CheckpointTask>, CheckpointError> {
+            if task_id != "counter" {
+                return Err(CheckpointError::UnknownTask(task_id.to_string()));
+            }
+            let bytes: [u8; 8] = state
+                .try_into()
+                .map_err(|_| CheckpointError::InvalidState("bad length".to_string()))?;
+            Ok(Box::new(Counter {
+                done: usize::from_le_bytes(bytes),
+                target: 10,
+            }))
+        }
+    }
+
+    struct Factory;
+
+    impl TaskFactory for Factory {
+        fn create(&self, task_id: &str) -> Result<Box<dyn CheckpointTask>, CheckpointError> {
+            if task_id != "counter" {
+                return Err(CheckpointError::UnknownTask(task_id.to_string()));
+            }
+            Ok(Box::new(Counter {
+                done: 0,
+                target: 10,
+            }))
+        }
+    }
+
+    fn defs() -> Vec<ResumableSpecDef> {
+        vec![ResumableSpecDef::new("counter", vec![])]
+    }
+
+    fn run(specs: Vec<ResumableSpec>) -> crate::ResumableReport {
+        run_resumable(specs, RuntimeConfig::new(1), CancelToken::new()).unwrap()
+    }
+
+    #[test]
+    fn memory_source_resumes_mid_task() {
+        let mut source = CheckpointStore::new();
+        source
+            .insert(
+                save_checkpoint(
+                    "counter",
+                    &Counter {
+                        done: 3,
+                        target: 10,
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let specs = restore_specs(defs(), &source, &Restorer, &Factory).unwrap();
+        let report = run(specs);
+        assert_eq!(report.completed, vec!["counter"]);
+        assert_eq!(report.steps, 7, "从第 3 步恢复后只应再走 7 步");
+    }
+
+    #[test]
+    fn file_source_resumes_mid_task() {
+        let root = std::env::temp_dir().join(format!(
+            "trit-restore-{}-{}-{}",
+            std::process::id(),
+            nanos(),
+            TEMP_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let store = FileCheckpointStore::new(&root);
+        store
+            .save(
+                &save_checkpoint(
+                    "counter",
+                    &Counter {
+                        done: 3,
+                        target: 10,
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let specs = restore_specs(defs(), &store, &Restorer, &Factory).unwrap();
+        let report = run(specs);
+        assert_eq!(report.completed, vec!["counter"]);
+        assert_eq!(report.steps, 7);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_checkpoint_uses_factory() {
+        let source = CheckpointStore::new();
+        let specs = restore_specs(defs(), &source, &Restorer, &Factory).unwrap();
+        let report = run(specs);
+        assert_eq!(report.completed, vec!["counter"]);
+        assert_eq!(report.steps, 10);
     }
 }

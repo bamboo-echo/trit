@@ -1014,6 +1014,22 @@ MUTANTS = [
         "new": "impl Drop for CheckpointLock {\n    fn drop(&mut self) {\n        let _ = &self.path;\n    }\n}\n",
         "pkg": "trit-schedule",
         "filter": "cross_process_lock_excludes_and_releases"
+    },
+    {
+        "name": "restore: 忽略检查点",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "            let task = match source.checkpoint(&def.id)? {\n",
+        "new": "            let task = match None::<Checkpoint> {\n",
+        "pkg": "trit-schedule",
+        "filter": "memory_source_resumes_mid_task"
+    },
+    {
+        "name": "restore: 无检查点不建新任务",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "                None => factory.create(&def.id)?,\n",
+        "new": "                None => return Err(CheckpointError::UnknownTask(def.id.clone())),\n",
+        "pkg": "trit-schedule",
+        "filter": "missing_checkpoint_uses_factory"
     }
 ]
 

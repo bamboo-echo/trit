@@ -86,6 +86,14 @@
 - 测试：排他、超时、释放后可重新获取；crate 37 → 38。
 - 变异门 123 → 125（已存在分支、Drop 释放）。
 
+### Added（0.12 checkpoint resume）
+
+- `CheckpointSource`（内存/文件存储实现）+ `TaskFactory` + `ResumableSpecDef`。
+- `restore_specs(defs, source, restorer, factory)`：有检查点则恢复，没有则新建；
+  返回值可直接交给 `run_resumable` / `run_resumable_threaded`。
+- 测试：内存源从第 3 步恢复只再走 7 步、文件源恢复、无检查点时用 factory。
+- 变异门 125 → 127（忽略检查点、无检查点不建任务）。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，

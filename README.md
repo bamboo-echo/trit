@@ -141,6 +141,14 @@ let restored = store.lock().unwrap().restore(&MyRestorer, "counter")?;
 锁是 `v1/.lock` 目录的原子创建，`CheckpointLock` 丢弃时自动释放。锁不自动加在
 `save`/`load` 上，调用方需在临界区显式持有。
 
+重启用 `restore_specs`：按静态描述 `ResumableSpecDef` 从 `CheckpointSource`（内存或文件）
+读取检查点，存在则 `TaskRestorer` 恢复，不存在则 `TaskFactory` 建新任务，再交给 runtime。
+
+```rust
+let specs = restore_specs(defs, &file_store, &MyRestorer, &MyFactory)?;
+let report = run_resumable_threaded(specs, config, CancelToken::new())?;
+```
+
 指标可直接导出 Prometheus/OpenMetrics 文本：
 
 ```rust
