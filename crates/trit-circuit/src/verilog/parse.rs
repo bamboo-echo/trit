@@ -363,6 +363,7 @@ pub fn parse_verilog(text: &str) -> Result<Circuit, VerilogError> {
         )));
     }
     let cleaned = strip_comments(text);
+    let cleaned = super::params::expand(&cleaned)?.unwrap_or(cleaned);
     let defs = parse_modules(&cleaned)?;
     hierarchy::finish(defs)
 }

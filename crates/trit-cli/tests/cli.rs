@@ -1004,3 +1004,21 @@ fn shared_cnf_atpg_matches_coverage() {
     assert_eq!(default_json["coverage"], shared_json["coverage"]);
     assert_eq!(shared_json["shared_cnf"], true);
 }
+
+#[test]
+fn verilog_parameters_expand_before_netlist_export() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let path = dir.join("params.v");
+    let (stdout, stderr, code) = run(&[
+        "netlist",
+        path.to_str().unwrap(),
+        "--from",
+        "verilog",
+        "--to",
+        "json",
+    ]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let buses = json["buses"].as_object().unwrap();
+    assert_eq!(buses["y"]["width"], 3, "{json}");
+}

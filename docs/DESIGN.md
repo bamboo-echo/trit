@@ -55,6 +55,7 @@
 | SAT ATPG / 桥接 | ≤64 主输入 | 逐故障 CNF，`--jobs` 按故障分块；结果顺序固定 |
 | 大规模 SAT ATPG | 10k 门 / 40k 故障 | `--shared-cnf`：共享 CNF + selector，512 故障/块 |
 | 策略断言 | 任意条数 | 前提只检查一次，断言间并行；结果顺序固定 |
+| 参数化 Verilog | 参数组合 ≤256 | 源码特化后再走原解析/层级展开 |
 | 位切片批量 | 任意长度 | 2 bit/elem、按字运算 |
 | 二进制互操作 | 任意长度 | `Option<unknowns>` + move-only 视图 |
 | SDF 延迟注入 | celltype 粒度 | 最坏 IOPATH、向上取整；不做 per-instance |

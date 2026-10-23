@@ -734,6 +734,38 @@ MUTANTS = [
         "new": "        let _ = selector;\n",
         "pkg": "trit-circuit",
         "filter": "shared_cnf_matches_per_fault_semantics"
+    },
+    {
+        "name": "params: 忽略实例覆盖",
+        "file": "crates/trit-circuit/src/verilog/params.rs",
+        "old": "            Some(value) => *value,\n",
+        "new": "            Some(_) => eval_expr(&param.default, &params)?,\n",
+        "pkg": "trit-circuit",
+        "filter": "named_parameter_override_changes_width"
+    },
+    {
+        "name": "params: 不替换参数",
+        "file": "crates/trit-circuit/src/verilog/params.rs",
+        "old": "            if let Some(value) = params.get(&name) {\n",
+        "new": "            if let Some(value) = params.get(\"__never__\") {\n",
+        "pkg": "trit-circuit",
+        "filter": "parses_parameterized_module_defaults"
+    },
+    {
+        "name": "params: 不归一化位宽",
+        "file": "crates/trit-circuit/src/verilog/params.rs",
+        "old": "            let left = eval_expr(left, &empty)?;\n            out.push('[');\n            out.push_str(&left.to_string());\n            if let Some(right) = right {\n                let right = eval_expr(right, &empty)?;\n                out.push(':');\n                out.push_str(&right.to_string());\n            }\n            out.push(']');\n",
+        "new": "            out.push('[');\n            out.push_str(inner.trim());\n            out.push(']');\n",
+        "pkg": "trit-circuit",
+        "filter": "parses_parameterized_module_defaults"
+    },
+    {
+        "name": "params: 位置覆盖错位",
+        "file": "crates/trit-circuit/src/verilog/params.rs",
+        "old": "            let Some(param) = child.params.get(positional) else {\n",
+        "new": "            let Some(param) = child.params.get(positional + 1) else {\n",
+        "pkg": "trit-circuit",
+        "filter": "parent_parameter_flows_to_positional_child_override"
     }
 ]
 
