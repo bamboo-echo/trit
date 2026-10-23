@@ -46,6 +46,13 @@
 - 测试：线程抢占后状态续跑、双 worker 重叠、取消/指标、单线程参考仍通过。
 - 变异门 109 → 112（线程抢占状态、优先级过滤、started 去重）。
 
+### Added（0.12 metrics export）
+
+- `RuntimeMetrics::to_prometheus()` / `to_prometheus_with(prefix)`：Prometheus/OpenMetrics
+  文本导出；报告提供 `metrics_prometheus()` 便捷方法；空前缀回退到 `trit_schedule`。
+- 导出字段与 `RuntimeMetrics` 一致；峰值拆为 `peak_cpu` / `peak_memory`。
+- 测试 `prometheus_exports_all_fields`；变异门 112 → 114。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，

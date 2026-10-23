@@ -109,6 +109,13 @@ worker 在 `Yield` 边界检查更高优先级任务，必要时把当前任务�
 
 两个 runtime 报告都包含 `RuntimeMetrics`：`started/completed/failed/cancelled/deferred/
 preemptions/steps/peak_usage`。`started` 按任务去重，抢占后恢复不会重复计数。
+指标可直接导出 Prometheus/OpenMetrics 文本：
+
+```rust
+let text = report.metrics.to_prometheus();          // 前缀 trit_schedule
+let text = report.metrics.to_prometheus_with("ci"); // 自定义前缀
+let text = report.metrics_prometheus();             // 报告便捷方法
+```
 
 ## 三生（sansheng）
 

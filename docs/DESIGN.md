@@ -104,7 +104,8 @@
 - **v0.12（进行中）**：`trit-schedule` 静态三值 DAG 调度（True/False/Unknown、多 worker、
   关键路径）、依赖驱动 runtime（协作式取消、失败停止派发、cpu/memory 配额、严格优先级准入）
   与可恢复任务协议（`step` 检查点、步间抢占、状态保留）已完成；线程版
-  `run_resumable_threaded` 与统一 `RuntimeMetrics` 已接上；不做运行中强杀。
+  `run_resumable_threaded`、统一 `RuntimeMetrics` 与 Prometheus 文本导出已接上；
+  不做运行中强杀。
   下一步 SDF 引脚级/TIMESCALE、Liberty/SDC、100k 门、Python/C 绑定与 1.0 API 收口。
 
 ## 参考

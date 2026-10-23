@@ -107,6 +107,13 @@ pub struct ResumableReport {
     pub metrics: RuntimeMetrics,
 }
 
+impl ResumableReport {
+    /// 以 Prometheus 文本导出统计快照。
+    pub fn metrics_prometheus(&self) -> String {
+        self.metrics.to_prometheus()
+    }
+}
+
 /// 可恢复执行错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ResumableError {

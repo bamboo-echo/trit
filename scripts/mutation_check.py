@@ -910,6 +910,22 @@ MUTANTS = [
         "new": "    if true {\n",
         "pkg": "trit-schedule",
         "filter": "threaded_preemption_keeps_task_state"
+    },
+    {
+        "name": "metrics: Prometheus completed 写成 started",
+        "file": "crates/trit-schedule/src/runtime.rs",
+        "old": "            (\"completed\", \"Tasks completed.\", self.completed as u64),\n",
+        "new": "            (\"completed\", \"Tasks completed.\", self.started as u64),\n",
+        "pkg": "trit-schedule",
+        "filter": "prometheus_exports_all_fields"
+    },
+    {
+        "name": "metrics: Prometheus 峰值内存写成 CPU",
+        "file": "crates/trit-schedule/src/runtime.rs",
+        "old": "                self.peak_usage.memory.into(),\n",
+        "new": "                self.peak_usage.cpu.into(),\n",
+        "pkg": "trit-schedule",
+        "filter": "prometheus_exports_all_fields"
     }
 ]
 
