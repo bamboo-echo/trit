@@ -8,11 +8,13 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Progress, ResumableTask, RuntimeMetrics, StepContext};
+use crate::{
+    Dependency, Progress, Resources, ResumableSpec, ResumableTask, RuntimeMetrics, StepContext,
+};
 
 /// 当前检查点格式版本。
 pub const CHECKPOINT_VERSION: u32 = 1;
@@ -37,6 +39,9 @@ pub enum CheckpointError {
     /// 文件系统读写失败。
     #[error("检查点 I/O 失败: {0}")]
     Io(String),
+    /// 等待跨进程锁超时。
+    #[error("检查点锁被占用")]
+    LockBusy,
 }
 
 /// 一个任务检查点。
@@ -73,6 +78,95 @@ impl Checkpoint {
                 expected: CHECKPOINT_VERSION,
             })
         }
+    }
+}
+
+/// 检查点来源；内存存储和文件存储都实现它。
+pub trait CheckpointSource: Send + Sync {
+    /// 读取某任务最新检查点；不存在返回 `None`。
+    fn checkpoint(&self, task_id: &str) -> Result<Option<Checkpoint>, CheckpointError>;
+}
+
+/// 没有检查点时创建新任务。
+pub trait TaskFactory: Send + Sync {
+    /// 按任务 id 创建初始任务。
+    fn create(&self, task_id: &str) -> Result<Box<dyn CheckpointTask>, CheckpointError>;
+}
+
+/// 可恢复任务图的静态描述（不含任务对象）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumableSpecDef {
+    /// 唯一任务名。
+    pub id: String,
+    /// 数值越大越优先。
+    pub priority: i32,
+    /// 三值依赖。
+    pub deps: Vec<Dependency>,
+    /// 资源需求。
+    pub requirements: Resources,
+}
+
+impl ResumableSpecDef {
+    /// 构造描述（优先级 0、无资源需求）。
+    pub fn new(id: impl Into<String>, deps: Vec<Dependency>) -> Self {
+        Self {
+            id: id.into(),
+            priority: 0,
+            deps,
+            requirements: Resources::default(),
+        }
+    }
+
+    /// 设置优先级。
+    pub fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// 设置资源需求。
+    pub fn with_requirements(mut self, requirements: Resources) -> Self {
+        self.requirements = requirements;
+        self
+    }
+}
+
+/// 多任务索引中的一项。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointEntry {
+    /// 任务 id。
+    pub task_id: String,
+    /// 最新代号。
+    pub generation: u64,
+    /// 最新状态字节数。
+    pub state_bytes: u64,
+}
+
+/// 多任务检查点索引；只含元数据，不读取状态内容。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointIndex {
+    /// 索引格式版本（与检查点版本一致）。
+    pub version: u32,
+    /// 按 task id 升序排列。
+    pub entries: Vec<CheckpointEntry>,
+}
+
+impl CheckpointIndex {
+    /// 任务数。
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// 是否没有任务。
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// 按 task id 查找。
+    pub fn get(&self, task_id: &str) -> Option<&CheckpointEntry> {
+        self.entries
+            .binary_search_by(|entry| entry.task_id.as_str().cmp(task_id))
+            .ok()
+            .map(|index| &self.entries[index])
     }
 }
 
@@ -164,6 +258,12 @@ pub struct CheckpointStore {
     checkpoints: BTreeMap<String, Checkpoint>,
 }
 
+impl CheckpointSource for CheckpointStore {
+    fn checkpoint(&self, task_id: &str) -> Result<Option<Checkpoint>, CheckpointError> {
+        Ok(self.get(task_id).cloned())
+    }
+}
+
 impl CheckpointStore {
     /// 新建空存储。
     pub fn new() -> Self {
@@ -208,6 +308,25 @@ impl CheckpointStore {
             .get(task_id)
             .ok_or_else(|| CheckpointError::UnknownTask(task_id.to_string()))?;
         restore_checkpoint(restorer, checkpoint)
+    }
+}
+
+/// 跨进程存储锁；`Drop` 时删除锁目录。
+#[derive(Debug)]
+pub struct CheckpointLock {
+    path: PathBuf,
+}
+
+impl CheckpointLock {
+    /// 锁目录路径。
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for CheckpointLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
     }
 }
 
@@ -307,6 +426,92 @@ impl FileCheckpointStore {
         Ok(remove)
     }
 
+    /// 锁目录路径。
+    pub fn lock_path(&self) -> PathBuf {
+        self.version_dir().join(".lock")
+    }
+
+    /// 尝试获取跨进程锁；已被占用时返回 `None`。
+    pub fn try_lock(&self) -> Result<Option<CheckpointLock>, CheckpointError> {
+        fs::create_dir_all(self.version_dir()).map_err(io_error)?;
+        let path = self.lock_path();
+        match fs::create_dir(&path) {
+            Ok(()) => Ok(Some(CheckpointLock { path })),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+            Err(error) => Err(io_error(error)),
+        }
+    }
+
+    /// 带超时获取跨进程锁；默认 `lock()` 等 5 秒。
+    pub fn lock_timeout(&self, timeout: Duration) -> Result<CheckpointLock, CheckpointError> {
+        let start = Instant::now();
+        loop {
+            if let Some(lock) = self.try_lock()? {
+                return Ok(lock);
+            }
+            if start.elapsed() >= timeout {
+                return Err(CheckpointError::LockBusy);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// 获取跨进程锁（最多等 5 秒）。
+    pub fn lock(&self) -> Result<CheckpointLock, CheckpointError> {
+        self.lock_timeout(Duration::from_secs(5))
+    }
+
+    /// 扫描版本目录，生成按 task id 排序的多任务索引。
+    pub fn index(&self) -> Result<CheckpointIndex, CheckpointError> {
+        let dir = self.version_dir();
+        let mut entries = Vec::new();
+        if dir.exists() {
+            for entry in fs::read_dir(&dir).map_err(io_error)? {
+                let path = entry.map_err(io_error)?.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                let task_id = hex_decode(name)?;
+                let Some(generation) = latest_generation(&path)? else {
+                    continue;
+                };
+                let Some(file) = latest_checkpoint_file(&path)? else {
+                    continue;
+                };
+                let state_bytes = fs::metadata(&file).map_err(io_error)?.len();
+                entries.push(CheckpointEntry {
+                    task_id,
+                    generation,
+                    state_bytes,
+                });
+            }
+        }
+        entries.sort_by(|left, right| left.task_id.cmp(&right.task_id));
+        Ok(CheckpointIndex {
+            version: CHECKPOINT_VERSION,
+            entries,
+        })
+    }
+
+    /// 任务 id 列表（按索引顺序）。
+    pub fn task_ids(&self) -> Result<Vec<String>, CheckpointError> {
+        Ok(self
+            .index()?
+            .entries
+            .into_iter()
+            .map(|entry| entry.task_id)
+            .collect())
+    }
+
+    /// 索引的 JSON 表示（便于外部工具消费）。
+    pub fn index_json(&self) -> Result<String, CheckpointError> {
+        serde_json::to_string_pretty(&self.index()?)
+            .map_err(|error| CheckpointError::InvalidState(error.to_string()))
+    }
+
     /// 已保存的任务数。
     pub fn len(&self) -> Result<usize, CheckpointError> {
         let dir = self.version_dir();
@@ -328,6 +533,36 @@ impl FileCheckpointStore {
     }
 }
 
+impl CheckpointSource for FileCheckpointStore {
+    fn checkpoint(&self, task_id: &str) -> Result<Option<Checkpoint>, CheckpointError> {
+        self.load(task_id)
+    }
+}
+
+/// 按静态描述从检查点恢复任务图；没有检查点的任务用 factory 新建。
+pub fn restore_specs(
+    defs: Vec<ResumableSpecDef>,
+    source: &dyn CheckpointSource,
+    restorer: &dyn TaskRestorer,
+    factory: &dyn TaskFactory,
+) -> Result<Vec<ResumableSpec>, CheckpointError> {
+    defs.into_iter()
+        .map(|def| {
+            let task = match source.checkpoint(&def.id)? {
+                Some(checkpoint) => restore_checkpoint(restorer, &checkpoint)?,
+                None => factory.create(&def.id)?,
+            };
+            Ok(ResumableSpec {
+                id: def.id,
+                priority: def.priority,
+                deps: def.deps,
+                requirements: def.requirements,
+                task,
+            })
+        })
+        .collect()
+}
+
 fn io_error(error: std::io::Error) -> CheckpointError {
     CheckpointError::Io(error.to_string())
 }
@@ -345,6 +580,23 @@ fn hex_encode(bytes: &[u8]) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+fn hex_decode(text: &str) -> Result<String, CheckpointError> {
+    if !text.len().is_multiple_of(2) {
+        return Err(CheckpointError::InvalidState(format!(
+            "任务目录名不是十六进制: {text}"
+        )));
+    }
+    let mut bytes = Vec::with_capacity(text.len() / 2);
+    for pair in text.as_bytes().chunks(2) {
+        let pair = std::str::from_utf8(pair)
+            .map_err(|error| CheckpointError::InvalidState(error.to_string()))?;
+        let byte = u8::from_str_radix(pair, 16)
+            .map_err(|_| CheckpointError::InvalidState(format!("非法十六进制目录: {text}")))?;
+        bytes.push(byte);
+    }
+    String::from_utf8(bytes).map_err(|error| CheckpointError::InvalidState(error.to_string()))
 }
 
 fn checkpoint_files(dir: &Path) -> Result<Vec<PathBuf>, CheckpointError> {
@@ -628,5 +880,216 @@ mod file_store_tests {
         ));
         assert!(store.is_empty().unwrap());
         cleanup(&root);
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "trit-index-{}-{}-{}",
+            std::process::id(),
+            nanos(),
+            TEMP_SEQ.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn index_lists_latest_generations_sorted() {
+        let root = temp_root();
+        let store = FileCheckpointStore::new(&root);
+        assert!(store.index().unwrap().is_empty());
+        store.save(&Checkpoint::new("b", vec![1, 2, 3])).unwrap();
+        store.save(&Checkpoint::new("a/任务", vec![4])).unwrap();
+        store.save(&Checkpoint::new("a/任务", vec![5, 6])).unwrap();
+        let index = store.index().unwrap();
+        assert_eq!(index.version, CHECKPOINT_VERSION);
+        assert_eq!(index.len(), 2);
+        assert_eq!(
+            index
+                .entries
+                .iter()
+                .map(|entry| entry.task_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a/任务", "b"]
+        );
+        let entry = index.get("a/任务").unwrap();
+        assert_eq!(entry.generation, 2);
+        assert!(entry.state_bytes > 10, "{entry:?}");
+        assert_eq!(store.task_ids().unwrap(), vec!["a/任务", "b"]);
+        assert!(store.index_json().unwrap().contains("a/任务"));
+        assert!(store.index().unwrap().get("missing").is_none());
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "trit-lock-{}-{}-{}",
+            std::process::id(),
+            nanos(),
+            TEMP_SEQ.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn cross_process_lock_excludes_and_releases() {
+        let root = temp_root();
+        let first = FileCheckpointStore::new(&root);
+        let second = FileCheckpointStore::new(&root);
+        let lock = first.try_lock().unwrap().unwrap();
+        assert_eq!(lock.path(), first.lock_path());
+        assert!(second.try_lock().unwrap().is_none());
+        assert!(matches!(
+            first.lock_timeout(Duration::from_millis(20)),
+            Err(CheckpointError::LockBusy)
+        ));
+        drop(lock);
+        drop(second.try_lock().unwrap().expect("释放后可获取"));
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use crate::{CancelToken, RuntimeConfig, run_resumable};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    struct Counter {
+        done: usize,
+        target: usize,
+    }
+
+    impl ResumableTask for Counter {
+        fn step(&mut self, _ctx: &StepContext) -> Progress {
+            self.done += 1;
+            if self.done >= self.target {
+                Progress::Done
+            } else {
+                Progress::Yield
+            }
+        }
+    }
+
+    impl CheckpointTask for Counter {
+        fn save_state(&self) -> Result<Vec<u8>, CheckpointError> {
+            Ok(self.done.to_le_bytes().to_vec())
+        }
+    }
+
+    struct Restorer;
+
+    impl TaskRestorer for Restorer {
+        fn restore(
+            &self,
+            task_id: &str,
+            state: &[u8],
+        ) -> Result<Box<dyn CheckpointTask>, CheckpointError> {
+            if task_id != "counter" {
+                return Err(CheckpointError::UnknownTask(task_id.to_string()));
+            }
+            let bytes: [u8; 8] = state
+                .try_into()
+                .map_err(|_| CheckpointError::InvalidState("bad length".to_string()))?;
+            Ok(Box::new(Counter {
+                done: usize::from_le_bytes(bytes),
+                target: 10,
+            }))
+        }
+    }
+
+    struct Factory;
+
+    impl TaskFactory for Factory {
+        fn create(&self, task_id: &str) -> Result<Box<dyn CheckpointTask>, CheckpointError> {
+            if task_id != "counter" {
+                return Err(CheckpointError::UnknownTask(task_id.to_string()));
+            }
+            Ok(Box::new(Counter {
+                done: 0,
+                target: 10,
+            }))
+        }
+    }
+
+    fn defs() -> Vec<ResumableSpecDef> {
+        vec![ResumableSpecDef::new("counter", vec![])]
+    }
+
+    fn run(specs: Vec<ResumableSpec>) -> crate::ResumableReport {
+        run_resumable(specs, RuntimeConfig::new(1), CancelToken::new()).unwrap()
+    }
+
+    #[test]
+    fn memory_source_resumes_mid_task() {
+        let mut source = CheckpointStore::new();
+        source
+            .insert(
+                save_checkpoint(
+                    "counter",
+                    &Counter {
+                        done: 3,
+                        target: 10,
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let specs = restore_specs(defs(), &source, &Restorer, &Factory).unwrap();
+        let report = run(specs);
+        assert_eq!(report.completed, vec!["counter"]);
+        assert_eq!(report.steps, 7, "从第 3 步恢复后只应再走 7 步");
+    }
+
+    #[test]
+    fn file_source_resumes_mid_task() {
+        let root = std::env::temp_dir().join(format!(
+            "trit-restore-{}-{}-{}",
+            std::process::id(),
+            nanos(),
+            TEMP_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let store = FileCheckpointStore::new(&root);
+        store
+            .save(
+                &save_checkpoint(
+                    "counter",
+                    &Counter {
+                        done: 3,
+                        target: 10,
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let specs = restore_specs(defs(), &store, &Restorer, &Factory).unwrap();
+        let report = run(specs);
+        assert_eq!(report.completed, vec!["counter"]);
+        assert_eq!(report.steps, 7);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_checkpoint_uses_factory() {
+        let source = CheckpointStore::new();
+        let specs = restore_specs(defs(), &source, &Restorer, &Factory).unwrap();
+        let report = run(specs);
+        assert_eq!(report.completed, vec!["counter"]);
+        assert_eq!(report.steps, 10);
     }
 }

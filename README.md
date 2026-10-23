@@ -134,6 +134,21 @@ let restored = store.lock().unwrap().restore(&MyRestorer, "counter")?;
 每次保存写同目录临时文件，再 `rename` 到**新**代文件，不覆盖旧代；加载取最大代。
 `prune(task_id, keep)` 控制保留代数，`remove(task_id)` 清理任务目录。
 
+`index()` 扫描版本目录生成按 task id 排序的 `CheckpointIndex`（task id、最新代、状态字节数），
+只读元数据不加载状态；`task_ids()` / `index_json()` 便于外部工具消费。
+
+多进程写同一根目录时用 `try_lock()` / `lock_timeout()` / `lock()` 获取跨进程锁；
+锁是 `v1/.lock` 目录的原子创建，`CheckpointLock` 丢弃时自动释放。锁不自动加在
+`save`/`load` 上，调用方需在临界区显式持有。
+
+重启用 `restore_specs`：按静态描述 `ResumableSpecDef` 从 `CheckpointSource`（内存或文件）
+读取检查点，存在则 `TaskRestorer` 恢复，不存在则 `TaskFactory` 建新任务，再交给 runtime。
+
+```rust
+let specs = restore_specs(defs, &file_store, &MyRestorer, &MyFactory)?;
+let report = run_resumable_threaded(specs, config, CancelToken::new())?;
+```
+
 指标可直接导出 Prometheus/OpenMetrics 文本：
 
 ```rust

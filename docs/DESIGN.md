@@ -106,7 +106,8 @@
   与可恢复任务协议（`step` 检查点、步间抢占、状态保留）已完成；线程版
   `run_resumable_threaded`、统一 `RuntimeMetrics`、Prometheus 文本导出与检查点协议
   （`CheckpointTask`/`CheckpointStore`/`CheckpointedTask`）已接上；不做运行中强杀。
-  检查点支持内存与版本化文件存储（原子写新代、prune）；分布式存储是下一步。
+  检查点支持内存与版本化文件存储（原子写新代、prune、多任务索引、跨进程锁），
+  并可从存储恢复任务图（`restore_specs`）；分布式存储是下一步。
   下一步 SDF 引脚级/TIMESCALE、Liberty/SDC、100k 门、Python/C 绑定与 1.0 API 收口。
 
 ## 参考

@@ -974,6 +974,62 @@ MUTANTS = [
         "new": "        for path in files.into_iter().skip(keep) {\n",
         "pkg": "trit-schedule",
         "filter": "file_store_prunes_and_removes"
+    },
+    {
+        "name": "index: 不解码 task id",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "                let task_id = hex_decode(name)?;\n",
+        "new": "                let task_id = name.to_string();\n",
+        "pkg": "trit-schedule",
+        "filter": "index_lists_latest_generations_sorted"
+    },
+    {
+        "name": "index: 倒序",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "        entries.sort_by(|left, right| left.task_id.cmp(&right.task_id));\n",
+        "new": "        entries.sort_by(|left, right| right.task_id.cmp(&left.task_id));\n",
+        "pkg": "trit-schedule",
+        "filter": "index_lists_latest_generations_sorted"
+    },
+    {
+        "name": "index: state_bytes 取代号",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "                let state_bytes = fs::metadata(&file).map_err(io_error)?.len();\n",
+        "new": "                let state_bytes = generation;\n",
+        "pkg": "trit-schedule",
+        "filter": "index_lists_latest_generations_sorted"
+    },
+    {
+        "name": "lock: 忽略已存在",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),\n",
+        "new": "            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {\n                let _ = error;\n                Ok(Some(CheckpointLock { path }))\n            }\n",
+        "pkg": "trit-schedule",
+        "filter": "cross_process_lock_excludes_and_releases"
+    },
+    {
+        "name": "lock: Drop 不释放",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "impl Drop for CheckpointLock {\n    fn drop(&mut self) {\n        let _ = fs::remove_dir_all(&self.path);\n    }\n}\n",
+        "new": "impl Drop for CheckpointLock {\n    fn drop(&mut self) {\n        let _ = &self.path;\n    }\n}\n",
+        "pkg": "trit-schedule",
+        "filter": "cross_process_lock_excludes_and_releases"
+    },
+    {
+        "name": "restore: 忽略检查点",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "            let task = match source.checkpoint(&def.id)? {\n",
+        "new": "            let task = match None::<Checkpoint> {\n",
+        "pkg": "trit-schedule",
+        "filter": "memory_source_resumes_mid_task"
+    },
+    {
+        "name": "restore: 无检查点不建新任务",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "                None => factory.create(&def.id)?,\n",
+        "new": "                None => return Err(CheckpointError::UnknownTask(def.id.clone())),\n",
+        "pkg": "trit-schedule",
+        "filter": "missing_checkpoint_uses_factory"
     }
 ]
 
