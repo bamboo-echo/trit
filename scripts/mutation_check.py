@@ -1191,6 +1191,38 @@ MUTANTS = [
         "new": "} else if potential < -network.threshold {",
         "pkg": "trit-machines",
         "filter": "negative_drive_produces_inhibitory_spike"
+    },
+    {
+        "name": "codec: 打包丢掉位权",
+        "file": "crates/trit-codec/src/pack.rs",
+        "old": "byte += digit(*value) * power;",
+        "new": "byte += digit(*value);",
+        "pkg": "trit-codec",
+        "filter": "five_trits_fit_in_one_byte"
+    },
+    {
+        "name": "codec: 非法字节边界写成大于",
+        "file": "crates/trit-codec/src/pack.rs",
+        "old": "if u16::from(*byte) >= COMBINATIONS {",
+        "new": "if u16::from(*byte) > COMBINATIONS {",
+        "pkg": "trit-codec",
+        "filter": "invalid_byte_is_rejected"
+    },
+    {
+        "name": "codec: 第 4 列误差幅度取错",
+        "file": "crates/trit-codec/src/hamming.rs",
+        "old": "    } else {\n        (3, s1 as u8)\n    }",
+        "new": "    } else {\n        (3, s2 as u8)\n    }",
+        "pkg": "trit-codec",
+        "filter": "every_single_symbol_error_is_corrected"
+    },
+    {
+        "name": "codec: 平衡三进制负号解成 +1",
+        "file": "crates/trit-codec/src/balanced.rs",
+        "old": "            '-' => -1,",
+        "new": "            '-' => 1,",
+        "pkg": "trit-codec",
+        "filter": "small_values"
     }
 ]
 
