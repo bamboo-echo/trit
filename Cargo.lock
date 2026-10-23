@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "sansheng"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "trit-bdd",
  "trit-belnap",
@@ -657,6 +657,7 @@ dependencies = [
  "trit-eval",
  "trit-policy",
  "trit-sat",
+ "trit-schedule",
 ]
 
 [[package]]
@@ -844,7 +845,7 @@ dependencies = [
 
 [[package]]
 name = "trit-bdd"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "biodivine-lib-bdd",
  "thiserror 2.0.21",
@@ -854,14 +855,14 @@ dependencies = [
 
 [[package]]
 name = "trit-belnap"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "trit-core",
 ]
 
 [[package]]
 name = "trit-circuit"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -872,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "trit-cli"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -884,11 +885,12 @@ dependencies = [
  "trit-eval",
  "trit-policy",
  "trit-sat",
+ "trit-schedule",
 ]
 
 [[package]]
 name = "trit-core"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "proptest",
  "serde",
@@ -897,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "trit-eval"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "indoc",
  "proptest",
@@ -907,7 +909,7 @@ dependencies = [
 
 [[package]]
 name = "trit-policy"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -920,7 +922,7 @@ dependencies = [
 
 [[package]]
 name = "trit-sat"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "proptest",
  "thiserror 2.0.21",
@@ -930,8 +932,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "trit-schedule"
+version = "0.12.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "trit-core",
+]
+
+[[package]]
 name = "trit-wasm"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "serde_json",
  "trit-belnap",

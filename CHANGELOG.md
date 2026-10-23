@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added（0.12 静态三值调度）
+
+- 新增 `trit-schedule`：静态 DAG 调度，支持 `True` / `False` / `Unknown` 依赖；
+  `Unknown` 直接延迟并沿必需依赖传播；输出 worker、start/finish、makespan、关键路径。
+- 多 worker 事件驱动列表调度；高优先级先排，确定性 tie-break。
+- CLI `trit schedule tasks.json --workers N`（table/json/csv/markdown）；`sansheng` 重新导出。
+- 测试：链、并行、优先级、未知依赖传播、可选依赖、环/重复/未知引用拒绝、JSON 输入。
+- 变异门 96 → 100（未知依赖、延迟传播、关键路径、优先级排序）。
+- 这是静态调度 MVP；runtime/抢占/取消/故障恢复不在本轮。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，

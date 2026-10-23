@@ -290,6 +290,17 @@ enum Commands {
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
     },
+    /// 静态三值 DAG 调度：依赖可为 True / False / Unknown。
+    Schedule {
+        /// 调度输入 JSON（`workers` + `tasks`）。
+        path: std::path::PathBuf,
+        /// 覆盖 JSON 里的 worker 数。
+        #[arg(long, value_name = "N")]
+        workers: Option<usize>,
+        /// 输出格式。
+        #[arg(long, short = 'f', default_value = "table")]
+        format: Format,
+    },
     /// 网表格式转换：text <-> json。
     Netlist {
         /// 输入文件。
@@ -523,6 +534,11 @@ fn main() -> Result<()> {
             format,
             &cli.algebra,
         ),
+        Commands::Schedule {
+            path,
+            workers,
+            format,
+        } => commands::schedule::cmd_schedule(&path, workers, format),
         Commands::Netlist { path, from, to } => commands::netlist::cmd_netlist(&path, &from, &to),
         Commands::Verify {
             path,

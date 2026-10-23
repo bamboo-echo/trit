@@ -782,6 +782,38 @@ MUTANTS = [
         "new": "    sdf == gate\n",
         "pkg": "trit-circuit",
         "filter": "instance_path_accepts_a_design_prefix"
+    },
+    {
+        "name": "schedule: 忽略 Unknown 依赖",
+        "file": "crates/trit-schedule/src/lib.rs",
+        "old": "                Ternary::Unknown => {\n                    if direct_unknown[position].is_none() {\n                        direct_unknown[position] = Some(dependency.task.clone());\n                    }\n                }\n",
+        "new": "                Ternary::Unknown => {}\n",
+        "pkg": "trit-schedule",
+        "filter": "unknown_dependency_defers_transitively"
+    },
+    {
+        "name": "schedule: 不传播延迟",
+        "file": "crates/trit-schedule/src/lib.rs",
+        "old": "            for &predecessor in &true_deps[position] {\n                if deferred[predecessor].is_some() {\n                    deferred[position] =\n                        Some(DeferReason::BlockedBy(tasks[predecessor].id.clone()));\n                    changed = true;\n                    break;\n                }\n            }\n",
+        "new": "            for &predecessor in &true_deps[position] {\n                if false {\n                    deferred[position] =\n                        Some(DeferReason::BlockedBy(tasks[predecessor].id.clone()));\n                    changed = true;\n                    break;\n                }\n            }\n",
+        "pkg": "trit-schedule",
+        "filter": "unknown_dependency_defers_transitively"
+    },
+    {
+        "name": "schedule: 关键路径忽略前置",
+        "file": "crates/trit-schedule/src/lib.rs",
+        "old": "                start = start.max(longest[predecessor]);\n",
+        "new": "                start = 0;\n",
+        "pkg": "trit-schedule",
+        "filter": "chain_uses_one_worker_and_full_critical_path"
+    },
+    {
+        "name": "schedule: 优先级取反",
+        "file": "crates/trit-schedule/src/lib.rs",
+        "old": "    (task.priority, task.duration, task.id.clone(), position)\n",
+        "new": "    (-task.priority, task.duration, task.id.clone(), position)\n",
+        "pkg": "trit-schedule",
+        "filter": "higher_priority_is_scheduled_first"
     }
 ]
 

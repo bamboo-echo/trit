@@ -46,3 +46,7 @@ pub use trit_sat::{
     EncodingSize, SymbolicError, encoding_size, equivalent_symbolic, equivalent_symbolic_with,
     minimal_counterexample, satisfiable,
 };
+pub use trit_schedule::{
+    DeferReason, DeferredTask, Dependency, Schedule, ScheduleError, ScheduleInput, ScheduledTask,
+    Task, schedule, schedule_input,
+};
