@@ -186,6 +186,9 @@ enum Commands {
         /// 自动枚举的桥接上限（每个网络对展开 AND/OR 两种）。
         #[arg(long, value_name = "N", default_value_t = 128)]
         max_pairs: usize,
+        /// 用 SAT 逐桥接求解（支持 ≤64 主输入）。
+        #[arg(long)]
+        sat: bool,
         /// 输出格式。
         #[arg(long, short = 'f', value_name = "FORMAT", default_value = "table")]
         format: Format,
@@ -229,7 +232,7 @@ enum Commands {
         /// 单元库 JSON（如 `{"AND":1,"NAND":2}`）；给出时按延迟选实现。
         #[arg(long, value_name = "JSON")]
         cells: Option<std::path::PathBuf>,
-        /// 面积优先（最少单元），平手再看延迟；需配合 `--cells`。
+        /// 面积优先（单元 area，未声明按 1），平手再看延迟；需配合 `--cells`。
         #[arg(long)]
         area_first: bool,
         /// 每个扇出（门输入引用）追加的延迟；0 = 不看负载。
@@ -387,6 +390,7 @@ fn main() -> Result<()> {
             from,
             pairs,
             max_pairs,
+            sat,
             format,
         } => commands::bridge::cmd_bridge(
             &path,
@@ -395,6 +399,7 @@ fn main() -> Result<()> {
             &from,
             pairs.as_deref(),
             max_pairs,
+            sat,
         ),
         Commands::Timing {
             path,

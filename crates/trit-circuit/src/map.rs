@@ -65,6 +65,16 @@ pub enum CellTiming {
         delay: Option<u32>,
         /// 弧延迟（长度必须等于门元数）。
         arcs: Vec<u32>,
+        /// 面积；省略时按 1 计。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        area: Option<u32>,
+    },
+    /// 统一延迟 + 面积。
+    Cell {
+        /// 所有输入同一延迟。
+        delay: u32,
+        /// 面积。
+        area: u32,
     },
 }
 
@@ -73,9 +83,10 @@ impl CellTiming {
     pub fn base_delay(&self) -> u32 {
         match self {
             Self::Delay(delay) => *delay,
-            Self::Arcs { delay, arcs } => {
+            Self::Arcs { delay, arcs, .. } => {
                 delay.unwrap_or_else(|| arcs.iter().copied().max().unwrap_or(0))
             }
+            Self::Cell { delay, .. } => *delay,
         }
     }
 
@@ -83,9 +94,19 @@ impl CellTiming {
     pub fn arc_delay(&self, input_index: usize) -> u32 {
         match self {
             Self::Delay(delay) => *delay,
-            Self::Arcs { delay, arcs } => arcs.get(input_index).copied().unwrap_or_else(|| {
+            Self::Arcs { delay, arcs, .. } => arcs.get(input_index).copied().unwrap_or_else(|| {
                 delay.unwrap_or_else(|| arcs.iter().copied().max().unwrap_or(0))
             }),
+            Self::Cell { delay, .. } => *delay,
+        }
+    }
+
+    /// 面积；数字简写与省略 `area` 的对象都按 1 计。
+    pub fn area(&self) -> u32 {
+        match self {
+            Self::Delay(_) => 1,
+            Self::Arcs { area, .. } => area.unwrap_or(1),
+            Self::Cell { area, .. } => *area,
         }
     }
 }
@@ -96,7 +117,7 @@ impl CellTiming {
 /// `{"delay": 基础延迟, "arcs": [A1, A2, ...]}` 的引脚弧写法：
 ///
 /// ```json
-/// { "NAND": 1, "AND": {"delay": 3, "arcs": [1, 4]}, "NOT": {"arcs": [2]} }
+/// { "NAND": 1, "AND": {"delay": 3, "arcs": [1, 4], "area": 2}, "NOT": {"arcs": [2]} }
 /// ```
 ///
 /// 没列出的门类型视为**该库里没有这个单元**；三值强加 `XOR` 只有在库里显式声明时才能映射。
@@ -136,6 +157,17 @@ impl CellLibrary {
             return Some(0);
         }
         self.cells.get(kind.as_str()).map(CellTiming::base_delay)
+    }
+
+    /// 该门类型的面积；`CONST` 恒为 0，不在库里返回 `None`。
+    ///
+    /// 数字简写与省略 `area` 的对象按 1 计，因此旧单元库的 `--area-first`
+    /// 行为等价于“单元数最少”。
+    pub fn area(&self, kind: GateKind) -> Option<u32> {
+        if kind == GateKind::Const {
+            return Some(0);
+        }
+        self.cells.get(kind.as_str()).map(CellTiming::area)
     }
 
     /// 第 `input_index` 个输入引脚到输出的弧延迟；不在库里返回 `None`。
@@ -190,7 +222,7 @@ impl CellLibrary {
 pub enum MapStrategy {
     /// 最小到达时间；平手时单元更少。
     Timing,
-    /// 单元最少；平手时到达更早。
+    /// 面积最小（单元 `area`，未声明按 1）；平手时到达更早。
     Area,
 }
 
@@ -198,6 +230,7 @@ pub enum MapStrategy {
 struct Implementation {
     arrival: u32,
     cells: usize,
+    area: u32,
     direct: bool,
     ops: Option<Vec<NandOp>>,
 }
@@ -284,6 +317,7 @@ pub fn to_cells_with_load(
             candidates.push(Implementation {
                 arrival,
                 cells: 1,
+                area: library.area(gate.kind).unwrap_or(1),
                 direct: true,
                 ops: None,
             });
@@ -296,9 +330,14 @@ pub fn to_cells_with_load(
             if let Some(ops) = nand_expand(gate.kind, a, b, &output, &mut fresh) {
                 let fanout = fanouts.get(&output).copied().unwrap_or(0);
                 let arrival = expansion_arrival(&ops, &arrival, nand_arcs, load_delay, fanout)?;
+                let area = u32::try_from(ops.len())
+                    .ok()
+                    .and_then(|cells| cells.checked_mul(library.area(GateKind::Nand).unwrap_or(1)))
+                    .ok_or(MapError::Overflow)?;
                 candidates.push(Implementation {
                     arrival,
                     cells: ops.len(),
+                    area,
                     direct: false,
                     ops: Some(ops),
                 });
@@ -309,10 +348,15 @@ pub fn to_cells_with_load(
         }
         let key = |candidate: &Implementation| {
             let (first, second) = match strategy {
-                MapStrategy::Timing => (candidate.arrival as u64, candidate.cells as u64),
-                MapStrategy::Area => (candidate.cells as u64, candidate.arrival as u64),
+                MapStrategy::Timing => (candidate.arrival as u64, candidate.area as u64),
+                MapStrategy::Area => (candidate.area as u64, candidate.arrival as u64),
             };
-            (first, second, u8::from(!candidate.direct))
+            (
+                first,
+                second,
+                candidate.cells as u64,
+                u8::from(!candidate.direct),
+            )
         };
         candidates.sort_by_key(key);
         let chosen = candidates.remove(0);
@@ -460,7 +504,7 @@ mod tests {
                 .iter()
                 .filter_map(|(kind, timing)| match timing {
                     CellTiming::Arcs { arcs, .. } => Some((kind.clone(), arcs.clone())),
-                    CellTiming::Delay(_) => None,
+                    CellTiming::Delay(_) | CellTiming::Cell { .. } => None,
                 })
                 .collect(),
             load_delay: 0,
@@ -765,5 +809,33 @@ output y
                 .iter()
                 .all(|gate| matches!(gate.kind, GateKind::Nand | GateKind::Const))
         );
+    }
+
+    #[test]
+    fn area_first_uses_declared_area() {
+        let circuit = single(GateKind::Or, &["a", "b"], "y");
+        let mut library = CellLibrary::new([(GateKind::Nand, 1)]);
+        library
+            .cells
+            .insert("OR".to_string(), CellTiming::Cell { delay: 1, area: 4 });
+        let timed = to_cells(&circuit, &library, MapStrategy::Timing).unwrap();
+        assert_eq!(timed.gates.len(), 1, "时序优先应选更快的 OR");
+        assert_eq!(timed.gates[0].kind, GateKind::Or);
+        let area = to_cells(&circuit, &library, MapStrategy::Area).unwrap();
+        assert_eq!(area.gates.len(), 3, "面积优先应选 3 级 NAND（3 < 4）");
+    }
+
+    #[test]
+    fn cell_area_is_parsed_and_round_trips() {
+        let library = CellLibrary::from_json(
+            r#"{"NAND":1,"OR":{"delay":5,"area":2},"AND":{"delay":3,"arcs":[1,4],"area":2}}"#,
+        )
+        .unwrap();
+        assert_eq!(library.area(GateKind::Nand), Some(1));
+        assert_eq!(library.area(GateKind::Or), Some(2));
+        assert_eq!(library.area(GateKind::And), Some(2));
+        assert_eq!(library.delay(GateKind::Or), Some(5));
+        let json = library.to_json().unwrap();
+        assert_eq!(CellLibrary::from_json(&json).unwrap(), library);
     }
 }

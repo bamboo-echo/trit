@@ -15,15 +15,10 @@ pub(crate) fn cmd_bridge(
     from: &str,
     pairs_path: Option<&std::path::Path>,
     max_pairs: usize,
+    sat: bool,
 ) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
     let circuit = load_circuit(path, from)?;
-    if circuit.input_count() > 10 {
-        bail!(
-            "桥接 ATPG 最多 10 个主输入（2^11 个向量 × 桥接对数），当前 {}",
-            circuit.input_count()
-        );
-    }
     let pairs = match pairs_path {
         Some(file) => {
             let text = std::fs::read_to_string(file)
@@ -33,8 +28,24 @@ pub(crate) fn cmd_bridge(
         }
         None => auto_bridge_pairs(&circuit, max_pairs)?,
     };
-    let report = trit_circuit::generate_bridge_tests(&circuit, alg, &pairs)
-        .with_context(|| format!("桥接分析失败：{}", path.display()))?;
+    let report = if sat {
+        if circuit.input_count() > 64 {
+            bail!(
+                "SAT 桥接 ATPG 最多 64 个主输入（u64 测试向量），当前 {}",
+                circuit.input_count()
+            );
+        }
+        trit_circuit::generate_bridge_tests_sat(&circuit, alg, &pairs)
+    } else {
+        if circuit.input_count() > 10 {
+            bail!(
+                "桥接 ATPG 最多 10 个主输入（2^11 个向量 × 桥接对数），当前 {}；可用 --sat 支持 ≤64",
+                circuit.input_count()
+            );
+        }
+        trit_circuit::generate_bridge_tests(&circuit, alg, &pairs)
+    }
+    .with_context(|| format!("桥接分析失败：{}", path.display()))?;
     match format {
         Format::Json => {
             let obj = serde_json::json!({
@@ -45,6 +56,7 @@ pub(crate) fn cmd_bridge(
                 "coverage": report.coverage,
                 "exhaustive": report.exhaustive,
                 "optimal": report.optimal,
+                "sat": report.sat,
                 "bridges": report.bridges.iter().map(|bridge| serde_json::json!({
                     "a": bridge.a,
                     "b": bridge.b,
@@ -69,7 +81,9 @@ pub(crate) fn cmd_bridge(
                 report.bridges.len(),
                 report.testable,
                 report.coverage * 100.0,
-                if report.optimal {
+                if report.sat {
+                    "SAT 逐桥接"
+                } else if report.optimal {
                     "精确最小"
                 } else if report.exhaustive {
                     "全向量搜索"

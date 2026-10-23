@@ -848,3 +848,20 @@ fn atpg_sat_supports_more_than_ten_inputs() {
     assert_ne!(code, 0);
     assert!(stderr.contains("可用 --sat"), "{stderr}");
 }
+
+#[test]
+fn bridge_sat_matches_small_fixture() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let netlist = dir.join("and2.net");
+    let pairs = dir.join("bridges.json");
+    let (stdout, stderr, code) = run(&[
+        "bridge",
+        netlist.to_str().unwrap(),
+        "--pairs",
+        pairs.to_str().unwrap(),
+        "--sat",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("SAT 逐桥接"), "{stdout}");
+    assert!(stdout.contains("覆盖率 50.0%"), "{stdout}");
+}

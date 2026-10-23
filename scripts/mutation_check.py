@@ -593,7 +593,7 @@ MUTANTS = [
     },
     {
         "name": "sat: 常量 false 被强制成真",
-        "file": "crates/trit-circuit/src/atpg/sat.rs",
+        "file": "crates/trit-circuit/src/sat_cnf.rs",
         "old": "        solver.add_clause(&[Lit::from_var(false_var, false)]);\n",
         "new": "        solver.add_clause(&[Lit::from_var(false_var, true)]);\n",
         "pkg": "trit-circuit",
@@ -601,27 +601,59 @@ MUTANTS = [
     },
     {
         "name": "sat: 不要求输出不同",
-        "file": "crates/trit-circuit/src/atpg/sat.rs",
-        "old": "        encoded.solver.add_clause(&differences);\n",
-        "new": "        if false { encoded.solver.add_clause(&differences); }\n",
+        "file": "crates/trit-circuit/src/sat_cnf.rs",
+        "old": "        self.solver.add_clause(&differences);\n",
+        "new": "        if false { self.solver.add_clause(&differences); }\n",
         "pkg": "trit-circuit",
         "filter": "sat_matches_exhaustive_on_random_small_circuits"
     },
     {
         "name": "sat: 故障引脚不注入",
-        "file": "crates/trit-circuit/src/atpg/sat.rs",
-        "old": "                .map(|(_, pin, stuck)| (pin, stuck));\n",
-        "new": "                .map(|(_, _pin, stuck)| (usize::MAX, stuck));\n",
+        "file": "crates/trit-circuit/src/sat_cnf.rs",
+        "old": "            let lit = if faulty && inject.is_some_and(|(pin, _)| pin == index) {\n",
+        "new": "            let lit = if false && faulty && inject.is_some_and(|(pin, _)| pin == index) {\n",
         "pkg": "trit-circuit",
         "filter": "sat_matches_exhaustive_on_random_small_circuits"
     },
     {
         "name": "sat: Xor 一律按经典 XOR",
-        "file": "crates/trit-circuit/src/atpg/sat.rs",
+        "file": "crates/trit-circuit/src/sat_cnf.rs",
         "old": "                    GateKind::Xor => match self.alg {\n                        // Ł3 强加法在 0/1 上是 OR；K3/B3 是 AND。\n                        Algebra::Lukasiewicz => self.or(y, a, b),\n                        Algebra::Kleene | Algebra::Bochvar => self.and(y, a, b),\n                    },\n",
         "new": "                    GateKind::Xor => self.xor(y, a, b),\n",
         "pkg": "trit-circuit",
         "filter": "sat_encodes_strong_xor_by_algebra"
+    },
+    {
+        "name": "bridge: 不要求两端取值不同",
+        "file": "crates/trit-circuit/src/bridge.rs",
+        "old": "        cnf.require_good_difference(&pair.a, &pair.b)?;\n",
+        "new": "        if false { cnf.require_good_difference(&pair.a, &pair.b)?; }\n",
+        "pkg": "trit-circuit",
+        "filter": "sat_bridge_matches_exhaustive_for_small_circuits"
+    },
+    {
+        "name": "bridge: wired 值反转",
+        "file": "crates/trit-circuit/src/bridge.rs",
+        "old": "        let value = matches!(pair.mode, BridgeMode::Or);\n",
+        "new": "        let value = !matches!(pair.mode, BridgeMode::Or);\n",
+        "pkg": "trit-circuit",
+        "filter": "sat_bridge_matches_exhaustive_for_small_circuits"
+    },
+    {
+        "name": "bridge: 不要求输出不同",
+        "file": "crates/trit-circuit/src/bridge.rs",
+        "old": "        cnf.require_output_difference()?;\n",
+        "new": "        if false { cnf.require_output_difference()?; }\n",
+        "pkg": "trit-circuit",
+        "filter": "sat_bridge_matches_exhaustive_for_small_circuits"
+    },
+    {
+        "name": "map: area-first 忽略 area",
+        "file": "crates/trit-circuit/src/map.rs",
+        "old": "                MapStrategy::Area => (candidate.area as u64, candidate.arrival as u64),\n",
+        "new": "                MapStrategy::Area => (candidate.cells as u64, candidate.arrival as u64),\n",
+        "pkg": "trit-circuit",
+        "filter": "area_first_uses_declared_area"
     }
 ]
 
