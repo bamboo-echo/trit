@@ -92,6 +92,10 @@ cargo run --release -p trit-cli -- verify examples/policy.json
 
 ## 资源预算与变异门
 
+所有子命令支持全局 `--timeout-ms N`：把本次调用重新执行为子进程，超时后杀掉并退出 **124**。
+这是**进程级硬超时**（能兜住整个 ATPG/验证/REPL），不是单故障取消；子进程用
+`TRIT_TIMEOUT_CHILD=1` 跳过二次包装。
+
 所有入口共用 `trit_core::Limits`（默认：深度 256 / 节点 100 000 / 枚举 12 变量 / 100 万行）：
 
 - 解析器在**构造 AST 的过程中**扣节点预算：右结合蕴含链、扁平二元链、`!` 链与深括号

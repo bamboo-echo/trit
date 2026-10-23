@@ -1022,3 +1022,32 @@ fn verilog_parameters_expand_before_netlist_export() {
     let buses = json["buses"].as_object().unwrap();
     assert_eq!(buses["y"]["width"], 3, "{json}");
 }
+
+#[test]
+fn timeout_kills_long_running_command_with_124() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let mut child = Command::new(trit_bin())
+        .args(["repl", "--timeout-ms", "200"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn trit");
+    let _stdin = child.stdin.take().expect("stdin pipe");
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            break status;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("timeout wrapper did not terminate the child");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(status.code(), Some(124));
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
