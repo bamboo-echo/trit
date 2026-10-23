@@ -179,6 +179,8 @@ pub enum UntestableReason {
     Unobserved,
     /// 能到主输出，但被其他信号遮蔽。
     Masked,
+    /// SAT 证明不存在区分向量（未细分 redundant / unobserved / masked）。
+    Proven,
 }
 
 impl UntestableReason {
@@ -188,6 +190,7 @@ impl UntestableReason {
             Self::Redundant => "redundant",
             Self::Unobserved => "unobserved",
             Self::Masked => "masked",
+            Self::Proven => "proven",
         }
     }
 }
@@ -432,6 +435,12 @@ pub enum CircuitError {
     /// 枚举容量或资源预算超限。
     #[error("{0}")]
     Limit(#[from] LimitError),
+    /// SAT 求解失败或缺少模型。
+    #[error("SAT 求解失败: {0}")]
+    Sat(String),
+    /// 二进制 SAT ATPG 无法表达常量 X。
+    #[error("SAT ATPG 不支持常量 X 的门 {0}")]
+    NonBinaryConstant(String),
 }
 /// 一条输入向量下的三值传播结果。
 #[derive(Debug, Clone, PartialEq, Eq)]

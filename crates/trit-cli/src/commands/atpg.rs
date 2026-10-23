@@ -13,17 +13,28 @@ pub(crate) fn cmd_atpg(
     format: Format,
     alg_name: &str,
     from: &str,
+    sat: bool,
 ) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
     let circuit = load_circuit(path, from)?;
-    if circuit.input_count() > 10 {
-        bail!(
-            "ATPG 最多 10 个主输入（2^11 = 2048 个向量 × 故障数），当前 {}",
-            circuit.input_count()
-        );
+    let report = if sat {
+        if circuit.input_count() > 64 {
+            bail!(
+                "SAT ATPG 最多 64 个主输入（u64 测试向量），当前 {}",
+                circuit.input_count()
+            );
+        }
+        trit_circuit::generate_tests_sat(&circuit, alg)
+    } else {
+        if circuit.input_count() > 10 {
+            bail!(
+                "ATPG 最多 10 个主输入（2^11 = 2048 个向量 × 故障数），当前 {}；可用 --sat 支持 ≤64",
+                circuit.input_count()
+            );
+        }
+        trit_circuit::generate_tests(&circuit, alg)
     }
-    let report = trit_circuit::generate_tests(&circuit, alg)
-        .with_context(|| format!("ATPG 失败：{}", path.display()))?;
+    .with_context(|| format!("ATPG 失败：{}", path.display()))?;
 
     match format {
         Format::Json => {
@@ -39,6 +50,7 @@ pub(crate) fn cmd_atpg(
                 "merged": report.merged,
                 "exhaustive": report.exhaustive,
                 "optimal": report.optimal,
+                "sat": report.sat,
                 "by_gate_kind": report
                     .by_gate_kind
                     .iter()
@@ -109,7 +121,9 @@ pub(crate) fn cmd_atpg(
                 report.testable,
                 report.faults.len(),
                 report.patterns.len(),
-                if report.optimal {
+                if report.sat {
+                    "SAT 逐故障"
+                } else if report.optimal {
                     "精确最小"
                 } else if report.exhaustive {
                     "全向量搜索"

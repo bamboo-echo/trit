@@ -501,3 +501,194 @@ fn patterns_really_detect_covered_faults() {
         }
     }
 }
+
+fn verify_sat_patterns(circuit: &Circuit, report: &AtpgReport, alg: Algebra) {
+    let mut seen = vec![0usize; report.faults.len()];
+    for pattern in &report.patterns {
+        for &index in &pattern.covers {
+            seen[index] += 1;
+            let fault = &report.faults[index];
+            let gate_index = circuit
+                .gates
+                .iter()
+                .position(|gate| gate.output.name() == fault.gate)
+                .expect("故障应能定位到门");
+            let good = crate::circuit::simulate_assignment(circuit, &pattern.inputs, alg, None);
+            let bad = crate::circuit::simulate_assignment(
+                circuit,
+                &pattern.inputs,
+                alg,
+                Some((gate_index, fault.input_index, fault.stuck_at)),
+            );
+            let differs = circuit
+                .outputs
+                .iter()
+                .any(|output| good.get(output.name()) != bad.get(output.name()));
+            assert!(differs, "SAT 向量没有检出故障 {index}");
+        }
+    }
+    for (index, fault) in report.faults.iter().enumerate() {
+        assert_eq!(
+            seen[index],
+            if fault.observable { 1 } else { 0 },
+            "故障 {index} 覆盖次数"
+        );
+    }
+}
+
+#[test]
+fn sat_matches_exhaustive_on_random_small_circuits() {
+    for seed in 1..=12u64 {
+        let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let circuit = random_circuit(&mut state);
+        for alg in Algebra::ALL {
+            let exhaustive = crate::circuit::analyze_faults(&circuit, alg).unwrap();
+            let report = generate_tests_sat(&circuit, alg).unwrap();
+            assert!(report.sat);
+            assert_eq!(report.faults.len(), exhaustive.len());
+            for (sat, enum_fault) in report.faults.iter().zip(&exhaustive) {
+                assert_eq!(
+                    (&sat.gate, &sat.input),
+                    (&enum_fault.gate, &enum_fault.input)
+                );
+                assert_eq!(sat.input_index, enum_fault.input_index);
+                assert_eq!(sat.stuck_at, enum_fault.stuck_at);
+                assert_eq!(
+                    sat.observable, enum_fault.observable,
+                    "seed {seed} {alg} 故障 {}/{}",
+                    sat.gate, sat.input
+                );
+            }
+            verify_sat_patterns(&circuit, &report, alg);
+        }
+    }
+}
+
+#[test]
+fn sat_encodes_strong_xor_by_algebra() {
+    let mut circuit = Circuit::new("xor");
+    circuit.add_input(sig("a"));
+    circuit.add_input(sig("b"));
+    circuit.add_gate(Gate::new(
+        GateKind::Xor,
+        vec![sig("a"), sig("b")],
+        sig("out"),
+    ));
+    circuit.add_output(sig("out"));
+    for alg in Algebra::ALL {
+        let exhaustive = crate::circuit::analyze_faults(&circuit, alg).unwrap();
+        let report = generate_tests_sat(&circuit, alg).unwrap();
+        for (sat, enum_fault) in report.faults.iter().zip(&exhaustive) {
+            assert_eq!(
+                sat.observable, enum_fault.observable,
+                "{alg} 的强加法编码不一致"
+            );
+        }
+        verify_sat_patterns(&circuit, &report, alg);
+    }
+}
+
+fn and_chain(inputs: usize) -> Circuit {
+    let mut circuit = Circuit::new("and_chain");
+    for index in 0..inputs {
+        circuit.add_input(sig(&format!("i{index}")));
+    }
+    let mut previous = "i0".to_string();
+    for index in 1..inputs {
+        let output = format!("n{index}");
+        circuit.add_gate(Gate::new(
+            GateKind::And,
+            vec![sig(&previous), sig(&format!("i{index}"))],
+            sig(&output),
+        ));
+        previous = output;
+    }
+    circuit.add_output(sig(&previous));
+    circuit
+}
+
+#[test]
+fn sat_handles_more_than_sixteen_inputs_and_proves_untestable() {
+    let mut circuit = and_chain(20);
+    // 恒 1 的 OR：常数引脚 SA-0 可测（会去掉恒定 1），其余引脚故障不可测。
+    let mut one = Gate::new(GateKind::Const, Vec::new(), sig("one"));
+    one.const_value = Some(Ternary::True);
+    circuit.add_gate(one);
+    circuit.add_gate(Gate::new(
+        GateKind::Or,
+        vec![sig("i0"), sig("one")],
+        sig("always_one"),
+    ));
+    circuit.add_output(sig("always_one"));
+
+    let report = generate_tests_sat(&circuit, Algebra::Kleene).unwrap();
+    assert_eq!(report.faults.len(), 19 * 4 + 4);
+    assert_eq!(report.testable, 19 * 4 + 1);
+    assert_eq!(report.untestable.len(), 3);
+    assert!(
+        report
+            .untestable
+            .iter()
+            .all(|fault| fault.reason == Some(crate::circuit::UntestableReason::Proven))
+    );
+    verify_sat_patterns(&circuit, &report, Algebra::Kleene);
+}
+
+#[test]
+fn sat_rejects_constant_x() {
+    let circuit =
+        crate::netlist::parse_netlist("input a\nconst X x\nbuf a out\noutput out\n").unwrap();
+    let error = generate_tests_sat(&circuit, Algebra::Kleene).unwrap_err();
+    assert!(
+        matches!(error, crate::circuit::CircuitError::NonBinaryConstant(_)),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn sat_rejects_more_than_sixty_four_inputs() {
+    let mut circuit = Circuit::new("wide");
+    for index in 0..65 {
+        circuit.add_input(sig(&format!("i{index}")));
+    }
+    circuit.add_gate(Gate::new(GateKind::Buf, vec![sig("i0")], sig("out")));
+    circuit.add_output(sig("out"));
+    let error = generate_tests_sat(&circuit, Algebra::Kleene).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            crate::circuit::CircuitError::BinaryInputLimit { max: 64, .. }
+        ),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn sat_tests_the_constant_pin_and_proves_the_rest() {
+    let mut circuit = Circuit::new("redundant");
+    circuit.add_input(sig("a"));
+    let mut one = Gate::new(GateKind::Const, Vec::new(), sig("one"));
+    one.const_value = Some(Ternary::True);
+    circuit.add_gate(one);
+    circuit.add_gate(Gate::new(
+        GateKind::Or,
+        vec![sig("a"), sig("one")],
+        sig("out"),
+    ));
+    circuit.add_output(sig("out"));
+    let report = generate_tests_sat(&circuit, Algebra::Kleene).unwrap();
+    assert_eq!(report.testable, 1);
+    assert_eq!(report.untestable.len(), 3);
+    assert_eq!(report.patterns.len(), 1);
+    assert!((report.coverage - 0.25).abs() < 1e-9);
+    assert!((report.x_coverage - 0.0).abs() < 1e-9);
+    let testable = report.faults.iter().find(|fault| fault.observable).unwrap();
+    assert_eq!(testable.input, "one");
+    assert_eq!(testable.stuck_at, Ternary::False);
+    assert!(
+        report
+            .untestable
+            .iter()
+            .all(|fault| fault.reason == Some(crate::circuit::UntestableReason::Proven))
+    );
+}

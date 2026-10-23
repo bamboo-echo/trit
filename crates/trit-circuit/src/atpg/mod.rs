@@ -10,7 +10,9 @@ use crate::circuit::{Circuit, CircuitError, Fault, analyze_faults};
 pub use crate::pattern::TestPattern;
 
 mod compact;
+mod sat;
 use compact::compact_patterns;
+pub use sat::generate_tests_sat;
 
 /// 按门类型统计的覆盖率。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -51,6 +53,8 @@ pub struct AtpgReport {
     pub exhaustive: bool,
     /// 测试集是否为精确最小覆盖（仅小规模实例尝试）。
     pub optimal: bool,
+    /// 是否使用 SAT 逐故障求解（而非全向量/见证贪心）。
+    pub sat: bool,
     /// 所有向量里 X（don't-care）位的总数。
     pub dont_care_bits: usize,
     /// 所有向量的输入位总数。
@@ -286,6 +290,7 @@ pub fn generate_tests(circuit: &Circuit, alg: Algebra) -> Result<AtpgReport, Cir
         by_gate_kind,
         exhaustive,
         optimal,
+        sat: false,
         dont_care_bits,
         input_bits,
         x_coverage,
