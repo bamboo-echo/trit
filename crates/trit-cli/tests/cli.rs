@@ -1074,3 +1074,27 @@ fn sdf_per_instance_delays_reach_each_output() {
     assert!(stdout.contains("\"arrival\": 5"), "{stdout}");
     assert!(stdout.contains("\"critical_path\": 5"), "{stdout}");
 }
+
+#[test]
+fn schedule_command_handles_unknown_dependencies() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let path = dir.join("schedule.json");
+    let (stdout, stderr, code) = run(&[
+        "schedule",
+        path.to_str().unwrap(),
+        "--workers",
+        "2",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["makespan"], 7);
+    assert_eq!(report["critical_path"], 7);
+    assert_eq!(report["scheduled"].as_array().unwrap().len(), 3);
+    assert_eq!(report["deferred"][0]["id"], "c");
+    assert_eq!(
+        report["deferred"][0]["reason"]["kind"],
+        "unknown_dependency"
+    );
+}

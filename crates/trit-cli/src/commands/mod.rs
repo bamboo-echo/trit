@@ -11,6 +11,7 @@ pub(crate) mod map;
 pub(crate) mod netlist;
 pub(crate) mod quantify;
 pub(crate) mod repl;
+pub(crate) mod schedule;
 pub(crate) mod simplify;
 pub(crate) mod table;
 pub(crate) mod timing;

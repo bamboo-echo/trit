@@ -32,8 +32,32 @@ GitHub Releases（`v0.3.1` 起）提供：
 | `trit-wasm` | WASM 绑定：给 `playground/` 的求值、真值表、等价 |
 | `trit-bdd` | BDD（canonical）等价判定、三值量化 |
 | `trit-policy` | 三值决策表的构建期验证 |
+| `trit-schedule` | 三值依赖的静态 DAG 调度（True/False/Unknown） |
 | `sansheng` | 三生：统一入口伞包（re-export 以上能力） |
 | `trit-cli` | `trit` 命令行 |
+
+## 三值调度（`trit schedule`）
+
+静态 DAG 调度：依赖边可以是 `True`（必需）、`False`（可选，忽略）或 `Unknown`（未知）。
+`Unknown` 不会被猜成可运行，而是把任务及依赖它的任务标记为 `deferred`，给出原因。
+
+```json
+{
+  "workers": 2,
+  "tasks": [
+    {"id": "a", "duration": 3},
+    {"id": "b", "duration": 2, "deps": [{"task": "a"}]},
+    {"id": "c", "duration": 1, "deps": [{"task": "a", "required": "Unknown"}]}
+  ]
+}
+```
+
+```bash
+trit schedule tasks.json --workers 2 --format json
+```
+
+输出 `scheduled`（开始/完成/worker/优先级）、`makespan`、`critical_path` 和 `deferred`
+（`unknown_dependency` / `blocked_by`）。这是**静态调度**：不负责实际执行、抢占、取消或故障恢复。
 
 ## 三生（sansheng）
 
@@ -41,7 +65,7 @@ crates.io 包名用拼音 `sansheng`（`三生` 不能直接作 crate 名）。�
 
 ```toml
 [dependencies]
-sansheng = "0.11"
+sansheng = "0.12"
 ```
 
 ```rust

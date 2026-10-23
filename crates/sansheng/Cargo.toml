@@ -19,3 +19,4 @@ trit-bdd.workspace = true
 trit-circuit.workspace = true
 trit-policy.workspace = true
 trit-belnap.workspace = true
+trit-schedule.workspace = true

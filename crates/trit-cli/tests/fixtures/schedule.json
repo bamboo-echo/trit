@@ -1,0 +1,9 @@
+{
+  "workers": 2,
+  "tasks": [
+    {"id": "a", "duration": 3},
+    {"id": "b", "duration": 2, "deps": [{"task": "a"}]},
+    {"id": "c", "duration": 1, "deps": [{"task": "a", "required": "Unknown"}]},
+    {"id": "d", "duration": 2, "deps": [{"task": "b"}]}
+  ]
+}
