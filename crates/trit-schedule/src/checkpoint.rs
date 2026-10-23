@@ -569,12 +569,16 @@ mod checkpointed_task_tests {
 #[cfg(test)]
 mod file_store_tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
     fn temp_root() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "trit-checkpoints-{}-{}",
+            "trit-checkpoints-{}-{}-{}",
             std::process::id(),
-            nanos()
+            nanos(),
+            TEMP_SEQ.fetch_add(1, Ordering::Relaxed)
         ))
     }
 
