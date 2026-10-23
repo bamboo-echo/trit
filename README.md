@@ -137,6 +137,10 @@ let restored = store.lock().unwrap().restore(&MyRestorer, "counter")?;
 `index()` 扫描版本目录生成按 task id 排序的 `CheckpointIndex`（task id、最新代、状态字节数），
 只读元数据不加载状态；`task_ids()` / `index_json()` 便于外部工具消费。
 
+多进程写同一根目录时用 `try_lock()` / `lock_timeout()` / `lock()` 获取跨进程锁；
+锁是 `v1/.lock` 目录的原子创建，`CheckpointLock` 丢弃时自动释放。锁不自动加在
+`save`/`load` 上，调用方需在临界区显式持有。
+
 指标可直接导出 Prometheus/OpenMetrics 文本：
 
 ```rust

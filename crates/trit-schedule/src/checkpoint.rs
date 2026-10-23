@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +37,9 @@ pub enum CheckpointError {
     /// 文件系统读写失败。
     #[error("检查点 I/O 失败: {0}")]
     Io(String),
+    /// 等待跨进程锁超时。
+    #[error("检查点锁被占用")]
+    LockBusy,
 }
 
 /// 一个任务检查点。
@@ -251,6 +254,25 @@ impl CheckpointStore {
     }
 }
 
+/// 跨进程存储锁；`Drop` 时删除锁目录。
+#[derive(Debug)]
+pub struct CheckpointLock {
+    path: PathBuf,
+}
+
+impl CheckpointLock {
+    /// 锁目录路径。
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for CheckpointLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
 /// 版本化目录的文件检查点存储。
 ///
 /// 布局：`<root>/v<CHECKPOINT_VERSION>/<hex(task_id)>/<generation>.json`。
@@ -345,6 +367,41 @@ impl FileCheckpointStore {
             fs::remove_file(path).map_err(io_error)?;
         }
         Ok(remove)
+    }
+
+    /// 锁目录路径。
+    pub fn lock_path(&self) -> PathBuf {
+        self.version_dir().join(".lock")
+    }
+
+    /// 尝试获取跨进程锁；已被占用时返回 `None`。
+    pub fn try_lock(&self) -> Result<Option<CheckpointLock>, CheckpointError> {
+        fs::create_dir_all(self.version_dir()).map_err(io_error)?;
+        let path = self.lock_path();
+        match fs::create_dir(&path) {
+            Ok(()) => Ok(Some(CheckpointLock { path })),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+            Err(error) => Err(io_error(error)),
+        }
+    }
+
+    /// 带超时获取跨进程锁；默认 `lock()` 等 5 秒。
+    pub fn lock_timeout(&self, timeout: Duration) -> Result<CheckpointLock, CheckpointError> {
+        let start = Instant::now();
+        loop {
+            if let Some(lock) = self.try_lock()? {
+                return Ok(lock);
+            }
+            if start.elapsed() >= timeout {
+                return Err(CheckpointError::LockBusy);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// 获取跨进程锁（最多等 5 秒）。
+    pub fn lock(&self) -> Result<CheckpointLock, CheckpointError> {
+        self.lock_timeout(Duration::from_secs(5))
     }
 
     /// 扫描版本目录，生成按 task id 排序的多任务索引。
@@ -780,6 +837,40 @@ mod index_tests {
         assert_eq!(store.task_ids().unwrap(), vec!["a/任务", "b"]);
         assert!(store.index_json().unwrap().contains("a/任务"));
         assert!(store.index().unwrap().get("missing").is_none());
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "trit-lock-{}-{}-{}",
+            std::process::id(),
+            nanos(),
+            TEMP_SEQ.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn cross_process_lock_excludes_and_releases() {
+        let root = temp_root();
+        let first = FileCheckpointStore::new(&root);
+        let second = FileCheckpointStore::new(&root);
+        let lock = first.try_lock().unwrap().unwrap();
+        assert_eq!(lock.path(), first.lock_path());
+        assert!(second.try_lock().unwrap().is_none());
+        assert!(matches!(
+            first.lock_timeout(Duration::from_millis(20)),
+            Err(CheckpointError::LockBusy)
+        ));
+        drop(lock);
+        drop(second.try_lock().unwrap().expect("释放后可获取"));
         let _ = fs::remove_dir_all(&root);
     }
 }

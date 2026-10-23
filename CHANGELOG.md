@@ -78,6 +78,14 @@
 - 测试：多任务排序、unicode/slash id、最新代、空索引；crate 36 → 37。
 - 变异门 120 → 123（id 解码、排序、state_bytes）。
 
+### Added（0.12 checkpoint lock）
+
+- `CheckpointLock`：`try_lock()` 原子创建 `v1/.lock` 目录，`Drop` 自动释放；
+  `lock_timeout()` / `lock()`（默认 5 秒）带超时，占用时返回 `LockBusy`。
+- 不自动包裹 `save`/`load`；调用方在临界区显式持有，避免改变现有单写者调用路径。
+- 测试：排他、超时、释放后可重新获取；crate 37 → 38。
+- 变异门 123 → 125（已存在分支、Drop 释放）。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，

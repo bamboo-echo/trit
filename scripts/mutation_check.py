@@ -998,6 +998,22 @@ MUTANTS = [
         "new": "                let state_bytes = generation;\n",
         "pkg": "trit-schedule",
         "filter": "index_lists_latest_generations_sorted"
+    },
+    {
+        "name": "lock: 忽略已存在",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),\n",
+        "new": "            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {\n                let _ = error;\n                Ok(Some(CheckpointLock { path }))\n            }\n",
+        "pkg": "trit-schedule",
+        "filter": "cross_process_lock_excludes_and_releases"
+    },
+    {
+        "name": "lock: Drop 不释放",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "impl Drop for CheckpointLock {\n    fn drop(&mut self) {\n        let _ = fs::remove_dir_all(&self.path);\n    }\n}\n",
+        "new": "impl Drop for CheckpointLock {\n    fn drop(&mut self) {\n        let _ = &self.path;\n    }\n}\n",
+        "pkg": "trit-schedule",
+        "filter": "cross_process_lock_excludes_and_releases"
     }
 ]
 
