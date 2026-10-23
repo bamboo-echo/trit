@@ -1247,6 +1247,30 @@ MUTANTS = [
         "new": "        let scale = -options.learning_rate / count;",
         "pkg": "trit-net",
         "filter": "majority_five_is_learned"
+    },
+    {
+        "name": "attn: softmax 不归一化",
+        "file": "crates/trit-attn/src/scores.rs",
+        "old": "    let sum: f32 = exps.iter().sum();",
+        "new": "    let sum: f32 = 1.0;",
+        "pkg": "trit-attn",
+        "filter": "weights_sum_to_one"
+    },
+    {
+        "name": "attn: 记忆编码符号写反",
+        "file": "crates/trit-attn/src/memory.rs",
+        "old": "                self.weights[row * self.dim + col] += value * key;",
+        "new": "                self.weights[row * self.dim + col] -= value * key;",
+        "pkg": "trit-attn",
+        "filter": "orthogonal_keys_recall_exactly"
+    },
+    {
+        "name": "attn: 三值化不夹边界",
+        "file": "crates/trit-attn/src/scores.rs",
+        "old": "    value.round().clamp(-1.0, 1.0)",
+        "new": "    value.round()",
+        "pkg": "trit-attn",
+        "filter": "quantize_clamps_to_ternary"
     }
 ]
 
