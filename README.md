@@ -80,6 +80,33 @@ let report = run_runtime(tasks, 2, CancelToken::new()).unwrap();
 `RuntimeTask::with_requirements(...)` 声明需求；队首任务放不下时等待，不跳过它去塞低优先任务。
 运行中的任务**不会**被抢占；优先级只影响准入顺序。
 
+### 可恢复任务协议（resumable）
+
+需要真正抢占时，任务要实现 `ResumableTask::step`：每次只推进一个有界步骤，返回
+`Progress::Yield` 表示可在步骤边界暂停；对象本身保存检查点状态。
+
+```rust
+use trit_schedule::{Progress, ResumableSpec, RuntimeConfig, StepContext, run_resumable,
+                     CancelToken, ResumableTask};
+
+struct Job { done: usize }
+impl ResumableTask for Job {
+    fn step(&mut self, _ctx: &StepContext) -> Progress {
+        self.done += 1;
+        if self.done == 10 { Progress::Done } else { Progress::Yield }
+    }
+}
+let report = run_resumable(
+    vec![ResumableSpec::new("job", vec![], Job { done: 0 })],
+    RuntimeConfig::new(1),
+    CancelToken::new(),
+).unwrap();
+```
+
+`run_resumable` 是**单线程步进式参考执行器**：在步骤之间按优先级抢占，低优先任务被放回
+ready 队列但对象不销毁，之后从原状态继续。它用于验证协议与抢占语义；不是线程 runtime，
+也不会强杀正在执行的 `step`。
+
 ## 三生（sansheng）
 
 crates.io 包名用拼音 `sansheng`（`三生` 不能直接作 crate 名）。伞包统一暴露核心 API：

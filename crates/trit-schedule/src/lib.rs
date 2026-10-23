@@ -10,8 +10,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod resumable;
 pub mod runtime;
 
+pub use resumable::{
+    Progress, ResumableError, ResumableReport, ResumableSpec, ResumableTask, StepContext,
+    run_resumable,
+};
 pub use runtime::{
     CancelToken, Resources, RuntimeConfig, RuntimeError, RuntimeReport, RuntimeTask, TaskFailure,
     run as run_runtime, run_with_config,

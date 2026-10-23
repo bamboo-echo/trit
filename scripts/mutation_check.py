@@ -862,6 +862,30 @@ MUTANTS = [
         "new": "            if false {\n",
         "pkg": "trit-schedule",
         "filter": "task_exceeding_capacity_is_rejected"
+    },
+    {
+        "name": "resumable: 抢占丢失状态",
+        "file": "crates/trit-schedule/src/resumable.rs",
+        "old": "    tasks[victim] = Some(task);\n",
+        "new": "    let _ = task;\n",
+        "pkg": "trit-schedule",
+        "filter": "preempted_task_resumes_from_its_own_state"
+    },
+    {
+        "name": "resumable: 抢占优先级过滤反了",
+        "file": "crates/trit-schedule/src/resumable.rs",
+        "old": "        .filter(|position| priorities[*position] < high_priority)\n",
+        "new": "        .filter(|position| priorities[*position] > high_priority)\n",
+        "pkg": "trit-schedule",
+        "filter": "preempted_task_resumes_from_its_own_state"
+    },
+    {
+        "name": "resumable: 失败后不清理后续",
+        "file": "crates/trit-schedule/src/resumable.rs",
+        "old": "\n    cancel_pending(&mut ready, &mut running, &mut tasks, &mut cancelled, &ids);\n",
+        "new": "\n    if failed.is_none() { cancel_pending(&mut ready, &mut running, &mut tasks, &mut cancelled, &ids); }\n",
+        "pkg": "trit-schedule",
+        "filter": "failure_and_unknown_dependencies_are_reported"
     }
 ]
 
