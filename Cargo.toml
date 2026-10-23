@@ -20,6 +20,7 @@ members = [
     "crates/trit-attn",
     "crates/trit-float",
     "crates/trit-dot",
+    "crates/trit-gpu",
 ]
 
 [workspace.package]

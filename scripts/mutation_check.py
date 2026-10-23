@@ -1319,6 +1319,30 @@ MUTANTS = [
         "new": "            total += i64::from(pp) - i64::from(pn) - i64::from(np);\n        }\n        total\n    }\n\n    /// 非零块数",
         "pkg": "trit-dot",
         "filter": "ternary_dot_matches_scalar_across_block_boundaries"
+    },
+    {
+        "name": "gpu: 位并行少减一项",
+        "file": "crates/trit-gpu/src/lib.rs",
+        "old": "        total += i64::from(pp) - i64::from(pn) - i64::from(np) + i64::from(nn);",
+        "new": "        total += i64::from(pp) - i64::from(pn) + i64::from(nn);",
+        "pkg": "trit-gpu",
+        "filter": "all_four_sign_products_are_counted"
+    },
+    {
+        "name": "gpu: +1 写进负导轨",
+        "file": "crates/trit-gpu/src/lib.rs",
+        "old": "            1 => pos[index / TRITS_PER_WORD] |= bit,",
+        "new": "            1 => neg[index / TRITS_PER_WORD] |= bit,",
+        "pkg": "trit-gpu",
+        "filter": "positive_vectors_do_not_land_on_the_negative_rail"
+    },
+    {
+        "name": "gpu: 标量参考改成加法",
+        "file": "crates/trit-gpu/src/lib.rs",
+        "old": "        .map(|(x, y)| i64::from(*x) * i64::from(*y))",
+        "new": "        .map(|(x, y)| i64::from(*x) + i64::from(*y))",
+        "pkg": "trit-gpu",
+        "filter": "packing_round_trips_across_word_boundaries"
     }
 ]
 
