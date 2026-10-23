@@ -103,9 +103,12 @@ let report = run_resumable(
 ).unwrap();
 ```
 
-`run_resumable` 是**单线程步进式参考执行器**：在步骤之间按优先级抢占，低优先任务被放回
-ready 队列但对象不销毁，之后从原状态继续。它用于验证协议与抢占语义；不是线程 runtime，
-也不会强杀正在执行的 `step`。
+`run_resumable` 是**单线程步进式参考执行器**；`run_resumable_threaded` 是多线程版本：
+worker 在 `Yield` 边界检查更高优先级任务，必要时把当前任务放回 ready 并释放资源，
+任务对象保留、之后从原状态继续。两者都不强杀正在执行的 `step`。
+
+两个 runtime 报告都包含 `RuntimeMetrics`：`started/completed/failed/cancelled/deferred/
+preemptions/steps/peak_usage`。`started` 按任务去重，抢占后恢复不会重复计数。
 
 ## 三生（sansheng）
 

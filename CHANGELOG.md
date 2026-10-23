@@ -38,6 +38,14 @@
 - 测试：抢占后从原步骤继续、优先级顺序、取消、失败/未知依赖、环/超容量。
 - 变异门 106 → 109（抢占状态、优先级过滤、失败清理）。
 
+### Added（0.12 threaded resumable + metrics）
+
+- `run_resumable_threaded`：worker 在 `Yield` 边界抢占，任务对象保留；资源/优先级/取消沿用协议。
+- `RuntimeMetrics` 统一指标：`started`（按任务去重）/`completed`/`failed`/`cancelled`/
+  `deferred`/`preemptions`/`steps`/`peak_usage`；闭包 runtime 与 resumable runtime 都有。
+- 测试：线程抢占后状态续跑、双 worker 重叠、取消/指标、单线程参考仍通过。
+- 变异门 109 → 112（线程抢占状态、优先级过滤、started 去重）。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，

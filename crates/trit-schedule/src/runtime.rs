@@ -170,6 +170,27 @@ pub struct TaskFailure {
     pub message: String,
 }
 
+/// 运行时统计快照。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeMetrics {
+    /// 实际开始执行的任务数。
+    pub started: usize,
+    /// 完成任务数。
+    pub completed: usize,
+    /// 失败任务数（0/1）。
+    pub failed: usize,
+    /// 取消/未执行任务数。
+    pub cancelled: usize,
+    /// Unknown 依赖延迟任务数。
+    pub deferred: usize,
+    /// 抢占次数。
+    pub preemptions: usize,
+    /// 执行的总 step 数（闭包任务固定等于 started）。
+    pub steps: u64,
+    /// 峰值资源占用。
+    pub peak_usage: Resources,
+}
+
 /// runtime 执行结果。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeReport {
@@ -185,6 +206,8 @@ pub struct RuntimeReport {
     pub deferred: Vec<DeferredTask>,
     /// 运行期间峰值资源占用。
     pub peak_usage: Resources,
+    /// 统计快照。
+    pub metrics: RuntimeMetrics,
 }
 
 /// runtime 构造错误。
@@ -211,6 +234,7 @@ struct Shared {
     dependents: Vec<Vec<usize>>,
     indegree: Vec<usize>,
     running: usize,
+    started: usize,
     stop: bool,
     completed: BTreeSet<String>,
     cancelled: BTreeSet<String>,
@@ -414,6 +438,16 @@ pub fn run_with_config(
             cancelled: Vec::new(),
             deferred: deferred_out,
             peak_usage: Resources::default(),
+            metrics: RuntimeMetrics {
+                started: 0,
+                completed: 0,
+                failed: 0,
+                cancelled: 0,
+                deferred: 0,
+                preemptions: 0,
+                steps: 0,
+                peak_usage: Resources::default(),
+            },
         });
     }
 
@@ -424,6 +458,7 @@ pub fn run_with_config(
             dependents,
             indegree: run_indegree,
             running: 0,
+            started: 0,
             stop: false,
             completed: BTreeSet::new(),
             cancelled: BTreeSet::new(),
@@ -460,6 +495,16 @@ pub fn run_with_config(
     for id in leftover {
         state.cancelled.insert(id);
     }
+    let metrics = RuntimeMetrics {
+        started: state.started,
+        completed: state.completed.len(),
+        failed: usize::from(state.failed.is_some()),
+        cancelled: state.cancelled.len(),
+        deferred: state.deferred.len(),
+        preemptions: 0,
+        steps: state.started as u64,
+        peak_usage: state.peak,
+    };
     Ok(RuntimeReport {
         workers,
         completed: state.completed.iter().cloned().collect(),
@@ -467,6 +512,7 @@ pub fn run_with_config(
         cancelled: state.cancelled.iter().cloned().collect(),
         deferred: state.deferred.clone(),
         peak_usage: state.peak,
+        metrics,
     })
 }
 
@@ -495,6 +541,7 @@ fn worker(shared: Arc<(Mutex<Shared>, Condvar)>, cancel: CancelToken) {
                 continue;
             };
             state.running += 1;
+            state.started += 1;
             let requirements = state.requirements[position];
             state.used = state
                 .used

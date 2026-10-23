@@ -14,7 +14,7 @@ use trit_core::value::Ternary;
 
 use crate::{
     CancelToken, DeferReason, DeferredTask, Dependency, MAX_TASKS, Resources, RuntimeConfig,
-    ScheduleError,
+    RuntimeMetrics, ScheduleError,
 };
 
 /// 一次 step 的结果。
@@ -103,6 +103,8 @@ pub struct ResumableReport {
     pub steps: u64,
     /// 峰值资源占用。
     pub peak_usage: Resources,
+    /// 统计快照。
+    pub metrics: RuntimeMetrics,
 }
 
 /// 可恢复执行错误。
@@ -287,6 +289,8 @@ pub fn run_resumable(
     let mut peak = Resources::default();
     let mut preemptions = 0usize;
     let mut steps = 0u64;
+    let mut started = 0usize;
+    let mut started_tasks = BTreeSet::new();
     let ctx = StepContext {
         cancel: cancel.clone(),
     };
@@ -310,6 +314,9 @@ pub fn run_resumable(
                     .expect("准入检查保证不溢出");
                 peak = peak.max(used);
                 running.insert(position, task);
+                if started_tasks.insert(position) {
+                    started += 1;
+                }
                 continue;
             }
             if preempt(
@@ -371,15 +378,27 @@ pub fn run_resumable(
     cancel_pending(&mut ready, &mut running, &mut tasks, &mut cancelled, &ids);
     let mut cancelled: Vec<String> = cancelled.into_iter().collect();
     cancelled.sort();
+    let completed: Vec<String> = completed.into_iter().collect();
+    let metrics = RuntimeMetrics {
+        started,
+        completed: completed.len(),
+        failed: usize::from(failed.is_some()),
+        cancelled: cancelled.len(),
+        deferred: deferred_out.len(),
+        preemptions,
+        steps,
+        peak_usage: peak,
+    };
     Ok(ResumableReport {
         workers,
-        completed: completed.into_iter().collect(),
+        completed,
         failed,
         cancelled,
         deferred: deferred_out,
         preemptions,
         steps,
         peak_usage: peak,
+        metrics,
     })
 }
 

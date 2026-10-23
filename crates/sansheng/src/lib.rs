@@ -50,5 +50,6 @@ pub use trit_schedule::{
     CancelToken, DeferReason, DeferredTask, Dependency, Progress, Resources, ResumableError,
     ResumableReport, ResumableSpec, ResumableTask, RuntimeConfig, RuntimeError, RuntimeReport,
     RuntimeTask, Schedule, ScheduleError, ScheduleInput, ScheduledTask, StepContext, Task,
-    TaskFailure, run_resumable, run_runtime, run_with_config, schedule, schedule_input,
+    TaskFailure, run_resumable, run_resumable_threaded, run_runtime, run_with_config, schedule,
+    schedule_input,
 };

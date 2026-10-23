@@ -886,6 +886,30 @@ MUTANTS = [
         "new": "\n    if failed.is_none() { cancel_pending(&mut ready, &mut running, &mut tasks, &mut cancelled, &ids); }\n",
         "pkg": "trit-schedule",
         "filter": "failure_and_unknown_dependencies_are_reported"
+    },
+    {
+        "name": "threaded: 抢占丢失状态",
+        "file": "crates/trit-schedule/src/resumable_threaded.rs",
+        "old": "                        state.tasks[position] = Some(task);\n",
+        "new": "                        let _ = task;\n",
+        "pkg": "trit-schedule",
+        "filter": "threaded_preemption_keeps_task_state"
+    },
+    {
+        "name": "threaded: 抢占优先级过滤反了",
+        "file": "crates/trit-schedule/src/resumable_threaded.rs",
+        "old": "                        *p > priority && (state.idle == 0 || !might_fit(&state, *high))\n",
+        "new": "                        *p < priority && (state.idle == 0 || !might_fit(&state, *high))\n",
+        "pkg": "trit-schedule",
+        "filter": "threaded_preemption_keeps_task_state"
+    },
+    {
+        "name": "metrics: started 不唯一",
+        "file": "crates/trit-schedule/src/resumable_threaded.rs",
+        "old": "    if state.started_tasks.insert(position) {\n",
+        "new": "    if true {\n",
+        "pkg": "trit-schedule",
+        "filter": "threaded_preemption_keeps_task_state"
     }
 ]
 
