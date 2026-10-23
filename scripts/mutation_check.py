@@ -510,6 +510,30 @@ MUTANTS = [
         "new": "        if false {\n",
         "pkg": "trit-circuit",
         "filter": "deep_rhs_is_rejected"
+    },
+    {
+        "name": "hierarchy: 所有模块都当作顶层",
+        "file": "crates/trit-circuit/src/verilog/hierarchy.rs",
+        "old": "        .filter(|def| !instantiated.contains(def.name.as_str()))\n",
+        "new": "        .filter(|_def| true)\n",
+        "pkg": "trit-circuit",
+        "filter": "hierarchical_named_connections_can_be_reordered"
+    },
+    {
+        "name": "hierarchy: 位置连接按逆序绑定",
+        "file": "crates/trit-circuit/src/verilog/hierarchy.rs",
+        "old": "                    let Some(port) = child.ports.get(index) else {\n",
+        "new": "                    let Some(port) = child.ports.get(child.ports.len().saturating_sub(1 + index)) else {\n",
+        "pkg": "trit-circuit",
+        "filter": "hierarchical_positional_connections_bind_by_port_order"
+    },
+    {
+        "name": "hierarchy: 生成名冲突不报错",
+        "file": "crates/trit-circuit/src/verilog/hierarchy.rs",
+        "old": "    if used.contains(&renamed) {\n",
+        "new": "    if false && used.contains(&renamed) {\n",
+        "pkg": "trit-circuit",
+        "filter": "hierarchical_generated_names_do_not_collide_with_user_signals"
     }
 ]
 
@@ -532,6 +556,9 @@ def run_tests(pkg: str, test_filter: str) -> subprocess.CompletedProcess[str]:
 
 
 def main() -> int:
+    # Windows 控制台默认可能是 GBK；变异名里有中国字与 Ł，统一按 UTF-8 输出。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     baseline: dict[tuple[str, str], bool] = {}
     survived = 0
     for mutant in MUTANTS:

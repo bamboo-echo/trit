@@ -315,6 +315,17 @@ python -m http.server 8765 --directory playground
 `trit circuit examples/and_gate.net`：输出含 `X` 的输入组合数、各输出值域、冗余输入与 stuck-at 不可测故障。
 只支持组合逻辑，不做时序/时钟。
 
+### 多模块与实例（标量）
+
+`parse_verilog` 支持一个文件里多个 `module` 与模块实例：
+
+- 连接支持 `.port(signal)` 与按端口顺序的位置连接；端口必须全部连接，重复连接报错；
+- 必须有且只有一个未被实例化的顶层模块；未知模块、递归、多顶层、重复实例名都返回错误；
+- 层级模式只接受标量端口 / 线网；模块里出现向量声明时明确拒绝（提示先拆位），
+  单模块且无实例时仍保留完整向量支持；
+- 展开后的内部信号名加 `实例名__` 前缀；与用户信号冲突时显式报错，不静默复用；
+- 门数上限 10 万、嵌套 256 层，均在展开过程中检查，不是展开完再判。
+
 库侧 `trit_circuit::analyze_faults` 只做故障分析，不做 `3^n` 输出域枚举。
 `trit atpg examples/and_gate.net`：对每个门引脚的 stuck-at 故障生成**二进制**测试向量（贪心集合覆盖），
 输出覆盖率、向量数与不可测故障。可测性判定基于 `2^n` 二进制向量；`X` 输入不是物理测试向量，不计入。
@@ -430,6 +441,8 @@ OK     free slot must not reject on unknown hopelessness
 
 ## 范围
 
+- 三进制红利 / 模拟税 / 生态路径依赖 / 基数无关复杂度是四类不同问题，讨论前先归类：
+  [docs/TERNARY-BOUNDARIES.md](docs/TERNARY-BOUNDARIES.md)。
 - 只做**真值函数**三值逻辑；硬件四态 `0/1/X/Z` 与 X-optimism 不在范围内。
 - 不做时序模型检验、通用 SMT、完整硬件仿真。
 - 穷举参考是逐赋值的，18 变量约 12.6 s，仅用于小规模对拍。

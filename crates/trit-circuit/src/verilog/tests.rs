@@ -573,3 +573,145 @@ fn export_uses_declared_bus_width_for_partial_wire() {
     assert!(text.contains("wire [7:0] t;"), "{text}");
     assert!(text.contains("buf g0 (t[3], a)"), "{text}");
 }
+
+fn hier_signal(text: &str, values: &[(&str, Ternary)], name: &str) -> Ternary {
+    use crate::circuit::propagate;
+    use std::collections::BTreeMap;
+    let circuit = parse_verilog(text).unwrap();
+    let assignment: BTreeMap<String, Ternary> = values
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), *value))
+        .collect();
+    let propagation = propagate(&circuit, &assignment, Algebra::Kleene).unwrap();
+    *propagation
+        .signals
+        .get(name)
+        .unwrap_or_else(|| panic!("缺少信号 {name}"))
+}
+
+#[test]
+fn hierarchical_named_connections_can_be_reordered() {
+    let text = "module top(input a, input b, output y);
+  wire n;
+  and g0 (n, a, b);
+  child u1 (.q(y), .p(n));
+endmodule
+module child(input p, output q);
+  not g0 (q, p);
+endmodule
+";
+    assert_eq!(
+        hier_signal(text, &[("a", Ternary::True), ("b", Ternary::True)], "y"),
+        Ternary::False
+    );
+    assert_eq!(
+        hier_signal(text, &[("a", Ternary::False), ("b", Ternary::True)], "y"),
+        Ternary::True
+    );
+    let circuit = parse_verilog(text).unwrap();
+    assert_eq!(circuit.input_count(), 2);
+    assert_eq!(circuit.gates.len(), 2);
+}
+
+#[test]
+fn hierarchical_positional_connections_bind_by_port_order() {
+    let text = "module top(input a, input b, output y, output z);
+  child u0 (a, y);
+  child u1 (b, z);
+endmodule
+module child(input p, output q);
+  not g (q, p);
+endmodule
+";
+    let y = hier_signal(text, &[("a", Ternary::True), ("b", Ternary::False)], "y");
+    let z = hier_signal(text, &[("a", Ternary::True), ("b", Ternary::False)], "z");
+    assert_eq!((y, z), (Ternary::False, Ternary::True));
+}
+
+#[test]
+fn hierarchical_instances_nest_across_levels() {
+    let text = "module top(input a, output y);
+  mid u0 (a, y);
+endmodule
+module mid(input p, output q);
+  leaf u0 (p, q);
+endmodule
+module leaf(input i, output o);
+  buf g (o, i);
+endmodule
+";
+    assert_eq!(
+        hier_signal(text, &[("a", Ternary::True)], "y"),
+        Ternary::True
+    );
+    assert_eq!(
+        hier_signal(text, &[("a", Ternary::Unknown)], "y"),
+        Ternary::Unknown
+    );
+}
+
+#[test]
+fn hierarchical_unknown_module_is_rejected() {
+    let err =
+        parse_verilog("module top(input a, output y);\n  child u0 (.p(a), .q(y));\nendmodule\n")
+            .unwrap_err();
+    assert!(err.to_string().contains("未定义的模块"), "{err}");
+}
+
+#[test]
+fn hierarchical_recursive_or_rootless_design_is_rejected() {
+    let err =
+        parse_verilog("module top(input a, output y);\n  top u0 (.a(a), .y(y));\nendmodule\n")
+            .unwrap_err();
+    assert!(err.to_string().contains("找不到顶层模块"), "{err}");
+}
+
+#[test]
+fn hierarchical_multiple_roots_are_rejected() {
+    let err = parse_verilog(
+        "module a(input x, output y);\n  buf g (y, x);\nendmodule\n\
+         module b(input x, output y);\n  buf g (y, x);\nendmodule\n",
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("多个顶层模块"), "{err}");
+}
+
+#[test]
+fn hierarchical_missing_port_connection_is_rejected() {
+    let err = parse_verilog(
+        "module top(input a, output y);\n  child u0 (.p(a));\nendmodule\n\
+         module child(input p, output q);\n  buf g (q, p);\nendmodule\n",
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("没有全部连接"), "{err}");
+}
+
+#[test]
+fn hierarchical_vector_ports_are_rejected() {
+    let err = parse_verilog(
+        "module top(input [1:0] a, output y);\n  child u0 (.p(a[0]), .q(y));\nendmodule\n\
+         module child(input p, output q);\n  buf g (q, p);\nendmodule\n",
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("向量声明"), "{err}");
+}
+
+#[test]
+fn hierarchical_generated_names_do_not_collide_with_user_signals() {
+    // child 的内部 x 会展开成 u0__x；顶层已有同名线网时不能静默复用它。
+    let err = parse_verilog(
+        "module top(input a, output y, output z);
+  wire u0__x;
+  buf g0 (y, u0__x);
+  child u0 (.p(a), .q(z));
+endmodule
+module child(input p, output q);
+  wire x;
+  buf g0 (x, p);
+  buf g1 (q, x);
+endmodule
+",
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("冲突"), "{err}");
+}

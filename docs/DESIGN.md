@@ -57,6 +57,8 @@
 
 ## 非目标
 
+- 归因规则见 [TERNARY-BOUNDARIES.md](TERNARY-BOUNDARIES.md)：A 原生红利 / B 模拟税 /
+  C 生态路径依赖 / D 基数无关复杂度，四类不得混谈。
 - 时序模型检验、CTL/LTL、不动点（TVLA 那条线是另一个产品）。
 - 硬件四态 `0/1/X/Z` 与 X-optimism（真值函数三值不够）。
 - 通用 SMT / 完整 EDA 仿真。
@@ -87,10 +89,9 @@
 - **v0.8（已完成，0.8.1）**：芯片链路——结构化 Verilog 子集、索引化仿真、STA-lite（按门类型延迟 +
   top-N 路径）、NAND-only 与时序驱动技术映射、`trit check` 流水线、ATPG X don't-care、
   桥接故障、多比特 Verilog；变异门扩到 53 条。
-- **v0.9（进行中）**：bus 元数据、Verilog 尺寸常量（b/o/d/h）与网表 JSON `format` 版本已完成；
-  模块实例与 `[0:N]` 范围待做；minor 可含破坏性调整。
-- **v0.10（计划）**：SAT-based ATPG（突破 16 主输入的全枚举上限）、桥接故障 SAT、
-  映射/STA 扩展。
+- **v0.9（已完成，0.9.0）**：bus 元数据、Verilog 尺寸常量（b/o/d/h）与网表 JSON `format` 版本。
+- **v0.10（进行中）**：Verilog 多模块实例（标量，命名 / 位置连接、层级展开、生成名冲突检测）；
+  `[0:N]` 范围、SAT-based ATPG（突破 16 主输入的全枚举上限）、桥接故障 SAT、映射 / STA 扩展。
 - **v0.11（计划）**：打包/审计/基准趋势工程化，WASM 与 Action 生态收口。
 
 ## 参考
