@@ -1295,6 +1295,30 @@ MUTANTS = [
         "new": "            self.exponent - other.exponent,",
         "pkg": "trit-float",
         "filter": "arithmetic_is_exact_when_digits_fit"
+    },
+    {
+        "name": "dot: 二值公式丢掉系数 2",
+        "file": "crates/trit-dot/src/lib.rs",
+        "old": "    len as i64 - 2 * i64::from(mismatches)",
+        "new": "    len as i64 - i64::from(mismatches)",
+        "pkg": "trit-dot",
+        "filter": "bipolar_dot_matches_scalar"
+    },
+    {
+        "name": "dot: 三值点积少减一项",
+        "file": "crates/trit-dot/src/lib.rs",
+        "old": "            total += i64::from(pp) - i64::from(pn) - i64::from(np) + i64::from(nn);\n        }\n        total\n    }\n\n    /// 块级稀疏跳过",
+        "new": "            total += i64::from(pp) - i64::from(pn) + i64::from(nn);\n        }\n        total\n    }\n\n    /// 块级稀疏跳过",
+        "pkg": "trit-dot",
+        "filter": "ternary_dot_matches_scalar_across_block_boundaries"
+    },
+    {
+        "name": "dot: 稀疏路径漏掉负负项",
+        "file": "crates/trit-dot/src/lib.rs",
+        "old": "            total += i64::from(pp) - i64::from(pn) - i64::from(np) + i64::from(nn);\n        }\n        total\n    }\n\n    /// 非零块数",
+        "new": "            total += i64::from(pp) - i64::from(pn) - i64::from(np);\n        }\n        total\n    }\n\n    /// 非零块数",
+        "pkg": "trit-dot",
+        "filter": "ternary_dot_matches_scalar_across_block_boundaries"
     }
 ]
 

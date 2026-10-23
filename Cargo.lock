@@ -915,6 +915,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "trit-dot"
+version = "0.12.0"
+dependencies = [
+ "serde_json",
+ "trit-core",
+]
+
+[[package]]
 name = "trit-eval"
 version = "0.12.0"
 dependencies = [
