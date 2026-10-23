@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """变异门：对关键规则做单点文本变异，跑对应回归；测试必须变红。
 
-用法：python scripts/mutation_check.py
+用法：python scripts/mutation_check.py [--pkg <crate>]...
 每个变异都会在 finally 里恢复原文件；退出码 1 表示有 mutant 存活（测试没抓住）。
+`--pkg` 可重复，只跑这些 crate 的变异（PR 门用改动过的 crate）。
 """
 
 from __future__ import annotations
@@ -817,7 +818,7 @@ MUTANTS = [
     },
     {
         "name": "runtime: 忽略取消",
-        "file": "crates/trit-schedule/src/runtime.rs",
+        "file": "crates/trit-schedule/src/runtime/execute.rs",
         "old": "        if cancel.is_cancelled() && !state.stop {\n",
         "new": "        if false && !state.stop {\n",
         "pkg": "trit-schedule",
@@ -825,7 +826,7 @@ MUTANTS = [
     },
     {
         "name": "runtime: 依赖完成不传播",
-        "file": "crates/trit-schedule/src/runtime.rs",
+        "file": "crates/trit-schedule/src/runtime/execute.rs",
         "old": "                            state.indegree[next] -= 1;\n",
         "new": "                            state.indegree[next] = 0;\n",
         "pkg": "trit-schedule",
@@ -833,7 +834,7 @@ MUTANTS = [
     },
     {
         "name": "runtime: 失败后继续调度",
-        "file": "crates/trit-schedule/src/runtime.rs",
+        "file": "crates/trit-schedule/src/runtime/execute.rs",
         "old": "                Err(message) => {\n                    state.failed = Some(TaskFailure { task: id, message });\n                    state.stop = true;\n",
         "new": "                Err(message) => {\n                    state.failed = Some(TaskFailure { task: id, message });\n                    state.stop = false;\n",
         "pkg": "trit-schedule",
@@ -841,7 +842,7 @@ MUTANTS = [
     },
     {
         "name": "runtime: 忽略资源配额",
-        "file": "crates/trit-schedule/src/runtime.rs",
+        "file": "crates/trit-schedule/src/runtime/execute.rs",
         "old": "            state\n                .capacity\n                .is_none_or(|capacity| state.requirements[*position].fits_in(capacity, state.used))\n",
         "new": "            true\n",
         "pkg": "trit-schedule",
@@ -849,7 +850,7 @@ MUTANTS = [
     },
     {
         "name": "runtime: 资源占用不累计",
-        "file": "crates/trit-schedule/src/runtime.rs",
+        "file": "crates/trit-schedule/src/runtime/execute.rs",
         "old": "            state.used = state\n                .used\n                .checked_add(requirements)\n                .expect(\"预检保证资源相加不溢出\");\n",
         "new": "            state.used = requirements;\n",
         "pkg": "trit-schedule",
@@ -857,7 +858,7 @@ MUTANTS = [
     },
     {
         "name": "runtime: 超容量不拒绝",
-        "file": "crates/trit-schedule/src/runtime.rs",
+        "file": "crates/trit-schedule/src/runtime/execute.rs",
         "old": "            if !tasks[position]\n                .requirements\n                .fits_in(capacity, Resources::default())\n            {\n",
         "new": "            if false {\n",
         "pkg": "trit-schedule",
@@ -913,7 +914,7 @@ MUTANTS = [
     },
     {
         "name": "metrics: Prometheus completed 写成 started",
-        "file": "crates/trit-schedule/src/runtime.rs",
+        "file": "crates/trit-schedule/src/runtime/types.rs",
         "old": "            (\"completed\", \"Tasks completed.\", self.completed as u64),\n",
         "new": "            (\"completed\", \"Tasks completed.\", self.started as u64),\n",
         "pkg": "trit-schedule",
@@ -921,7 +922,7 @@ MUTANTS = [
     },
     {
         "name": "metrics: Prometheus 峰值内存写成 CPU",
-        "file": "crates/trit-schedule/src/runtime.rs",
+        "file": "crates/trit-schedule/src/runtime/types.rs",
         "old": "                self.peak_usage.memory.into(),\n",
         "new": "                self.peak_usage.cpu.into(),\n",
         "pkg": "trit-schedule",
@@ -929,7 +930,7 @@ MUTANTS = [
     },
     {
         "name": "checkpoint: 版本校验失效",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/mod.rs",
         "old": "        if self.version == CHECKPOINT_VERSION {\n",
         "new": "        if true {\n",
         "pkg": "trit-schedule",
@@ -937,7 +938,7 @@ MUTANTS = [
     },
     {
         "name": "checkpoint: 保存空状态",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/mod.rs",
         "old": "    Ok(Checkpoint::new(task_id, task.save_state()?))\n",
         "new": "    Ok(Checkpoint::new(task_id, Vec::new()))\n",
         "pkg": "trit-schedule",
@@ -945,7 +946,7 @@ MUTANTS = [
     },
     {
         "name": "checkpoint: 恢复不校验版本",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/mod.rs",
         "old": "    checkpoint.validate()?;\n    restorer.restore(&checkpoint.task_id, &checkpoint.state)\n",
         "new": "    restorer.restore(&checkpoint.task_id, &checkpoint.state)\n",
         "pkg": "trit-schedule",
@@ -953,7 +954,7 @@ MUTANTS = [
     },
     {
         "name": "file checkpoint: 保存不校验版本",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/file.rs",
         "old": "    pub fn save(&self, checkpoint: &Checkpoint) -> Result<u64, CheckpointError> {\n        checkpoint.validate()?;\n",
         "new": "    pub fn save(&self, checkpoint: &Checkpoint) -> Result<u64, CheckpointError> {\n",
         "pkg": "trit-schedule",
@@ -961,7 +962,7 @@ MUTANTS = [
     },
     {
         "name": "file checkpoint: 加载取最旧",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/file.rs",
         "old": "    files.sort();\n    Ok(files.pop())\n",
         "new": "    files.sort();\n    Ok(files.into_iter().next())\n",
         "pkg": "trit-schedule",
@@ -969,7 +970,7 @@ MUTANTS = [
     },
     {
         "name": "file checkpoint: prune 保留最旧",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/file.rs",
         "old": "        for path in files.into_iter().take(remove) {\n",
         "new": "        for path in files.into_iter().skip(keep) {\n",
         "pkg": "trit-schedule",
@@ -977,7 +978,7 @@ MUTANTS = [
     },
     {
         "name": "index: 不解码 task id",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/file.rs",
         "old": "                let task_id = hex_decode(name)?;\n",
         "new": "                let task_id = name.to_string();\n",
         "pkg": "trit-schedule",
@@ -985,7 +986,7 @@ MUTANTS = [
     },
     {
         "name": "index: 倒序",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/file.rs",
         "old": "        entries.sort_by(|left, right| left.task_id.cmp(&right.task_id));\n",
         "new": "        entries.sort_by(|left, right| right.task_id.cmp(&left.task_id));\n",
         "pkg": "trit-schedule",
@@ -993,7 +994,7 @@ MUTANTS = [
     },
     {
         "name": "index: state_bytes 取代号",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/file.rs",
         "old": "                let state_bytes = fs::metadata(&file).map_err(io_error)?.len();\n",
         "new": "                let state_bytes = generation;\n",
         "pkg": "trit-schedule",
@@ -1001,7 +1002,7 @@ MUTANTS = [
     },
     {
         "name": "lock: 忽略已存在",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/file.rs",
         "old": "            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),\n",
         "new": "            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {\n                let _ = error;\n                Ok(Some(CheckpointLock { path }))\n            }\n",
         "pkg": "trit-schedule",
@@ -1009,7 +1010,7 @@ MUTANTS = [
     },
     {
         "name": "lock: Drop 不释放",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/lock.rs",
         "old": "impl Drop for CheckpointLock {\n    fn drop(&mut self) {\n        let _ = fs::remove_dir_all(&self.path);\n    }\n}\n",
         "new": "impl Drop for CheckpointLock {\n    fn drop(&mut self) {\n        let _ = &self.path;\n    }\n}\n",
         "pkg": "trit-schedule",
@@ -1017,7 +1018,7 @@ MUTANTS = [
     },
     {
         "name": "restore: 忽略检查点",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/mod.rs",
         "old": "            let task = match source.checkpoint(&def.id)? {\n",
         "new": "            let task = match None::<Checkpoint> {\n",
         "pkg": "trit-schedule",
@@ -1025,7 +1026,7 @@ MUTANTS = [
     },
     {
         "name": "restore: 无检查点不建新任务",
-        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "file": "crates/trit-schedule/src/checkpoint/mod.rs",
         "old": "                None => factory.create(&def.id)?,\n",
         "new": "                None => return Err(CheckpointError::UnknownTask(def.id.clone())),\n",
         "pkg": "trit-schedule",
@@ -1099,13 +1100,30 @@ def run_tests(pkg: str, test_filter: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def main() -> int:
+def select(pkgs: list[str]) -> list[dict]:
+    if not pkgs:
+        return MUTANTS
+    return [mutant for mutant in MUTANTS if mutant["pkg"] in pkgs]
+
+
+def main(pkgs: list[str]) -> int:
     # Windows 控制台默认可能是 GBK；变异名里有中国字与 Ł，统一按 UTF-8 输出。
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    mutants = select(pkgs)
+    if not mutants:
+        print(f"所选包没有登记变异: {', '.join(pkgs)}")
+        return 0
+    if pkgs:
+        counts = {
+            pkg: sum(1 for mutant in MUTANTS if mutant["pkg"] == pkg)
+            for pkg in sorted(set(pkgs))
+        }
+        detail = ", ".join(f"{pkg}={count}" for pkg, count in counts.items())
+        print(f"只跑所选包（{detail}）：{len(mutants)} 个变异")
     baseline: dict[tuple[str, str], bool] = {}
     survived = 0
-    for mutant in MUTANTS:
+    for mutant in mutants:
         key = (mutant["pkg"], mutant["filter"])
         if key not in baseline:
             result = run_tests(*key)
@@ -1140,9 +1158,23 @@ def main() -> int:
             )
             print(f"caught    {mutant['name']}  [{tail.strip()}]")
 
-    print(f"\n{len(MUTANTS) - survived}/{len(MUTANTS)} 个变异被抓住")
+    print(f"\n{len(mutants) - survived}/{len(mutants)} 个变异被抓住")
     return 1 if survived else 0
 
 
+def parse_args(argv: list[str]) -> list[str]:
+    pkgs: list[str] = []
+    rest = list(argv)
+    while rest:
+        arg = rest.pop(0)
+        if arg == "--pkg" and rest:
+            pkgs.append(rest.pop(0))
+        elif arg.startswith("--pkg="):
+            pkgs.append(arg.split("=", 1)[1])
+        else:
+            raise SystemExit(f"未知参数: {arg}")
+    return pkgs
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(parse_args(sys.argv[1:])))

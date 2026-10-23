@@ -46,6 +46,17 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+  module-budget:
+    name: module budget (god objects)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Gate self-test (positive + counterexamples)
+        run: python3 scripts/module_budget.py --self-test
+      - name: Every file within budget or shrinking-only debt
+        run: python3 scripts/module_budget.py
+
   docs:
     name: docs (rustdoc -D warnings)
     runs-on: ubuntu-latest

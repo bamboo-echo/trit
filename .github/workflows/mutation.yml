@@ -4,13 +4,45 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 4 * * 1"
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
-  mutation:
+  changed:
+    name: mutation (changed crates)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Collect changed crates
+        id: crates
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          files=$(git diff --name-only "$BASE_SHA"...HEAD -- 'crates/**')
+          pkgs=$(printf '%s\n' "$files" | awk -F/ 'NF > 1 && $1 == "crates" { print $2 }' | sort -u)
+          args=""
+          for pkg in $pkgs; do args="$args --pkg $pkg"; done
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+          echo "changed crates: ${pkgs:-none}"
+      - name: Mutation gate (changed crates only)
+        if: steps.crates.outputs.args != ''
+        run: python3 scripts/mutation_check.py ${{ steps.crates.outputs.args }}
+
+  mutation:
+    name: mutation (full)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
