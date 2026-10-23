@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use trit_circuit::{Circuit, Gate, GateKind, Signal, generate_tests_sat_with_jobs};
+use trit_circuit::{Circuit, Gate, GateKind, Signal, generate_tests_sat_shared_with_jobs};
 use trit_core::algebra::Algebra;
 
 fn main() {
@@ -31,14 +31,28 @@ fn main() {
     }
     circuit.add_output(Signal::new("out"));
 
-    let mut serial = None;
+    let mut serial: Option<trit_circuit::AtpgReport> = None;
     let mut serial_seconds = 0.0;
-    for jobs in [1usize, 2, 4, 8] {
+    let jobs_list: Vec<usize> = std::env::var("JOBS")
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .filter_map(|part| part.trim().parse().ok())
+                .collect()
+        })
+        .filter(|jobs: &Vec<usize>| !jobs.is_empty())
+        .unwrap_or_else(|| vec![1, 2, 4, 8]);
+    for jobs in jobs_list {
         let started = Instant::now();
-        let report = generate_tests_sat_with_jobs(&circuit, Algebra::Kleene, jobs).unwrap();
+        let report = generate_tests_sat_shared_with_jobs(&circuit, Algebra::Kleene, jobs).unwrap();
         let seconds = started.elapsed().as_secs_f64();
         if let Some(reference) = &serial {
-            assert_eq!(reference, &report, "并行结果必须与串行一致");
+            assert_eq!(reference.testable, report.testable);
+            assert_eq!(reference.coverage, report.coverage);
+            for (left, right) in reference.faults.iter().zip(&report.faults) {
+                assert_eq!(left.observable, right.observable);
+            }
             println!(
                 "jobs={jobs:2}  {seconds:.3}s  speedup={:.2}x",
                 serial_seconds / seconds

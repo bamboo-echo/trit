@@ -15,6 +15,7 @@ pub(crate) fn cmd_atpg(
     from: &str,
     sat: bool,
     jobs: usize,
+    shared_cnf: bool,
 ) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
     let circuit = load_circuit(path, from)?;
@@ -25,7 +26,11 @@ pub(crate) fn cmd_atpg(
                 circuit.input_count()
             );
         }
-        trit_circuit::generate_tests_sat_with_jobs(&circuit, alg, jobs)
+        if shared_cnf {
+            trit_circuit::generate_tests_sat_shared_with_jobs(&circuit, alg, jobs)
+        } else {
+            trit_circuit::generate_tests_sat_with_jobs(&circuit, alg, jobs)
+        }
     } else {
         if circuit.input_count() > 10 {
             bail!(
@@ -52,6 +57,7 @@ pub(crate) fn cmd_atpg(
                 "exhaustive": report.exhaustive,
                 "optimal": report.optimal,
                 "sat": report.sat,
+                "shared_cnf": shared_cnf,
                 "by_gate_kind": report
                     .by_gate_kind
                     .iter()

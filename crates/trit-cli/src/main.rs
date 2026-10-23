@@ -175,6 +175,9 @@ enum Commands {
         /// 并行工作线程数（0 = 自动，1 = 串行）。
         #[arg(long, value_name = "N", default_value_t = 0)]
         jobs: usize,
+        /// 复用一份 CNF、用 selector 逐故障求解（适合大规模；见证向量可能与默认路径不同）。
+        #[arg(long, requires = "sat")]
+        shared_cnf: bool,
     },
     /// 桥接故障（wired-AND / wired-OR）可测性与测试向量。
     Bridge {
@@ -406,7 +409,8 @@ fn main() -> Result<()> {
             format,
             sat,
             jobs,
-        } => commands::atpg::cmd_atpg(&path, format, &cli.algebra, &from, sat, jobs),
+            shared_cnf,
+        } => commands::atpg::cmd_atpg(&path, format, &cli.algebra, &from, sat, jobs, shared_cnf),
         Commands::Bridge {
             path,
             from,

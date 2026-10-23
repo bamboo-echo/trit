@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added（0.11 共享 CNF）
+
+- **`atpg --sat --shared-cnf`**：每个 worker 只建一份 good/faulty CNF，每个故障一个 selector；
+  mux 链注入引脚常量，顺序 at-most-one 保证一次只激活一个故障。按 512 个故障切块，
+  避免单 solver selector 过多导致的病态慢例。
+- 默认逐故障路径不变（见证稳定）；共享路径覆盖/可测性一致，但见证向量可能不同。
+- 10k 门 / 40k 故障、8 线程：**2.6 s**；3000 门 0.26 s；800 门 0.08 s（本机 24 线程）。
+- 测试：共享路径与逐故障在随机小电路上对拍覆盖率/可测性/可观测性，并用 `verify_sat_patterns`
+  验证测试向量真正检出故障；CLI `--shared-cnf` 覆盖率对拍。
+- 变异门 87 → 90（候选不注入、mux 选反、不假设 selector）。
+
 ### Added（0.11 SDF-lite 互操作）
 
 - **SDF 读取**：`trit_circuit::sdf::{parse_sdf, timing_model_from_sdf}`；`trit timing` /

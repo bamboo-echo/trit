@@ -979,3 +979,28 @@ fn verify_jobs_match_serial_output() {
     assert_eq!(parallel.2, 0, "stdout={} stderr={}", parallel.0, parallel.1);
     assert_eq!(serial.0, parallel.0);
 }
+
+#[test]
+fn shared_cnf_atpg_matches_coverage() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let netlist = dir.join("and2.net");
+    let path = netlist.to_str().unwrap();
+    let default = run(&["atpg", path, "--sat", "--jobs", "1", "--format", "json"]);
+    let shared = run(&[
+        "atpg",
+        path,
+        "--sat",
+        "--shared-cnf",
+        "--jobs",
+        "4",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(default.2, 0, "stdout={} stderr={}", default.0, default.1);
+    assert_eq!(shared.2, 0, "stdout={} stderr={}", shared.0, shared.1);
+    let default_json: serde_json::Value = serde_json::from_str(&default.0).unwrap();
+    let shared_json: serde_json::Value = serde_json::from_str(&shared.0).unwrap();
+    assert_eq!(default_json["testable"], shared_json["testable"]);
+    assert_eq!(default_json["coverage"], shared_json["coverage"]);
+    assert_eq!(shared_json["shared_cnf"], true);
+}

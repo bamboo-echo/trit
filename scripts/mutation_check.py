@@ -710,6 +710,30 @@ MUTANTS = [
         "new": "        if !value.is_finite() {\n",
         "pkg": "trit-circuit",
         "filter": "sdf::tests::rejects_bad_syntax_and_missing_delays"
+    },
+    {
+        "name": "shared: 候选不注入常量",
+        "file": "crates/trit-circuit/src/sat_cnf.rs",
+        "old": "                    injected[pin] = enc.const_lit(stuck);\n",
+        "new": "                    injected[pin] = faulty_inputs[pin];\n",
+        "pkg": "trit-circuit",
+        "filter": "shared_cnf_matches_per_fault_semantics"
+    },
+    {
+        "name": "shared: mux 选反",
+        "file": "crates/trit-circuit/src/sat_cnf.rs",
+        "old": "                        Lit::from_var(candidate, true),\n                        Lit::from_var(current, true),\n",
+        "new": "                        Lit::from_var(current, true),\n                        Lit::from_var(current, true),\n",
+        "pkg": "trit-circuit",
+        "filter": "shared_cnf_matches_per_fault_semantics"
+    },
+    {
+        "name": "shared: 不假设故障 selector",
+        "file": "crates/trit-circuit/src/sat_cnf.rs",
+        "old": "        self.enc.solver.assume(&[selector]);\n",
+        "new": "        let _ = selector;\n",
+        "pkg": "trit-circuit",
+        "filter": "shared_cnf_matches_per_fault_semantics"
     }
 ]
 

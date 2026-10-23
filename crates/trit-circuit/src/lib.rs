@@ -19,7 +19,7 @@ pub mod verilog;
 pub use aiger::{AigerError, parse_aiger, to_aiger};
 pub use atpg::{
     AtpgReport, CoverageStat, TestPattern, generate_tests, generate_tests_sat,
-    generate_tests_sat_with_jobs,
+    generate_tests_sat_shared_with_jobs, generate_tests_sat_with_jobs,
 };
 pub use blif::{BlifError, parse_blif, to_blif};
 pub use bridge::{

@@ -720,3 +720,28 @@ fn sat_jobs_match_serial_and_are_deterministic() {
     assert_eq!(serial, parallel, "并行结果必须与串行逐字段一致");
     assert!(serial.faults.len() >= 24, "需要足够多的故障覆盖线程切分");
 }
+
+#[test]
+fn shared_cnf_matches_per_fault_semantics() {
+    let mut state = 0x5eed_1234_9876_abcd_u64;
+    for _ in 0..24 {
+        let circuit = random_circuit(&mut state);
+        for alg in [Algebra::Kleene, Algebra::Lukasiewicz, Algebra::Bochvar] {
+            let per_fault = generate_tests_sat(&circuit, alg).unwrap();
+            let shared_serial = generate_tests_sat_shared_with_jobs(&circuit, alg, 1).unwrap();
+            let shared_parallel = generate_tests_sat_shared_with_jobs(&circuit, alg, 4).unwrap();
+            assert_eq!(per_fault.testable, shared_serial.testable);
+            assert_eq!(per_fault.coverage, shared_serial.coverage);
+            assert_eq!(per_fault.testable, shared_parallel.testable);
+            assert_eq!(per_fault.coverage, shared_parallel.coverage);
+            for (left, right) in per_fault.faults.iter().zip(&shared_serial.faults) {
+                assert_eq!(left.observable, right.observable);
+            }
+            for (left, right) in shared_serial.faults.iter().zip(&shared_parallel.faults) {
+                assert_eq!(left.observable, right.observable);
+            }
+            verify_sat_patterns(&circuit, &shared_serial, alg);
+            verify_sat_patterns(&circuit, &shared_parallel, alg);
+        }
+    }
+}

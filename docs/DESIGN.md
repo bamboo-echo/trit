@@ -53,6 +53,7 @@
 | 真值表 / 穷举 | ≤18 变量 | 位并行 64 路 |
 | SAT 等价 | 数百变量（结构化公式） | dual-rail + CDCL |
 | SAT ATPG / 桥接 | ≤64 主输入 | 逐故障 CNF，`--jobs` 按故障分块；结果顺序固定 |
+| 大规模 SAT ATPG | 10k 门 / 40k 故障 | `--shared-cnf`：共享 CNF + selector，512 故障/块 |
 | 策略断言 | 任意条数 | 前提只检查一次，断言间并行；结果顺序固定 |
 | 位切片批量 | 任意长度 | 2 bit/elem、按字运算 |
 | 二进制互操作 | 任意长度 | `Option<unknowns>` + move-only 视图 |
