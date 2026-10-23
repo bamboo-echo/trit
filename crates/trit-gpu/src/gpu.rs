@@ -50,8 +50,13 @@ async fn run_async(trits: usize) -> Option<Report> {
         .await
         .ok()?;
     let info = adapter.get_info();
+    // 默认 limits 只允许 128MB 的 storage binding；大数组必须在建设备时申请 adapter 的上限。
+    let limits = adapter.limits();
     let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor::default())
+        .request_device(&wgpu::DeviceDescriptor {
+            required_limits: limits,
+            ..Default::default()
+        })
         .await
         .ok()?;
 
@@ -264,6 +269,18 @@ async fn run_async(trits: usize) -> Option<Report> {
     let gpu_float: f32 = partial_values.iter().sum();
     let cpu_float: f32 = fa.iter().zip(fb.iter()).map(|(x, y)| x * y).sum();
 
+    // CPU f32 对照（四累加器，打断串行依赖）。
+    let start = Instant::now();
+    let mut cpu_sums = [0.0f32; 4];
+    for _ in 0..5 {
+        cpu_sums = std::hint::black_box(cpu_float_dot(
+            std::hint::black_box(&fa),
+            std::hint::black_box(&fb),
+        ));
+    }
+    let cpu_f32_ns_per_element = start.elapsed().as_nanos() as f64 / (5.0 * trits as f64);
+    debug_assert!(cpu_sums.iter().any(|value| *value != 0.0) || cpu_float == 0.0);
+
     // CPU 位并行对照。
     let start = Instant::now();
     let mut cpu_value = 0i64;
@@ -289,6 +306,7 @@ async fn run_async(trits: usize) -> Option<Report> {
         gpu_ns_per_trit,
         cpu_ns_per_trit,
         gpu_f32_ns_per_element,
+        cpu_f32_ns_per_element,
         float_relative_error: if cpu_float == 0.0 {
             0.0
         } else {
@@ -313,6 +331,22 @@ fn median_ns_per(device: &wgpu::Device, trits: usize, mut submit: impl FnMut()) 
     }
     samples.sort_by(|a, b| a.partial_cmp(b).expect("有限值"));
     samples[samples.len() / 2]
+}
+
+/// CPU f32 点积：四个累加器，便于自动向量化。
+fn cpu_float_dot(a: &[f32], b: &[f32]) -> [f32; 4] {
+    let mut sums = [0.0f32; 4];
+    let (chunks_a, rest_a) = a.as_chunks::<4>();
+    let (chunks_b, rest_b) = b.as_chunks::<4>();
+    for (left, right) in chunks_a.iter().zip(chunks_b.iter()) {
+        for lane in 0..4 {
+            sums[lane] += left[lane] * right[lane];
+        }
+    }
+    for (x, y) in rest_a.iter().zip(rest_b.iter()) {
+        sums[0] += x * y;
+    }
+    sums
 }
 
 fn read_i32(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Option<i32> {

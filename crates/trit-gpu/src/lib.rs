@@ -79,6 +79,8 @@ pub struct Report {
     pub cpu_ns_per_trit: f64,
     /// 同设备 f32 点积（ns / 元素）。
     pub gpu_f32_ns_per_element: f64,
+    /// CPU f32 点积（四累加器，ns / 元素）。
+    pub cpu_f32_ns_per_element: f64,
     /// f32 相对误差。
     pub float_relative_error: f64,
 }

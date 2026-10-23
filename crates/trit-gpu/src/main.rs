@@ -26,19 +26,49 @@ fn main() -> ExitCode {
 #[cfg(feature = "gpu")]
 fn bench(trits: usize) -> Result<(), String> {
     let report = trit_gpu::gpu::run(trits).ok_or("没有可用的 GPU adapter")?;
+    let gpu_speedup = report.gpu_f32_ns_per_element / report.gpu_ns_per_trit;
+    let cpu_speedup = report.cpu_f32_ns_per_element / report.cpu_ns_per_trit;
+    println!(
+        "三值 vs 二进制（1 号 = 三值，2 号 = 二进制）  设备：{} / {}  规模：{} trit",
+        report.adapter, report.backend, report.trits
+    );
+    println!(
+        "  GPU 1 号（三值）      {:>10.5} ps/trit",
+        report.gpu_ns_per_trit * 1000.0
+    );
+    println!(
+        "  CPU 1 号（三值）      {:>10.5} ps/trit",
+        report.cpu_ns_per_trit * 1000.0
+    );
+    println!(
+        "  GPU 2 号（二值 f32）  {:>10.5} ps/元素",
+        report.gpu_f32_ns_per_element * 1000.0
+    );
+    println!(
+        "  CPU 2 号（二值 f32）  {:>10.5} ps/元素",
+        report.cpu_f32_ns_per_element * 1000.0
+    );
+    println!("  同设备加速（1 号 / 2 号）：GPU {gpu_speedup:.1}×，CPU {cpu_speedup:.1}×");
+    println!(
+        "  校验：GPU {} == CPU {}：{}",
+        report.gpu, report.expected, report.matches
+    );
     let obj = serde_json::json!({
         "adapter": report.adapter,
         "backend": report.backend,
         "trits": report.trits,
+        "numbering": {"1": "ternary", "2": "binary"},
+        "rows": [
+            {"label": "GPU 1", "device": "gpu", "base": "ternary", "ns_per_element": report.gpu_ns_per_trit},
+            {"label": "CPU 1", "device": "cpu", "base": "ternary", "ns_per_element": report.cpu_ns_per_trit},
+            {"label": "GPU 2", "device": "gpu", "base": "f32", "ns_per_element": report.gpu_f32_ns_per_element},
+            {"label": "CPU 2", "device": "cpu", "base": "f32", "ns_per_element": report.cpu_f32_ns_per_element},
+        ],
+        "speedup_1_over_2": {"gpu": gpu_speedup, "cpu": cpu_speedup},
         "expected": report.expected,
-        "cpu": report.cpu,
-        "gpu": report.gpu,
+        "gpu_value": report.gpu,
         "matches": report.matches,
-        "gpu_ns_per_trit": report.gpu_ns_per_trit,
-        "cpu_ns_per_trit": report.cpu_ns_per_trit,
-        "gpu_f32_ns_per_element": report.gpu_f32_ns_per_element,
         "float_relative_error": report.float_relative_error,
-        "speedup_vs_gpu_f32": report.gpu_f32_ns_per_element / report.gpu_ns_per_trit,
     });
     println!("{}", serde_json::to_string_pretty(&obj).unwrap_or_default());
     Ok(())
