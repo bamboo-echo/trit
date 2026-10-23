@@ -1079,6 +1079,30 @@ MUTANTS = [
         "new": "        let _ = input;\n",
         "pkg": "trit-circuit",
         "filter": "exact_propagation_accepts_partial_vectors_and_merges_values"
+    },
+    {
+        "name": "xpessimism: 单边可满足判成 1",
+        "file": "crates/trit-circuit/src/circuit/xpessimism.rs",
+        "old": "            (Some(_), None) => XOutcome::Pessimistic {\n                resolved: Ternary::False,\n",
+        "new": "            (Some(_), None) => XOutcome::Pessimistic {\n                resolved: Ternary::True,\n",
+        "pkg": "trit-circuit",
+        "filter": "reconvergent_complement_is_pessimistic_zero"
+    },
+    {
+        "name": "xpessimism: 不做 X 判定直接当已知",
+        "file": "crates/trit-circuit/src/circuit/xpessimism.rs",
+        "old": "        if !value.is_unknown() {\n            outputs.insert(name.to_string(), XOutcome::Known(value));\n            continue;\n        }\n",
+        "new": "        if true {\n            outputs.insert(name.to_string(), XOutcome::Known(value));\n            continue;\n        }\n",
+        "pkg": "trit-circuit",
+        "filter": "mux_with_equal_data_is_pessimistic_one"
+    },
+    {
+        "name": "xpessimism: 支持集不回溯扇入",
+        "file": "crates/trit-circuit/src/circuit/xpessimism.rs",
+        "old": "            for input in &gate.inputs {\n                stack.push(input.name());\n            }\n",
+        "new": "            let _ = gate;\n",
+        "pkg": "trit-circuit",
+        "filter": "support_only_covers_the_backward_cone"
     }
 ]
 

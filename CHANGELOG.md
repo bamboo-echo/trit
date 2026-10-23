@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added（X-Pessimism 分析）
+
+- `trit_circuit::circuit::analyze_x_pessimism`：把单遍传播给出的 `X` 分成**真 X**与
+  **悲观 X**。真 X 给出一对见证赋值（一个补全得 0、一个得 1）；悲观 X 给出可解析的确定值
+  （不可满足的那一边就是证明）。
+- 用 SAT（`varisat`）查询「输出能否为 0 / 能否为 1」，把 `X` 主输入当自由变量；
+  不再需要 `2^k` 次完整传播，`propagate_exact` 的 4096 预算不再限制验证规模。
+- `support` = 结构扇入锥里的 `X` 主输入（保守可达集，不是最小反例）。
+- `Const X` 无法用二值编码表达，返回 `CircuitError::NonBinaryConstant`。
+- CLI：`trit circuit FILE --assign a=X,b=0 --pessimism [-f json]`；JSON 含 `kind`、
+  `resolved`、两个 `*_witness`、`support` 与 `sat_calls`。
+- 测试：7 条库测试（重汇聚互补、mux 数据相同、见证代入复算、锥隔离、已知输出不发 SAT、
+  `Const X` 拒绝、60 组随机电路与 `propagate_exact` 逐输出对拍）+ 3 条 CLI 集成测试。
+- 变异门 133 → **136**（单边可满足判成 1、跳过 X 判定、支持集不回溯扇入），三条逐条实跑判红。
+- 实测（研究用探针，未入库）：200 个随机电路 / 800 个输出里，单遍的 383 个 `X` 有
+  **110 个（28.7%）是悲观 X**。
+
 ### Changed（去上帝模块 + 门禁加强）
 
 - **`trit-schedule` 去上帝模块**：`checkpoint.rs`（1095 行 / 82 个函数）拆成
