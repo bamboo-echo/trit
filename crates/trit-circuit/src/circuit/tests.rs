@@ -8,7 +8,7 @@ use trit_core::value::Ternary;
 
 use super::analyze::{analyze, analyze_faults};
 use super::graph::topological_order;
-use super::sim::propagate;
+use super::sim::{DEFAULT_EXACT_BUDGET, propagate, propagate_exact};
 use super::test_support::simulate_combo;
 use super::types::{Bus, Circuit, CircuitError, Gate, GateKind, Signal};
 
@@ -503,4 +503,97 @@ fn public_validate_detects_combinational_loop() {
     circuit.add_gate(Gate::new(GateKind::Buf, vec![sig("n1")], sig("n2")));
     circuit.add_output(sig("n2"));
     assert_eq!(circuit.validate(), Err(CircuitError::CombinationalLoop));
+}
+
+#[test]
+fn exact_propagation_respects_reconvergent_correlation() {
+    let mut c = Circuit::new("contradiction");
+    c.add_input(Signal::new("a"));
+    c.add_gate(Gate::new(
+        GateKind::Not,
+        vec![Signal::new("a")],
+        Signal::new("na"),
+    ));
+    c.add_gate(Gate::new(
+        GateKind::And,
+        vec![Signal::new("a"), Signal::new("na")],
+        Signal::new("y"),
+    ));
+    c.add_output(Signal::new("y"));
+    let assign = assignment(&[("a", Ternary::Unknown)]);
+    let base = propagate(&c, &assign, Algebra::Kleene).unwrap();
+    assert_eq!(base.outputs["y"], Ternary::Unknown);
+    let exact = propagate_exact(&c, &assign, Algebra::Kleene, 16).unwrap();
+    assert!(exact.exact);
+    assert_eq!(exact.completions, 2);
+    assert_eq!(exact.propagation.outputs["y"], Ternary::False);
+    assert!(exact.propagation.origins["y"].is_empty());
+}
+
+#[test]
+fn exact_propagation_accepts_partial_vectors_and_merges_values() {
+    let c = and_circuit();
+    let exact = propagate_exact(&c, &BTreeMap::new(), Algebra::Kleene, 16).unwrap();
+    assert!(exact.exact);
+    assert_eq!(exact.completions, 4);
+    assert_eq!(exact.unknown_inputs, vec!["a", "b"]);
+    assert_eq!(exact.propagation.inputs["a"], Ternary::Unknown);
+    assert_eq!(exact.propagation.outputs["out"], Ternary::Unknown);
+    assert_eq!(
+        exact.propagation.origins["out"],
+        BTreeSet::from(["a".to_string(), "b".to_string()])
+    );
+}
+
+#[test]
+fn exact_propagation_keeps_masked_gate_and_known_output() {
+    let c = and_circuit();
+    let assign = assignment(&[("a", Ternary::Unknown), ("b", Ternary::False)]);
+    let exact = propagate_exact(&c, &assign, Algebra::Kleene, 16).unwrap();
+    assert!(exact.exact);
+    assert_eq!(exact.propagation.outputs["out"], Ternary::False);
+    assert!(exact.propagation.masked.contains(&"out".to_string()));
+}
+
+#[test]
+fn exact_propagation_falls_back_over_budget() {
+    let mut c = Circuit::new("wide_and");
+    let mut inputs = Vec::new();
+    for name in ["a", "b", "c"] {
+        c.add_input(Signal::new(name));
+        inputs.push(Signal::new(name));
+    }
+    c.add_gate(Gate::new(
+        GateKind::And,
+        vec![inputs[0].clone(), inputs[1].clone()],
+        Signal::new("t"),
+    ));
+    c.add_gate(Gate::new(
+        GateKind::And,
+        vec![Signal::new("t"), inputs[2].clone()],
+        Signal::new("out"),
+    ));
+    c.add_output(Signal::new("out"));
+    let exact = propagate_exact(&c, &BTreeMap::new(), Algebra::Kleene, 4).unwrap();
+    assert!(!exact.exact);
+    assert_eq!(exact.completions, 0);
+    assert_eq!(exact.propagation.outputs["out"], Ternary::Unknown);
+    let full = propagate_exact(&c, &BTreeMap::new(), Algebra::Kleene, 8).unwrap();
+    assert!(full.exact);
+    assert_eq!(full.completions, 8);
+}
+
+#[test]
+fn exact_propagation_with_all_known_inputs_is_one_completion() {
+    let c = and_circuit();
+    let exact = propagate_exact(
+        &c,
+        &assignment(&[("a", Ternary::True), ("b", Ternary::True)]),
+        Algebra::Kleene,
+        DEFAULT_EXACT_BUDGET,
+    )
+    .unwrap();
+    assert!(exact.exact);
+    assert_eq!(exact.completions, 1);
+    assert_eq!(exact.propagation.outputs["out"], Ternary::True);
 }

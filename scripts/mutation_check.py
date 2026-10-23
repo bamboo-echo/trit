@@ -1030,6 +1030,30 @@ MUTANTS = [
         "new": "                None => return Err(CheckpointError::UnknownTask(def.id.clone())),\n",
         "pkg": "trit-schedule",
         "filter": "missing_checkpoint_uses_factory"
+    },
+    {
+        "name": "exact: 冲突值不合并",
+        "file": "crates/trit-circuit/src/circuit/sim.rs",
+        "old": "                Some(_) => {\n                    values.insert(name, Ternary::Unknown);\n                }\n",
+        "new": "                Some(_) => {}\n",
+        "pkg": "trit-circuit",
+        "filter": "exact_propagation_accepts_partial_vectors_and_merges_values"
+    },
+    {
+        "name": "exact: 超预算仍枚举",
+        "file": "crates/trit-circuit/src/circuit/sim.rs",
+        "old": "    if total > max_completions {\n",
+        "new": "    if false {\n",
+        "pkg": "trit-circuit",
+        "filter": "exact_propagation_falls_back_over_budget"
+    },
+    {
+        "name": "exact: 缺失输入不补 X",
+        "file": "crates/trit-circuit/src/circuit/sim.rs",
+        "old": "        normalized\n            .entry(input.name().to_string())\n            .or_insert(Ternary::Unknown);\n",
+        "new": "        let _ = input;\n",
+        "pkg": "trit-circuit",
+        "filter": "exact_propagation_accepts_partial_vectors_and_merges_values"
     }
 ]
 

@@ -118,3 +118,4 @@
 - Bruns & Godefroid 1999, *Model Checking Partial State Spaces with 3-Valued Temporal Logics*。
 - Chechik et al., *Multi-Valued Symbolic Model-Checking*。
 - IEEE 1364 四态与 X-propagation；Bryant 1986（BDD）；Tseitin 1968（CNF）。
+  单遍 Kleene 传播不保留重汇聚相关性；`propagate_exact` 用完成枚举在预算内给出精确结果。
