@@ -57,6 +57,10 @@
     200 组随机消息 × 4 位置 × 2 幅度的单符号纠错。
   - `trit-float`：6 个精度 × 1000 个值（指数 -40..40）不越 `3^{1-p}`；乘积误差 ≤ 2.5× 上界。
 - CI 新增 `stress (high pressure invariants)` job（release 模式跑上述套件）。
+- **修掉一个真实竞态**：CLI 集成测试的夹具用 `OnceLock` 的 `get` + `set`，这两步不是原子的——
+  两个并发测试会同时看到 `None` 并各自写同一个临时文件，子进程可能读到截断的 JSON。
+  改用 `get_or_init`（原子初始化）。这正是此前「ubuntu test 步 exit 101、日志取不到、复跑即过」
+  那次 flake 的根因；修复后 CLI 测试连跑 5 轮、每轮 91 条全绿。
 
 ### Added（GPU 后端 `trit-gpu`：WGSL `countOneBits`）
 

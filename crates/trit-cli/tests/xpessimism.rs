@@ -29,20 +29,16 @@ fn run(args: &[&str]) -> (String, String, i32) {
 static NETLIST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 fn netlist() -> String {
-    // 多个测试并行跑：同一个文件只写一次，避免写盘截断与读取撞车。
-    if let Some(path) = NETLIST.get() {
-        return path.clone();
-    }
-    let path =
-        std::env::temp_dir().join(format!("trit_xpessimism_probe_{}.net", std::process::id()));
-    std::fs::write(
-        &path,
-        "input a\ninput b\nnot a na\ngate and a na out1\ngate and a b out2\noutput out1\noutput out2\n",
-    )
-    .expect("write netlist");
-    let path = path.to_str().expect("utf-8 path").to_string();
-    let _ = NETLIST.set(path.clone());
-    path
+    // get_or_init 才是原子的：get + set 会让两个并发测试同时写盘，读到半截文件。
+    NETLIST
+        .get_or_init(|| {
+            let path = std::env::temp_dir()
+                .join(format!("trit_xpessimism_probe_{}.net", std::process::id()));
+            std::fs::write(&path, "input a\ninput b\nnot a na\ngate and a na out1\ngate and a b out2\noutput out1\noutput out2\n")
+                .expect("write netlist");
+            path.to_str().expect("utf-8 path").to_string()
+        })
+        .clone()
 }
 
 #[test]
