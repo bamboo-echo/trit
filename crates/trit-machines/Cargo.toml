@@ -1,0 +1,13 @@
+[package]
+name = "trit-machines"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "三值小部件实验层：解释器、元胞自动机、脉冲神经元（不属于稳定 API）"
+publish = false
+
+[dependencies]
+trit-core.workspace = true
+serde_json = "1.0.154"

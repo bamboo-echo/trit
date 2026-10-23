@@ -15,6 +15,7 @@ members = [
     "crates/sansheng",
     "crates/trit-schedule",
     "crates/trit-net",
+    "crates/trit-machines",
 ]
 
 [workspace.package]

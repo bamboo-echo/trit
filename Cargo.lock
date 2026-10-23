@@ -909,6 +909,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "trit-machines"
+version = "0.12.0"
+dependencies = [
+ "serde_json",
+ "trit-core",
+]
+
+[[package]]
 name = "trit-net"
 version = "0.12.0"
 dependencies = [
