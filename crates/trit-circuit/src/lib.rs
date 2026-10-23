@@ -27,8 +27,9 @@ pub use bridge::{
     generate_bridge_tests_sat, generate_bridge_tests_sat_with_jobs,
 };
 pub use circuit::{
-    Bus, Circuit, CircuitError, CircuitReport, Fault, Gate, GateKind, Propagation, Signal,
-    SimulationRow, UntestableReason, analyze, analyze_faults, propagate,
+    Bus, Circuit, CircuitError, CircuitReport, DEFAULT_EXACT_BUDGET, ExactPropagation, Fault, Gate,
+    GateKind, Propagation, Signal, SimulationRow, UntestableReason, analyze, analyze_faults,
+    propagate, propagate_exact,
 };
 pub use map::{
     CellLibrary, CellTiming, MapError, MapStrategy, to_cells, to_cells_with_load, to_nand_only,

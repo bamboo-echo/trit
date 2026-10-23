@@ -583,6 +583,10 @@ JSON 输出含每对的 `testable`/`witness` 与测试向量 `patterns`。
 输出每根信号取值、主输出上 `X` 的来源主输入，以及被遮蔽的门（`X & 0 = 0`、`X | 1 = 1`；
 Ł3 的 `X ⊕ X = 1` 也算“确定”）。`--assign` 必须给全所有主输入，缺一个直接报错。
 
+库里的 `propagate_exact` 做相关性感知的精确 X 传播：把每个 `X` 当作未知的 0/1，枚举所有
+完成再合并可能值；`a & ~a` 在 `a=X` 时得到 `0`，而不是单遍 Kleene 的 `X`。未给的主输入按
+`X` 处理。未知输入数为 `k` 时要 `2^k` 次完成，超过预算返回保守的单遍结果并标记 `exact=false`。
+
 同一套解析在库里：`trit_circuit::netlist::parse_netlist` / `to_netlist`（可往返）。
 结构化 Verilog 子集：`trit netlist design.v --from verilog --to text`。支持原语与 `assign`
 的 `~ & | ^` 与 `~^`/`^~`（`assign` 里的 `^` 按 Verilog 语义映射为经典异或），以及

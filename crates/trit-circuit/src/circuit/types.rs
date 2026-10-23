@@ -470,3 +470,27 @@ impl Propagation {
         self.outputs.get(output).is_some_and(|v| v.is_unknown())
     }
 }
+/// 相关性感知的精确 X 传播结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExactPropagation {
+    /// 合并后的传播结果；输入为补全 `X` 后的向量。
+    pub propagation: Propagation,
+    /// 是否真的枚举了所有完成；`false` 表示超出预算，结果是保守近似。
+    pub exact: bool,
+    /// 枚举的完成数；回退时为 0。
+    pub completions: usize,
+    /// 预算上限。
+    pub budget: usize,
+    /// 值为 `X` 的主输入（按主输入顺序）。
+    pub unknown_inputs: Vec<String>,
+}
+
+impl ExactPropagation {
+    /// 某输出在所有完成上是否仍为未知。
+    pub fn output_is_unknown(&self, output: &str) -> bool {
+        self.propagation
+            .outputs
+            .get(output)
+            .is_some_and(|v| v.is_unknown())
+    }
+}

@@ -94,6 +94,15 @@
 - 测试：内存源从第 3 步恢复只再走 7 步、文件源恢复、无检查点时用 factory。
 - 变异门 125 → 127（忽略检查点、无检查点不建任务）。
 
+### Added（0.12 exact propagation）
+
+- `propagate_exact`：相关性感知的精确 X 传播。把 `X` 当未知 0/1，枚举完成并合并可能值；
+  `a & ~a`（`a=X`）得到 `0`，修正单遍 Kleene 的假 X。
+- 支持部分赋值（缺省主输入按 `X`）；未知输入 `k` 个需要 `2^k` 次完成。
+- 超预算时回退到单遍保守结果，`exact=false`、`completions=0`；`DEFAULT_EXACT_BUDGET=4096`。
+- 测试：重汇聚相关性、部分赋值、遮蔽、超预算、全已知输入；circuit 166 → 171。
+- 变异门 127 → 130（冲突合并、预算、缺省 X）。
+
 ### Added（0.12 tri-state / ternary topology）
 
 - `TriState`（0/1/Z）与 `TriStateConflict`：`Z` 是总线单位元，0/1 同时驱动报冲突；
@@ -102,7 +111,7 @@
   False 边断开；固定点迭代处理环。
 - 测试：解析表/冲突、字符与 Ternary 转换、总线逐位/位宽、True 链、Unknown 传播、False/环；
   `trit-core` 67 → 73。
-- 变异门 127 → 130（Z 单位元、总线宽度、拓扑 min/max）。
+- 变异门 130 → 133（Z 单位元、总线宽度、拓扑 min/max）。
 
 ## [0.11.0] - 2026-10-23
 

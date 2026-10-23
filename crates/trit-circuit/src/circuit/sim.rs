@@ -6,7 +6,7 @@ use trit_core::algebra::Algebra;
 use trit_core::value::Ternary;
 
 use super::graph::topological_order;
-use super::types::{Circuit, CircuitError, GateKind, Propagation};
+use super::types::{Circuit, CircuitError, ExactPropagation, GateKind, Propagation};
 use super::validate::validate;
 
 /// 给定一条主输入赋值，做一遍三值传播。
@@ -98,6 +98,127 @@ pub fn propagate(
         masked,
     })
 }
+/// 精确传播默认预算（完成数上限）。
+pub const DEFAULT_EXACT_BUDGET: usize = 4096;
+
+/// 相关性感知的精确 X 传播。
+///
+/// 与单遍 [`propagate`] 不同：把每个主输入的 `X` 当作“未知的 0/1”，枚举所有完成，
+/// 再按信号合并可能值——只要所有完成一致就输出确定值。因此 `a & ~a` 在 `a=X` 时得到 `0`
+/// 而不是保守的 `X`。未给的主输入按 `X` 处理。
+///
+/// 未知输入数为 `k` 时需要 `2^k` 次完成；超过 `max_completions` 时不枚举，返回保守的
+/// 单遍结果并令 `exact=false`。`origins` 是保守并集（所有未知输入）。
+pub fn propagate_exact(
+    circuit: &Circuit,
+    assignment: &BTreeMap<String, Ternary>,
+    alg: Algebra,
+    max_completions: usize,
+) -> Result<ExactPropagation, CircuitError> {
+    let mut normalized = assignment.clone();
+    for input in &circuit.inputs {
+        normalized
+            .entry(input.name().to_string())
+            .or_insert(Ternary::Unknown);
+    }
+    let base = propagate(circuit, &normalized, alg)?;
+    let unknown_inputs: Vec<String> = circuit
+        .inputs
+        .iter()
+        .filter(|input| normalized[input.name()].is_unknown())
+        .map(|input| input.name().to_string())
+        .collect();
+    if unknown_inputs.is_empty() {
+        return Ok(ExactPropagation {
+            propagation: base,
+            exact: true,
+            completions: 1,
+            budget: max_completions,
+            unknown_inputs,
+        });
+    }
+    let Some(total) = 1usize.checked_shl(unknown_inputs.len() as u32) else {
+        return Ok(ExactPropagation {
+            propagation: base,
+            exact: false,
+            completions: 0,
+            budget: max_completions,
+            unknown_inputs,
+        });
+    };
+    if total > max_completions {
+        return Ok(ExactPropagation {
+            propagation: base,
+            exact: false,
+            completions: 0,
+            budget: max_completions,
+            unknown_inputs,
+        });
+    }
+    let mut values: BTreeMap<String, Ternary> = BTreeMap::new();
+    for mask in 0..total {
+        let mut completion = normalized.clone();
+        for (index, name) in unknown_inputs.iter().enumerate() {
+            let bit = (mask >> index) & 1;
+            completion.insert(
+                name.clone(),
+                if bit == 1 {
+                    Ternary::True
+                } else {
+                    Ternary::False
+                },
+            );
+        }
+        let propagated = propagate(circuit, &completion, alg)?;
+        if mask == 0 {
+            values = propagated.signals;
+            continue;
+        }
+        for (name, value) in propagated.signals {
+            match values.get(&name) {
+                Some(existing) if *existing == value => {}
+                Some(_) => {
+                    values.insert(name, Ternary::Unknown);
+                }
+                None => {
+                    values.insert(name, value);
+                }
+            }
+        }
+    }
+    let mut outputs: BTreeMap<String, Ternary> = BTreeMap::new();
+    let mut origins: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for output in &circuit.outputs {
+        let value = values
+            .get(output.name())
+            .copied()
+            .unwrap_or(Ternary::Unknown);
+        outputs.insert(output.name().to_string(), value);
+        origins.insert(
+            output.name().to_string(),
+            if value.is_unknown() {
+                unknown_inputs.iter().cloned().collect()
+            } else {
+                BTreeSet::new()
+            },
+        );
+    }
+    Ok(ExactPropagation {
+        propagation: Propagation {
+            algebra: alg,
+            inputs: normalized,
+            signals: values,
+            outputs,
+            origins,
+            masked: base.masked,
+        },
+        exact: true,
+        completions: total,
+        budget: max_completions,
+        unknown_inputs,
+    })
+}
+
 struct CompiledGate {
     original: usize,
     kind: GateKind,
