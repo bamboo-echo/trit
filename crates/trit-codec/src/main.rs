@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use trit_codec::{balanced, hamming, pack};
+use trit_codec::{balanced, hamming, pack, plan};
 use trit_core::value::Ternary;
 
 fn main() -> ExitCode {
@@ -13,6 +13,7 @@ fn main() -> ExitCode {
         Some("balanced") => balanced_cmd(&args[1..]),
         Some("hamming") => hamming_cmd(&args[1..]),
         Some("stats") => stats_cmd(&args[1..]),
+        Some("plan") => plan_cmd(&args[1..]),
         _ => Err(usage()),
     };
     match result {
@@ -25,7 +26,7 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> String {
-    "用法：trit-codec <pack TRITS|unpack HEX --len N|balanced N|hamming TRITS|stats [--trits N]>"
+    "用法：trit-codec <pack TRITS|unpack HEX --len N|balanced N|hamming TRITS|stats [--trits N]|plan [--trits N]>"
         .to_string()
 }
 
@@ -181,6 +182,75 @@ fn stats_cmd(args: &[String]) -> Result<(), String> {
             "single_error_cases": 9 * 4 * 2,
         },
     });
+    println!("{}", serde_json::to_string_pretty(&obj).unwrap_or_default());
+    Ok(())
+}
+
+fn plan_cmd(args: &[String]) -> Result<(), String> {
+    let trits = args
+        .iter()
+        .position(|arg| arg == "--trits")
+        .and_then(|index| args.get(index + 1))
+        .map_or(Ok(4096usize), |raw| {
+            raw.parse().map_err(|_| "不是整数".to_string())
+        })?;
+    fn binary(i: usize) -> Ternary {
+        if i.is_multiple_of(3) {
+            Ternary::True
+        } else {
+            Ternary::False
+        }
+    }
+    fn ternary(i: usize) -> Ternary {
+        match i % 3 {
+            0 => Ternary::False,
+            1 => Ternary::Unknown,
+            _ => Ternary::True,
+        }
+    }
+    fn sparse_1(i: usize) -> Ternary {
+        if i.is_multiple_of(100) {
+            Ternary::True
+        } else {
+            Ternary::Unknown
+        }
+    }
+    fn sparse_4(i: usize) -> Ternary {
+        if i.is_multiple_of(25) {
+            Ternary::True
+        } else {
+            Ternary::Unknown
+        }
+    }
+    fn sparse_10(i: usize) -> Ternary {
+        if i.is_multiple_of(10) {
+            Ternary::True
+        } else {
+            Ternary::Unknown
+        }
+    }
+    type Distribution = (&'static str, fn(usize) -> Ternary);
+    let distributions: [Distribution; 5] = [
+        ("binary", binary),
+        ("ternary-1/3-X", ternary),
+        ("sparse-1%", sparse_1),
+        ("sparse-4%", sparse_4),
+        ("sparse-10%", sparse_10),
+    ];
+    let mut rows = Vec::new();
+    for (name, make) in distributions {
+        let values: Vec<Ternary> = (0..trits).map(make).collect();
+        let chosen = plan::plan(&values);
+        rows.push(serde_json::json!({
+            "distribution": name,
+            "encoding": chosen.encoding.as_str(),
+            "bytes": chosen.bytes,
+            "dual_rail_bytes": chosen.dual_rail_bytes,
+            "bits_per_trit": chosen.bits_per_trit,
+            "saving_vs_dual_rail": 1.0 - chosen.bytes as f64 / chosen.dual_rail_bytes as f64,
+        }));
+    }
+    let obj = serde_json::json!({"trits": trits, "rows": rows});
     println!("{}", serde_json::to_string_pretty(&obj).unwrap_or_default());
     Ok(())
 }
