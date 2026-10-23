@@ -28,8 +28,8 @@ pub use bridge::{
 };
 pub use circuit::{
     Bus, Circuit, CircuitError, CircuitReport, DEFAULT_EXACT_BUDGET, ExactPropagation, Fault, Gate,
-    GateKind, Propagation, Signal, SimulationRow, UntestableReason, analyze, analyze_faults,
-    propagate, propagate_exact,
+    GateKind, Propagation, Signal, SimulationRow, UntestableReason, XOutcome, XPessimismReport,
+    analyze, analyze_faults, analyze_x_pessimism, propagate, propagate_exact,
 };
 pub use map::{
     CellLibrary, CellTiming, MapError, MapStrategy, to_cells, to_cells_with_load, to_nand_only,

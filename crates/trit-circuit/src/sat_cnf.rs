@@ -623,3 +623,105 @@ fn lookup_inputs(map: &BTreeMap<&str, Var>, gate: &Gate) -> Result<Vec<Lit>, Cir
         })
         .collect()
 }
+
+/// 单份电路的二值编码：已知主输入钉成常量，未知主输入保持自由。
+///
+/// 用途是回答「这个输出能不能为 0 / 能不能为 1」——即把 `X` 输入的所有补全
+/// 当成自由变量，避免 `2^k` 次完整传播。
+pub(crate) struct BinaryCnf<'a> {
+    enc: Enc,
+    signals: BTreeMap<&'a str, Var>,
+    unknown: Vec<&'a str>,
+}
+
+impl<'a> BinaryCnf<'a> {
+    /// 构造编码。调用方必须已 `validate`、给全所有主输入并传入拓扑序。
+    pub(crate) fn new(
+        circuit: &'a Circuit,
+        alg: Algebra,
+        order: &[usize],
+        assignment: &BTreeMap<String, Ternary>,
+    ) -> Result<Self, CircuitError> {
+        let mut enc = Enc::new();
+        enc.alg = alg;
+        let mut signals: BTreeMap<&'a str, Var> = BTreeMap::new();
+        let mut unknown = Vec::new();
+        for input in &circuit.inputs {
+            let var = enc.fresh();
+            match assignment
+                .get(input.name())
+                .copied()
+                .unwrap_or(Ternary::Unknown)
+            {
+                Ternary::False => enc.solver.add_clause(&[Lit::from_var(var, false)]),
+                Ternary::True => enc.solver.add_clause(&[Lit::from_var(var, true)]),
+                Ternary::Unknown => unknown.push(input.name()),
+            }
+            signals.insert(input.name(), var);
+        }
+        for &gate_index in order {
+            let gate = &circuit.gates[gate_index];
+            let inputs = lookup_inputs(&signals, gate)?;
+            let output = enc.fresh();
+            encode_gate(&mut enc, gate, output, &inputs)?;
+            signals.insert(gate.output.name(), output);
+        }
+        Ok(Self {
+            enc,
+            signals,
+            unknown,
+        })
+    }
+
+    /// 某信号的文字量；必须是主输入或已被某个门驱动。
+    pub(crate) fn literal(&self, name: &str) -> Result<Lit, CircuitError> {
+        self.signals
+            .get(name)
+            .map(|var| Lit::from_var(*var, true))
+            .ok_or_else(|| CircuitError::UndrivenSignal(name.to_string()))
+    }
+
+    /// 在额外假设下求解；无解返回 `None`，有解返回为真的变量集合。
+    pub(crate) fn solve_with(
+        &mut self,
+        assumptions: &[Lit],
+    ) -> Result<Option<HashSet<Var>>, CircuitError> {
+        self.enc.solver.assume(assumptions);
+        let sat = self
+            .enc
+            .solver
+            .solve()
+            .map_err(|error| CircuitError::Sat(error.to_string()))?;
+        if !sat {
+            return Ok(None);
+        }
+        let model = self
+            .enc
+            .solver
+            .model()
+            .ok_or_else(|| CircuitError::Sat("SAT 但没有模型".to_string()))?;
+        Ok(Some(
+            model
+                .iter()
+                .filter(|lit| lit.is_positive())
+                .map(|lit| lit.var())
+                .collect(),
+        ))
+    }
+
+    /// 把模型里的自由输入取值还原成赋值表。
+    pub(crate) fn input_values(&self, trues: &HashSet<Var>) -> BTreeMap<String, Ternary> {
+        self.unknown
+            .iter()
+            .map(|name| {
+                let var = self.signals[name];
+                let value = if trues.contains(&var) {
+                    Ternary::True
+                } else {
+                    Ternary::False
+                };
+                (name.to_string(), value)
+            })
+            .collect()
+    }
+}

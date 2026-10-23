@@ -156,6 +156,9 @@ enum Commands {
         /// 单向量传播：`a=1,b=X`（给全所有主输入）。
         #[arg(long, value_name = "ASSIGN")]
         assign: Option<String>,
+        /// 配合 `--assign`：用 SAT 区分真 X 与悲观 X（假 X）。
+        #[arg(long)]
+        pessimism: bool,
         /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif` / `aiger`。
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         from: String,
@@ -450,9 +453,17 @@ fn main() -> Result<()> {
         Commands::Circuit {
             path,
             assign,
+            pessimism,
             from,
             format,
-        } => commands::circuit::cmd_circuit(&path, format, &cli.algebra, assign.as_deref(), &from),
+        } => commands::circuit::cmd_circuit(
+            &path,
+            format,
+            &cli.algebra,
+            assign.as_deref(),
+            &from,
+            pessimism,
+        ),
         Commands::Atpg {
             path,
             from,

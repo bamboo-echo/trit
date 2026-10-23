@@ -14,6 +14,7 @@ pub(crate) fn cmd_circuit(
     alg_name: &str,
     assign: Option<&str>,
     from: &str,
+    pessimism: bool,
 ) -> Result<()> {
     let alg = resolve_algebra(alg_name)?;
     let circuit = load_circuit(path, from)?;
@@ -28,6 +29,9 @@ pub(crate) fn cmd_circuit(
         }
         if assignment.is_empty() {
             bail!("--assign 不能为空");
+        }
+        if pessimism {
+            return print_xpessimism(&circuit, &assignment, alg, format, path);
         }
         let prop = trit_circuit::circuit::propagate(&circuit, &assignment, alg)
             .with_context(|| format!("网表传播失败：{}", path.display()))?;
@@ -84,6 +88,10 @@ pub(crate) fn cmd_circuit(
             }
         }
         return Ok(());
+    }
+
+    if pessimism {
+        bail!("--pessimism 需要配合 --assign 给出单向量");
     }
 
     if circuit.input_count() > 10 {
@@ -175,4 +183,126 @@ pub(crate) fn cmd_circuit(
         }
     }
     Ok(())
+}
+
+fn print_xpessimism(
+    circuit: &trit_circuit::circuit::Circuit,
+    assignment: &BTreeMap<String, Ternary>,
+    alg: trit_core::algebra::Algebra,
+    format: Format,
+    path: &std::path::Path,
+) -> Result<()> {
+    use trit_circuit::circuit::XOutcome;
+
+    let report = trit_circuit::circuit::analyze_x_pessimism(circuit, assignment, alg)
+        .with_context(|| format!("X-Pessimism 分析失败：{}", path.display()))?;
+    match format {
+        Format::Json => {
+            let witness = |values: &BTreeMap<String, Ternary>| {
+                values
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            serde_json::Value::String(v.as_char().to_string()),
+                        )
+                    })
+                    .collect::<serde_json::Map<String, serde_json::Value>>()
+            };
+            let outputs = report
+                .outputs
+                .iter()
+                .map(|(name, outcome)| {
+                    let value = match outcome {
+                        XOutcome::Known(value) => serde_json::json!({
+                            "kind": "known",
+                            "value": value.as_char().to_string(),
+                        }),
+                        XOutcome::Pessimistic { resolved, support } => serde_json::json!({
+                            "kind": "pessimistic",
+                            "resolved": resolved.as_char().to_string(),
+                            "support": support.iter().cloned().collect::<Vec<_>>(),
+                        }),
+                        XOutcome::Genuine {
+                            zero_witness,
+                            one_witness,
+                            support,
+                        } => serde_json::json!({
+                            "kind": "genuine",
+                            "support": support.iter().cloned().collect::<Vec<_>>(),
+                            "zero_witness": witness(zero_witness),
+                            "one_witness": witness(one_witness),
+                        }),
+                    };
+                    (name.clone(), value)
+                })
+                .collect::<serde_json::Map<String, serde_json::Value>>();
+            let obj = serde_json::json!({
+                "circuit": circuit.name,
+                "algebra": alg.as_str(),
+                "unknown_inputs": report.unknown_inputs,
+                "sat_calls": report.sat_calls,
+                "outputs": outputs,
+                "summary": {
+                    "pessimistic": report.pessimistic_outputs().len(),
+                    "genuine": report.genuine_outputs().len(),
+                    "known": report.outputs.len()
+                        - report.pessimistic_outputs().len()
+                        - report.genuine_outputs().len(),
+                },
+            });
+            println!("{}", serde_json::to_string_pretty(&obj)?);
+        }
+        _ => {
+            println!("X-Pessimism：{}  [{}]", path.display(), alg.as_str());
+            println!(
+                "未知输入 {} 个：{}；SAT 查询 {} 次",
+                report.unknown_inputs.len(),
+                if report.unknown_inputs.is_empty() {
+                    "无".to_string()
+                } else {
+                    report.unknown_inputs.join(", ")
+                },
+                report.sat_calls
+            );
+            for (name, outcome) in &report.outputs {
+                match outcome {
+                    XOutcome::Known(value) => {
+                        println!("  {name} = {}（单遍即确定）", value.as_char());
+                    }
+                    XOutcome::Pessimistic { resolved, support } => {
+                        println!(
+                            "  {name} = {}（悲观 X：单遍为 X，扇入锥 {}）",
+                            resolved.as_char(),
+                            describe_support(support)
+                        );
+                    }
+                    XOutcome::Genuine { support, .. } => {
+                        println!(
+                            "  {name} = X（真 X：0 与 1 都有补全，扇入锥 {}）",
+                            describe_support(support)
+                        );
+                    }
+                }
+            }
+            println!(
+                "
+汇总：已知 {} / 悲观 {} / 真 X {}",
+                report.outputs.len()
+                    - report.pessimistic_outputs().len()
+                    - report.genuine_outputs().len(),
+                report.pessimistic_outputs().len(),
+                report.genuine_outputs().len()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn describe_support(support: &std::collections::BTreeSet<String>) -> String {
+    if support.is_empty() {
+        "无".to_string()
+    } else {
+        support.iter().cloned().collect::<Vec<_>>().join(", ")
+    }
 }
