@@ -481,6 +481,8 @@ pub struct ExactPropagation {
     pub completions: usize,
     /// 预算上限。
     pub budget: usize,
+    /// 实际使用的并行度（1 表示串行）。
+    pub jobs: usize,
     /// 值为 `X` 的主输入（按主输入顺序）。
     pub unknown_inputs: Vec<String>,
 }

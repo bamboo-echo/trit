@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed（精确传播：索引化内循环 + 有上限的并行）
+
+- `propagate_exact` 的枚举不再对每个完成调用 `propagate`（那会为**每个信号**建
+  `BTreeMap<String, _>`）；改成复用 `Simulator` 的索引化求值，只分配一份向量。
+  同机同电路实测：k=8 **74×**、k=10 **209×**、k=12 **334×**（14.36 ms → 194 µs / 57.8 ms →
+  277 µs / 239 ms → 716 µs），`k=8` 的永久基线读数见 `benches/core.rs`。
+- 新增 `propagate_exact_with_jobs(..., jobs)`：完成之间独立，按块分给 `jobs` 个线程，
+  再按「值不同记 `X`」合并；结果与并行度无关（`sim_tests` 在真分块的 k=12 上对拍串行）。
+- **并行度按工作量收敛**：每线程至少 1024 个完成（`MIN_COMPLETIONS_PER_JOB`），
+  `jobs = 0` 表示自动。实测 k ≤ 10 串行更快，k=12 四线程 1.6×，k=14 2.2×，k=16 5.4×；
+  不设上限时 `available_parallelism` 会在亚毫秒任务上炸出几十个线程，反而更慢（k=12 auto 0.92 ms
+  vs 四线程 0.46 ms）。`ExactPropagation` 新增 `jobs` 字段报告**实际**并行度。
+- CLI：`trit circuit FILE --assign ... --exact [--jobs N]`，表格输出枚举完成数与实际并行度，
+  JSON 增加 `exact` 对象（`exact` / `completions` / `budget` / `jobs` / `unknown_inputs`）。
+- 测试：新增 `sim_tests`（串并行等价、**真分块**断言 `jobs == 4`、完成数/预算上报、超预算回退）
+  + 3 条 CLI 测试；变异门 139 → **141**（新增 3 条并逐条实跑判红，删 1 条被重写覆盖的旧锚点）。
+
 ### Changed（三值拓扑：两趟 BFS + 三值验证证书）
 
 - `TernaryTopology::reachability` 从「逐边松弛到不动点」改为**两趟 BFS**：先沿 `True` 边求

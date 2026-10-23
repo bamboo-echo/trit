@@ -173,6 +173,12 @@ enum Commands {
         /// 配合 `--assign`：用 SAT 区分真 X 与悲观 X（假 X）。
         #[arg(long)]
         pessimism: bool,
+        /// 配合 `--assign`：枚举所有 X 补全做相关性感知的精确传播。
+        #[arg(long)]
+        exact: bool,
+        /// 精确传播的并行度：0 表示自动（每线程至少 1024 个完成）。
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        jobs: usize,
         /// 输入格式：`text`（默认）/ `json` / `verilog` / `blif` / `aiger`。
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         from: String,
@@ -468,15 +474,21 @@ fn main() -> Result<()> {
             path,
             assign,
             pessimism,
+            exact,
+            jobs,
             from,
             format,
         } => commands::circuit::cmd_circuit(
             &path,
             format,
             &cli.algebra,
-            assign.as_deref(),
+            &commands::circuit::PropagationOptions {
+                assign: assign.as_deref(),
+                pessimism,
+                exact,
+                jobs,
+            },
             &from,
-            pessimism,
         ),
         Commands::Topology {
             path,
