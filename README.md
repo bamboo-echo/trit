@@ -59,6 +59,23 @@ trit schedule tasks.json --workers 2 --format json
 输出 `scheduled`（开始/完成/worker/优先级）、`makespan`、`critical_path` 和 `deferred`
 （`unknown_dependency` / `blocked_by`）。这是**静态调度**：不负责实际执行、抢占、取消或故障恢复。
 
+### Runtime（库）
+
+`trit_schedule::run_runtime(tasks, workers, CancelToken)` 按依赖完成动态取任务：
+
+```rust
+use trit_schedule::{CancelToken, RuntimeTask, run_runtime};
+let tasks = vec![RuntimeTask::new("a", vec![], |token| {
+    if token.is_cancelled() { return Err("cancelled".into()); }
+    // ... 实际工作 ...
+    Ok(())
+})];
+let report = run_runtime(tasks, 2, CancelToken::new()).unwrap();
+```
+
+取消是**协作式**的：未开始的任务不再启动；已经在跑的任务不会被强杀，必须自己检查 token。
+失败或取消后停止派发新任务，报告 `completed` / `failed` / `cancelled` / `deferred`。
+
 ## 三生（sansheng）
 
 crates.io 包名用拼音 `sansheng`（`三生` 不能直接作 crate 名）。伞包统一暴露核心 API：

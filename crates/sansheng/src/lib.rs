@@ -47,6 +47,7 @@ pub use trit_sat::{
     minimal_counterexample, satisfiable,
 };
 pub use trit_schedule::{
-    DeferReason, DeferredTask, Dependency, Schedule, ScheduleError, ScheduleInput, ScheduledTask,
-    Task, schedule, schedule_input,
+    CancelToken, DeferReason, DeferredTask, Dependency, RuntimeError, RuntimeReport, RuntimeTask,
+    Schedule, ScheduleError, ScheduleInput, ScheduledTask, Task, TaskFailure, run_runtime,
+    schedule, schedule_input,
 };

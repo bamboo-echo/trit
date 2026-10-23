@@ -12,6 +12,15 @@
 - 变异门 96 → 100（未知依赖、延迟传播、关键路径、优先级排序）。
 - 这是静态调度 MVP；runtime/抢占/取消/故障恢复不在本轮。
 
+### Added（0.12 runtime）
+
+- `trit_schedule::run_runtime`：依赖驱动的 worker runtime；`RuntimeTask` 闭包、
+  `CancelToken` 协作式取消、失败/取消后停止派发、`completed/failed/cancelled/deferred` 报告。
+- 不强制抢占运行中的任务；任务需自行轮询 token。
+- 测试：依赖顺序、双 worker 重叠、join 等待全部前置、失败后不派发新任务、取消未启动任务、
+  未知依赖、panic 转失败、环/零 worker 拒绝。
+- 变异门 100 → 103（取消、依赖传播、失败停止）。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，
