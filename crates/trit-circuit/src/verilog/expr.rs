@@ -1,6 +1,6 @@
 //! assign 右值表达式：解析、位宽推断与按位展开。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use trit_core::value::Ternary;
 
@@ -362,6 +362,7 @@ pub(super) fn bit_expr(
     expr: &VExpr,
     index: usize,
     widths: &BTreeMap<String, usize>,
+    ascending: &BTreeSet<String>,
 ) -> Result<VExpr, VerilogError> {
     match expr {
         VExpr::Var(name) => {
@@ -372,7 +373,14 @@ pub(super) fn bit_expr(
                         "位 {index} 超出向量 {name} 的宽度 {width}"
                     )));
                 }
-                Ok(VExpr::Var(format!("{name}[{index}]")))
+                // Verilog 左界是 MSB：升序 `[0:N]` 的位置 `index`（0=LSB）
+                // 对应声明下标 `width-1-index`。
+                let declared = if ascending.contains(name) {
+                    width - 1 - index
+                } else {
+                    index
+                };
+                Ok(VExpr::Var(format!("{name}[{declared}]")))
             } else if index == 0 {
                 Ok(VExpr::Var(name.clone()))
             } else {
@@ -387,25 +395,27 @@ pub(super) fn bit_expr(
         VExpr::ConstBits { bits, .. } => Ok(VExpr::Const(
             bits.get(index).copied().unwrap_or(Ternary::False),
         )),
-        VExpr::Not(inner) => Ok(VExpr::Not(Box::new(bit_expr(inner, index, widths)?))),
+        VExpr::Not(inner) => Ok(VExpr::Not(Box::new(bit_expr(
+            inner, index, widths, ascending,
+        )?))),
         VExpr::And(a, b) => Ok(VExpr::And(
-            Box::new(bit_expr(a, index, widths)?),
-            Box::new(bit_expr(b, index, widths)?),
+            Box::new(bit_expr(a, index, widths, ascending)?),
+            Box::new(bit_expr(b, index, widths, ascending)?),
         )),
         VExpr::Or(a, b) => Ok(VExpr::Or(
-            Box::new(bit_expr(a, index, widths)?),
-            Box::new(bit_expr(b, index, widths)?),
+            Box::new(bit_expr(a, index, widths, ascending)?),
+            Box::new(bit_expr(b, index, widths, ascending)?),
         )),
         VExpr::Xor(a, b) => Ok(VExpr::Xor(
-            Box::new(bit_expr(a, index, widths)?),
-            Box::new(bit_expr(b, index, widths)?),
+            Box::new(bit_expr(a, index, widths, ascending)?),
+            Box::new(bit_expr(b, index, widths, ascending)?),
         )),
         VExpr::Concat(items) => {
             let mut offset = 0usize;
             for item in items.iter().rev() {
                 let width = expr_width(item, widths);
                 if index < offset + width {
-                    return bit_expr(item, index - offset, widths);
+                    return bit_expr(item, index - offset, widths, ascending);
                 }
                 offset += width;
             }

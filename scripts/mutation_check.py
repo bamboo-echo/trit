@@ -554,10 +554,42 @@ MUTANTS = [
     {
         "name": "hierarchy: 向量 bus 逆序连线",
         "file": "crates/trit-circuit/src/verilog/hierarchy.rs",
-        "old": "        .map(|index| (format!(\"{port}[{index}]\"), format!(\"{base}[{index}]\")))\n",
-        "new": "        .map(|index| (format!(\"{port}[{index}]\"), format!(\"{base}[{}]\", child_width - 1 - index)))\n",
+        "old": "            let parent_index = if parent_asc {\n",
+        "new": "            let parent_index = if true || parent_asc {\n",
         "pkg": "trit-circuit",
         "filter": "hierarchical_vector_bit_order_is_preserved"
+    },
+    {
+        "name": "verilog: 升序向量按降序取位",
+        "file": "crates/trit-circuit/src/verilog/expr.rs",
+        "old": "                let declared = if ascending.contains(name) {\n",
+        "new": "                let declared = if false && ascending.contains(name) {\n",
+        "pkg": "trit-circuit",
+        "filter": "ascending_vector_bit_order_matches_verilog"
+    },
+    {
+        "name": "verilog: 升序 LHS 不按位序落位",
+        "file": "crates/trit-circuit/src/verilog/parse.rs",
+        "old": "                                    let lhs_index = if ascending.contains(&lhs_base) {\n",
+        "new": "                                    let lhs_index = if false && ascending.contains(&lhs_base) {\n",
+        "pkg": "trit-circuit",
+        "filter": "literal_assignment_to_ascending_vector_keeps_verilog_order"
+    },
+    {
+        "name": "verilog: 导出升序向量写成降序",
+        "file": "crates/trit-circuit/src/verilog/export.rs",
+        "old": "        if group.ascending {\n",
+        "new": "        if false {\n",
+        "pkg": "trit-circuit",
+        "filter": "ascending_ranges_parse_export_and_json_round_trip"
+    },
+    {
+        "name": "hierarchy: 跨方向 bus 不按子端口位序",
+        "file": "crates/trit-circuit/src/verilog/hierarchy.rs",
+        "old": "            let child_index = if child_asc {\n",
+        "new": "            let child_index = if false && child_asc {\n",
+        "pkg": "trit-circuit",
+        "filter": "hierarchical_cross_direction_bus_maps_by_position"
     }
 ]
 

@@ -73,6 +73,7 @@ struct VerilogGroup {
     base: String,
     max: usize,
     vector: bool,
+    ascending: bool,
 }
 
 fn group_signals(
@@ -123,7 +124,7 @@ fn group_signals(
                 "信号 {base} 同时以标量和位选出现，无法导出为 Verilog"
             )));
         }
-        let (max, vector) = if let Some(bus) = buses.get(&base) {
+        let (max, vector, ascending) = if let Some(bus) = buses.get(&base) {
             let max = bus
                 .width
                 .checked_sub(1)
@@ -139,7 +140,7 @@ fn group_signals(
                     bus.width
                 )));
             }
-            (max, true)
+            (max, true, bus.ascending)
         } else {
             let max = acc.indices.iter().next_back().copied().unwrap_or(0);
             let contiguous =
@@ -149,16 +150,25 @@ fn group_signals(
                     "信号 {base} 的位下标不连续或缺少低位，无法导出为 Verilog 向量"
                 )));
             }
-            (max, acc.has_bits)
+            (max, acc.has_bits, false)
         };
-        out.push(VerilogGroup { base, max, vector });
+        out.push(VerilogGroup {
+            base,
+            max,
+            vector,
+            ascending,
+        });
     }
     Ok(out)
 }
 
 fn decl_line(direction: &str, group: &VerilogGroup) -> String {
     if group.vector {
-        format!("  {direction} [{}:0] {};\n", group.max, group.base)
+        if group.ascending {
+            format!("  {direction} [0:{}] {};\n", group.max, group.base)
+        } else {
+            format!("  {direction} [{}:0] {};\n", group.max, group.base)
+        }
     } else {
         format!("  {direction} {};\n", group.base)
     }

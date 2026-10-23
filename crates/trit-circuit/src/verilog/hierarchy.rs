@@ -22,6 +22,8 @@ pub(super) struct ModuleDef {
     pub ports: Vec<String>,
     /// 端口与内部线网的位宽（基名 → 宽度）；用于整条 bus 连接。
     pub widths: BTreeMap<String, usize>,
+    /// 声明为升序 `[0:N]` 的向量基名。
+    pub ascending: BTreeSet<String>,
 }
 
 /// 一条模块实例。
@@ -279,8 +281,15 @@ fn instantiate(
                     .with_line(inst.line)
             })?;
             let width = child.widths.get(port).copied().unwrap_or(1);
-            let bits = expand_connection(port, width, signal, &def.widths)
-                .map_err(|error| error.with_line(inst.line))?;
+            let bits = expand_connection(
+                port,
+                width,
+                signal,
+                &def.widths,
+                &child.ascending,
+                &def.ascending,
+            )
+            .map_err(|error| error.with_line(inst.line))?;
             let is_input = input_bases.contains(port.as_str());
             let is_output = output_bases.contains(port.as_str());
             if !is_input && !is_output {
@@ -366,6 +375,8 @@ fn expand_connection(
     child_width: usize,
     signal: &str,
     parent_widths: &BTreeMap<String, usize>,
+    child_ascending: &BTreeSet<String>,
+    parent_ascending: &BTreeSet<String>,
 ) -> Result<Vec<(String, String)>, VerilogError> {
     let (base, index) = split_bit_ref(signal);
     let parent_width = parent_widths.get(base).copied().unwrap_or(1);
@@ -387,8 +398,26 @@ fn expand_connection(
             "端口 {port} 需要 {child_width} 位，连接 {signal} 是 {parent_width} 位"
         )));
     }
+    let child_asc = child_ascending.contains(port);
+    let parent_asc = parent_ascending.contains(base);
     Ok((0..child_width)
-        .map(|index| (format!("{port}[{index}]"), format!("{base}[{index}]")))
+        .map(|position| {
+            // Verilog 按“位置”连接：左界是 MSB，升序向量的声明下标要反过来。
+            let child_index = if child_asc {
+                child_width - 1 - position
+            } else {
+                position
+            };
+            let parent_index = if parent_asc {
+                child_width - 1 - position
+            } else {
+                position
+            };
+            (
+                format!("{port}[{child_index}]"),
+                format!("{base}[{parent_index}]"),
+            )
+        })
         .collect())
 }
 

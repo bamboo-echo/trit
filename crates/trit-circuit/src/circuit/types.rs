@@ -212,10 +212,10 @@ pub struct Fault {
 
 /// 故障分析结果：冗余引脚列表与逐极性故障列表。
 pub type FaultReport = (Vec<GateSignalPair>, Vec<Fault>);
-/// 向量声明（当前只支持 `[width-1:0]`）。
+/// 向量声明。
 ///
 /// 位信号仍以 `name[i]` 的形式存在于 `inputs` / `outputs` / `gates` 中；
-/// `Bus` 只保存声明宽度，供导出与 JSON 往返使用。宽度可以大于实际建模的位数
+/// `Bus` 保存声明宽度与方向，供导出、JSON 往返与位序语义使用。宽度可以大于实际建模的位数
 /// （例如只用到 `t[3]` 的 8 位内部线网）。
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Bus {
@@ -223,16 +223,36 @@ pub struct Bus {
     pub name: String,
     /// 位宽（至少 1）。
     pub width: usize,
+    /// 是否声明为升序范围 `[0:width-1]`；默认降序 `[width-1:0]`。
+    ///
+    /// Verilog 的**左界是 MSB**：升序 `[0:N]` 的 `name[0]` 是最高位，
+    /// 与降序 `[N:0]` 的 `name[0]` 是最低位相反。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ascending: bool,
 }
 
 impl Bus {
-    /// 构造向量声明。
+    /// 构造降序向量声明 `[width-1:0]`。
     pub fn new(name: impl Into<String>, width: usize) -> Self {
         Self {
             name: name.into(),
             width,
+            ascending: false,
         }
     }
+
+    /// 构造升序向量声明 `[0:width-1]`。
+    pub fn new_ascending(name: impl Into<String>, width: usize) -> Self {
+        Self {
+            name: name.into(),
+            width,
+            ascending: true,
+        }
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 /// 一个电路。
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

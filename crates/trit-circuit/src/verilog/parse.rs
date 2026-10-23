@@ -1,6 +1,6 @@
 //! Verilog 子集解析：模块头、端口/线网声明、assign 与原语。
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use trit_core::value::Ternary;
 
@@ -172,8 +172,15 @@ fn split_list(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// 解析 `[N:0]`；只支持降序到 0。返回 `None` 表示没有位宽声明。
-fn parse_range(token: &str) -> Result<Option<usize>, VerilogError> {
+/// 声明范围：宽度与方向。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VectorRange {
+    width: usize,
+    ascending: bool,
+}
+
+/// 解析 `[N:0]` 或 `[0:N]`。返回 `None` 表示没有位宽声明。
+fn parse_range(token: &str) -> Result<Option<VectorRange>, VerilogError> {
     let token = token.trim();
     let Some(inner) = token
         .strip_prefix('[')
@@ -192,24 +199,26 @@ fn parse_range(token: &str) -> Result<Option<usize>, VerilogError> {
         .trim()
         .parse()
         .map_err(|_| message(format!("位宽下界 {right:?} 不是数字")))?;
-    if right != 0 {
+    let (width, ascending) = if right == 0 {
+        (left.checked_add(1), false)
+    } else if left == 0 {
+        (right.checked_add(1), true)
+    } else {
         return Err(VerilogError::unsupported(format!(
-            "只支持 [N:0] 形式的位宽，{token:?} 不受支持"
+            "只支持 [N:0] 或 [0:N] 形式的位宽，{token:?} 不受支持"
         )));
-    }
-    let width = left
-        .checked_add(1)
-        .ok_or_else(|| VerilogError::limit("位宽溢出"))?;
+    };
+    let width = width.ok_or_else(|| VerilogError::limit("位宽溢出"))?;
     if width > MAX_VECTOR_WIDTH {
         return Err(VerilogError::limit(format!(
             "位宽 {width} 超过上限 {MAX_VECTOR_WIDTH}"
         )));
     }
-    Ok(Some(left))
+    Ok(Some(VectorRange { width, ascending }))
 }
 
-/// 把声明文本拆成 `(位宽, 名字列表)`；例如 `[3:0] a, b` → `(Some(3), "a, b")`。
-fn split_declaration(text: &str) -> Result<(Option<usize>, String), VerilogError> {
+/// 把声明文本拆成 `(范围, 名字列表)`；例如 `[3:0] a, b` → `(Some(3:0), "a, b")`。
+fn split_declaration(text: &str) -> Result<(Option<VectorRange>, String), VerilogError> {
     let text = text.trim();
     if let Some(open) = text.find('[') {
         let close = text.find(']').ok_or_else(|| message("位宽声明缺少 ']'"))?;
@@ -251,13 +260,15 @@ fn parse_lhs(text: &str) -> Result<(String, Option<usize>), VerilogError> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn declare_ports(
     circuit: &mut Circuit,
     direction: &str,
-    range: Option<usize>,
+    range: Option<VectorRange>,
     list: &str,
     declared: &mut HashSet<String>,
     widths: &mut std::collections::BTreeMap<String, usize>,
+    ascending: &mut BTreeSet<String>,
     nets: &mut usize,
 ) -> Result<(), VerilogError> {
     for name in split_list(list) {
@@ -267,7 +278,7 @@ fn declare_ports(
         if !declared.insert(name.clone()) {
             continue;
         }
-        let width = range.map_or(1, |msb| msb + 1);
+        let width = range.map_or(1, |range| range.width);
         *nets = nets
             .checked_add(width)
             .ok_or_else(|| VerilogError::limit("网络数溢出"))?;
@@ -277,12 +288,23 @@ fn declare_ports(
             )));
         }
         match range {
-            Some(msb) => {
-                widths.insert(name.clone(), msb + 1);
-                circuit
-                    .buses
-                    .insert(name.clone(), Bus::new(name.clone(), msb + 1));
-                for index in (0..=msb).rev() {
+            Some(range) => {
+                widths.insert(name.clone(), range.width);
+                let bus = if range.ascending {
+                    Bus::new_ascending(name.clone(), range.width)
+                } else {
+                    Bus::new(name.clone(), range.width)
+                };
+                circuit.buses.insert(name.clone(), bus);
+                if range.ascending {
+                    ascending.insert(name.clone());
+                }
+                let order: Vec<usize> = if range.ascending {
+                    (0..range.width).collect()
+                } else {
+                    (0..range.width).rev().collect()
+                };
+                for index in order {
                     let bit = format!("{name}[{index}]");
                     match direction {
                         "input" => {
@@ -312,11 +334,15 @@ fn declare_ports(
     Ok(())
 }
 
-fn mark_used(used: &mut std::collections::BTreeSet<String>, range: Option<usize>, list: &str) {
+fn mark_used(
+    used: &mut std::collections::BTreeSet<String>,
+    range: Option<VectorRange>,
+    list: &str,
+) {
     for name in split_list(list) {
         match range {
-            Some(msb) => {
-                for index in (0..=msb).rev() {
+            Some(range) => {
+                for index in 0..range.width {
                     used.insert(format!("{name}[{index}]"));
                 }
             }
@@ -503,6 +529,7 @@ fn parse_module_at(cleaned: &str, module_at: usize) -> Result<ModuleDef, Verilog
     let mut declared: HashSet<String> = HashSet::new();
     let mut wires: HashSet<String> = HashSet::new();
     let mut widths: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut ascending: BTreeSet<String> = BTreeSet::new();
     let mut nets = 0usize;
     let mut used: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut counter = 0usize;
@@ -513,7 +540,7 @@ fn parse_module_at(cleaned: &str, module_at: usize) -> Result<ModuleDef, Verilog
         let ansi = ports.contains("input") || ports.contains("output");
         if ansi {
             let mut last_direction: Option<&'static str> = None;
-            let mut last_range: Option<usize> = None;
+            let mut last_range: Option<VectorRange> = None;
             for part in ports.split(',') {
                 let tokens: Vec<&str> = part.split_whitespace().collect();
                 let Some(first) = tokens.first().copied() else {
@@ -552,6 +579,7 @@ fn parse_module_at(cleaned: &str, module_at: usize) -> Result<ModuleDef, Verilog
                     &list,
                     &mut declared,
                     &mut widths,
+                    &mut ascending,
                     &mut nets,
                 )?;
                 for name in split_list(&list) {
@@ -607,6 +635,7 @@ fn parse_module_at(cleaned: &str, module_at: usize) -> Result<ModuleDef, Verilog
                         &list,
                         &mut declared,
                         &mut widths,
+                        &mut ascending,
                         &mut nets,
                     )?;
                     mark_used(&mut used, range, &list);
@@ -620,7 +649,7 @@ fn parse_module_at(cleaned: &str, module_at: usize) -> Result<ModuleDef, Verilog
                         if !wires.insert(name.clone()) {
                             continue;
                         }
-                        let width = range.map_or(1, |msb| msb + 1);
+                        let width = range.map_or(1, |range| range.width);
                         nets = nets
                             .checked_add(width)
                             .ok_or_else(|| VerilogError::limit("网络数溢出"))?;
@@ -628,6 +657,24 @@ fn parse_module_at(cleaned: &str, module_at: usize) -> Result<ModuleDef, Verilog
                             return Err(VerilogError::limit(format!(
                                 "声明的网络数超过上限 {MAX_NETS}"
                             )));
+                        }
+                        let ascending_flag = range.is_some_and(|range| range.ascending);
+                        if let Some(bus) = circuit.buses.get(&name) {
+                            if bus.width != width || bus.ascending != ascending_flag {
+                                return Err(message(format!(
+                                    "线网 {name} 与端口声明的位宽/方向不一致"
+                                )));
+                            }
+                        } else if let Some(range) = range {
+                            let bus = if range.ascending {
+                                Bus::new_ascending(name.clone(), width)
+                            } else {
+                                Bus::new(name.clone(), width)
+                            };
+                            circuit.buses.insert(name.clone(), bus);
+                            if range.ascending {
+                                ascending.insert(name.clone());
+                            }
                         }
                         widths.insert(name.clone(), width);
                     }
@@ -688,8 +735,13 @@ fn parse_module_at(cleaned: &str, module_at: usize) -> Result<ModuleDef, Verilog
                                     )));
                                 }
                                 for index in 0..width {
-                                    let bit = bit_expr(&expr, index, &widths)?;
-                                    builder.synth_v(&bit, &format!("{lhs_base}[{index}]"))?;
+                                    let bit = bit_expr(&expr, index, &widths, &ascending)?;
+                                    let lhs_index = if ascending.contains(&lhs_base) {
+                                        width - 1 - index
+                                    } else {
+                                        index
+                                    };
+                                    builder.synth_v(&bit, &format!("{lhs_base}[{lhs_index}]"))?;
                                 }
                             }
                         }
@@ -803,5 +855,6 @@ fn parse_module_at(cleaned: &str, module_at: usize) -> Result<ModuleDef, Verilog
         instances,
         ports: port_order,
         widths,
+        ascending,
     })
 }

@@ -354,8 +354,8 @@ endmodule
 #[test]
 fn vector_errors_are_classified() {
     for text in [
-        // 只支持 [N:0]
-        "module m(input [0:3] a, output y);\nassign y = a[0];\nendmodule\n",
+        // 只支持 [N:0] 或 [0:N]，非零下界拒绝
+        "module m(input [2:5] a, output y);\nassign y = a[2];\nendmodule\n",
         // 不支持复制语法
         "module m(input a, output [1:0] y);\nassign y = {2{a}};\nendmodule\n",
         // 位宽不匹配
@@ -432,8 +432,8 @@ endmodule
     assert_eq!(err.line, Some(2), "{err:?}");
 
     let err = parse_verilog(
-        "module m(input [0:3] a, output y);
-assign y = a[0];
+        "module m(input [2:5] a, output y);
+assign y = a[2];
 endmodule
 ",
     )
@@ -878,4 +878,112 @@ endmodule
     )
     .unwrap_err();
     assert!(err.to_string().contains("冲突"), "{err}");
+}
+
+#[test]
+fn ascending_ranges_parse_export_and_json_round_trip() {
+    let text = "module m(input [0:3] a, output [0:3] y);\nassign y = ~a;\nendmodule\n";
+    let circuit = parse_verilog(text).unwrap();
+    assert_eq!(circuit.buses.get("a"), Some(&Bus::new_ascending("a", 4)));
+    assert_eq!(circuit.buses.get("y"), Some(&Bus::new_ascending("y", 4)));
+    let rendered = to_verilog(&circuit).unwrap();
+    assert!(rendered.contains("input [0:3] a;"), "{rendered}");
+    assert!(rendered.contains("output [0:3] y;"), "{rendered}");
+    assert_eq!(parse_verilog(&rendered).unwrap(), circuit);
+
+    let json = to_json(&circuit).unwrap();
+    assert!(json.contains("\"format\": 2"), "{json}");
+    assert!(json.contains("\"ascending\": true"), "{json}");
+    assert_eq!(from_json(&json).unwrap(), circuit);
+}
+
+#[test]
+fn ascending_vector_bit_order_matches_verilog() {
+    use crate::circuit::propagate;
+    use std::collections::BTreeMap;
+
+    let text = "module m(input [0:3] a, output [0:3] y);\nassign y = ~a;\nendmodule\n";
+    let circuit = parse_verilog(text).unwrap();
+    let mut assignment = BTreeMap::new();
+    assignment.insert("a[0]".to_string(), Ternary::True);
+    for index in 1..4 {
+        assignment.insert(format!("a[{index}]"), Ternary::False);
+    }
+    let result = propagate(&circuit, &assignment, Algebra::Kleene).unwrap();
+    // [0:3] 的 a[0] 是 MSB；取反后 y[0] 仍是 MSB。
+    assert_eq!(result.signals.get("y[0]"), Some(&Ternary::False));
+    assert_eq!(result.signals.get("y[1]"), Some(&Ternary::True));
+    assert_eq!(result.signals.get("y[3]"), Some(&Ternary::True));
+}
+
+#[test]
+fn ascending_to_descending_assignment_preserves_positions() {
+    use crate::circuit::propagate;
+    use std::collections::BTreeMap;
+
+    let text = "module m(input [0:3] a, output [3:0] y);\nassign y = a;\nendmodule\n";
+    let circuit = parse_verilog(text).unwrap();
+    let mut assignment = BTreeMap::new();
+    assignment.insert("a[0]".to_string(), Ternary::True);
+    for index in 1..4 {
+        assignment.insert(format!("a[{index}]"), Ternary::False);
+    }
+    let result = propagate(&circuit, &assignment, Algebra::Kleene).unwrap();
+    // 两边都是左界 MSB：a[0] ↔ y[3]，a[3] ↔ y[0]。
+    assert_eq!(result.signals.get("y[3]"), Some(&Ternary::True));
+    assert_eq!(result.signals.get("y[0]"), Some(&Ternary::False));
+}
+
+#[test]
+fn literal_assignment_to_ascending_vector_keeps_verilog_order() {
+    use crate::circuit::propagate;
+    use std::collections::BTreeMap;
+
+    let text = "module m(output [0:3] y);\nassign y = 4'b1010;\nendmodule\n";
+    let circuit = parse_verilog(text).unwrap();
+    let result = propagate(&circuit, &BTreeMap::new(), Algebra::Kleene).unwrap();
+    assert_eq!(result.signals.get("y[0]"), Some(&Ternary::True));
+    assert_eq!(result.signals.get("y[1]"), Some(&Ternary::False));
+    assert_eq!(result.signals.get("y[2]"), Some(&Ternary::True));
+    assert_eq!(result.signals.get("y[3]"), Some(&Ternary::False));
+}
+
+#[test]
+fn ascending_internal_wire_keeps_range_on_export() {
+    let text = "module m(input [0:1] a, output [0:1] y);\n\
+                wire [0:1] n;\n\
+                assign n = ~a;\n\
+                assign y = n;\n\
+                endmodule\n";
+    let circuit = parse_verilog(text).unwrap();
+    assert_eq!(circuit.buses.get("n"), Some(&Bus::new_ascending("n", 2)));
+    let rendered = to_verilog(&circuit).unwrap();
+    assert!(rendered.contains("wire [0:1] n;"), "{rendered}");
+    assert_eq!(parse_verilog(&rendered).unwrap(), circuit);
+}
+
+#[test]
+fn hierarchical_cross_direction_bus_maps_by_position() {
+    use crate::circuit::propagate;
+    use std::collections::BTreeMap;
+
+    let text = "module top(input [3:0] a, output z0, output [3:0] y);\n\
+                  child u0 (.p(a), .q0(z0), .q(y));\n\
+                endmodule\n\
+                module child(input [0:3] p, output q0, output [0:3] q);\n\
+                  assign q0 = p[0];\n\
+                  assign q = p;\n\
+                endmodule\n";
+    let circuit = parse_verilog(text).unwrap();
+    let mut assignment = BTreeMap::new();
+    assignment.insert("a[0]".to_string(), Ternary::True);
+    for index in 1..4 {
+        assignment.insert(format!("a[{index}]"), Ternary::False);
+    }
+    let result = propagate(&circuit, &assignment, Algebra::Kleene).unwrap();
+    // p[0] 是升序 MSB，接到 a[3]（降序 MSB）；a[3]=0。
+    assert_eq!(result.signals.get("z0"), Some(&Ternary::False));
+    // q/p 都是升序；q[3]（LSB）↔ y[0]（降序 LSB），p[3]↔a[0]=1。
+    assert_eq!(result.signals.get("y[0]"), Some(&Ternary::True));
+    assert_eq!(result.signals.get("y[3]"), Some(&Ternary::False));
 }
