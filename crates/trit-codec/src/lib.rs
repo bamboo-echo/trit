@@ -2,6 +2,7 @@
 //!
 //! 三个方向的「编码器 / 解码器」：
 //!
+//! - [`plan`]：按数据分布选最省编码（无 `X` → 1 bit/trit；极稀疏 → 索引；其余 1.6 bit/trit）。
 //! - [`pack`]：5 trits / byte 二进制打包（1.6 bit/trit，比双导轨 2 bit/trit 省 20%）。
 //! - [`balanced`]：平衡三进制整数 `+0-` 文本，i64 全域 41 位。
 //! - [`hamming`]：GF(3) 上的 `[4,2,3]` 纠错码，保证纠正 1 个符号错误。
@@ -13,6 +14,7 @@
 pub mod balanced;
 pub mod hamming;
 pub mod pack;
+pub mod plan;
 
 /// 编解码错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
