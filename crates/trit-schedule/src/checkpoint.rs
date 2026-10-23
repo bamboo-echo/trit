@@ -5,7 +5,10 @@
 //! （JSON/protobuf/bincode 由调用方决定）。
 
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +34,9 @@ pub enum CheckpointError {
     /// 状态字节无法解析。
     #[error("状态损坏: {0}")]
     InvalidState(String),
+    /// 文件系统读写失败。
+    #[error("检查点 I/O 失败: {0}")]
+    Io(String),
 }
 
 /// 一个任务检查点。
@@ -203,6 +209,176 @@ impl CheckpointStore {
             .ok_or_else(|| CheckpointError::UnknownTask(task_id.to_string()))?;
         restore_checkpoint(restorer, checkpoint)
     }
+}
+
+/// 版本化目录的文件检查点存储。
+///
+/// 布局：`<root>/v<CHECKPOINT_VERSION>/<hex(task_id)>/<generation>.json`。
+/// 每次保存写同目录临时文件，再 `rename` 到**新**代文件；不覆盖旧文件，加载取最大代。
+/// 临时文件不以 `.json` 结尾，崩溃残留不会参与加载。
+#[derive(Debug, Clone)]
+pub struct FileCheckpointStore {
+    root: PathBuf,
+}
+
+impl FileCheckpointStore {
+    /// 用根目录构造；目录在首次保存时创建。
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    /// 根目录。
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// 当前版本目录。
+    pub fn version_dir(&self) -> PathBuf {
+        self.root.join(format!("v{CHECKPOINT_VERSION}"))
+    }
+
+    /// 任务目录（任务 id 十六进制转义，避免路径分隔符/非法字符）。
+    pub fn task_dir(&self, task_id: &str) -> PathBuf {
+        self.version_dir().join(hex_encode(task_id.as_bytes()))
+    }
+
+    /// 保存检查点并返回生成的代号。
+    pub fn save(&self, checkpoint: &Checkpoint) -> Result<u64, CheckpointError> {
+        checkpoint.validate()?;
+        let dir = self.task_dir(&checkpoint.task_id);
+        fs::create_dir_all(&dir).map_err(io_error)?;
+        let generation = latest_generation(&dir)?.map_or(1, |latest| latest + 1);
+        let bytes = serde_json::to_vec(checkpoint)
+            .map_err(|error| CheckpointError::InvalidState(error.to_string()))?;
+        let temp = dir.join(format!(".tmp-{}-{}", std::process::id(), nanos()));
+        fs::write(&temp, &bytes).map_err(io_error)?;
+        let target = dir.join(format!("{generation:020}.json"));
+        if let Err(error) = fs::rename(&temp, &target) {
+            let _ = fs::remove_file(&temp);
+            return Err(io_error(error));
+        }
+        Ok(generation)
+    }
+
+    /// 加载某任务最新检查点；不存在返回 `None`。
+    pub fn load(&self, task_id: &str) -> Result<Option<Checkpoint>, CheckpointError> {
+        let dir = self.task_dir(task_id);
+        let Some(path) = latest_checkpoint_file(&dir)? else {
+            return Ok(None);
+        };
+        let bytes = fs::read(&path).map_err(io_error)?;
+        let checkpoint: Checkpoint = serde_json::from_slice(&bytes)
+            .map_err(|error| CheckpointError::InvalidState(error.to_string()))?;
+        checkpoint.validate()?;
+        if checkpoint.task_id != task_id {
+            return Err(CheckpointError::InvalidState(format!(
+                "任务 id 不匹配: 期望 {task_id}，实际 {}",
+                checkpoint.task_id
+            )));
+        }
+        Ok(Some(checkpoint))
+    }
+
+    /// 删除某任务的全部检查点；不存在返回 `false`。
+    pub fn remove(&self, task_id: &str) -> Result<bool, CheckpointError> {
+        let dir = self.task_dir(task_id);
+        if !dir.exists() {
+            return Ok(false);
+        }
+        fs::remove_dir_all(&dir).map_err(io_error)?;
+        Ok(true)
+    }
+
+    /// 只保留某任务最新 `keep` 代，返回删除的文件数。
+    pub fn prune(&self, task_id: &str, keep: usize) -> Result<usize, CheckpointError> {
+        let dir = self.task_dir(task_id);
+        if !dir.exists() {
+            return Ok(0);
+        }
+        let mut files = checkpoint_files(&dir)?;
+        files.sort();
+        if files.len() <= keep {
+            return Ok(0);
+        }
+        let remove = files.len() - keep;
+        for path in files.into_iter().take(remove) {
+            fs::remove_file(path).map_err(io_error)?;
+        }
+        Ok(remove)
+    }
+
+    /// 已保存的任务数。
+    pub fn len(&self) -> Result<usize, CheckpointError> {
+        let dir = self.version_dir();
+        if !dir.exists() {
+            return Ok(0);
+        }
+        let mut count = 0;
+        for entry in fs::read_dir(&dir).map_err(io_error)? {
+            if entry.map_err(io_error)?.path().is_dir() {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    /// 是否没有任何任务。
+    pub fn is_empty(&self) -> Result<bool, CheckpointError> {
+        Ok(self.len()? == 0)
+    }
+}
+
+fn io_error(error: std::io::Error) -> CheckpointError {
+    CheckpointError::Io(error.to_string())
+}
+
+fn nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos())
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+fn checkpoint_files(dir: &Path) -> Result<Vec<PathBuf>, CheckpointError> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir).map_err(io_error)? {
+        let path = entry.map_err(io_error)?.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
+            files.push(path);
+        }
+    }
+    Ok(files)
+}
+
+fn latest_checkpoint_file(dir: &Path) -> Result<Option<PathBuf>, CheckpointError> {
+    if !dir.exists() {
+        return Ok(None);
+    }
+    let mut files = checkpoint_files(dir)?;
+    files.sort();
+    Ok(files.pop())
+}
+
+fn latest_generation(dir: &Path) -> Result<Option<u64>, CheckpointError> {
+    let mut latest = None;
+    for path in checkpoint_files(dir)? {
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let Ok(generation) = stem.parse::<u64>() else {
+            continue;
+        };
+        latest = Some(latest.map_or(generation, |current: u64| current.max(generation)));
+    }
+    Ok(latest)
 }
 
 #[cfg(test)]
@@ -387,5 +563,66 @@ mod checkpointed_task_tests {
             store.restore(&Restorer, "counter").unwrap()
         };
         assert_eq!(task.save_state().unwrap(), 4u64.to_le_bytes());
+    }
+}
+
+#[cfg(test)]
+mod file_store_tests {
+    use super::*;
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "trit-checkpoints-{}-{}",
+            std::process::id(),
+            nanos()
+        ))
+    }
+
+    fn cleanup(root: &Path) {
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_store_round_trips_versions_and_escapes_ids() {
+        let root = temp_root();
+        let store = FileCheckpointStore::new(&root);
+        let id = "../任务/a";
+        let first = store.save(&Checkpoint::new(id, vec![1])).unwrap();
+        let second = store.save(&Checkpoint::new(id, vec![2])).unwrap();
+        assert_eq!((first, second), (1, 2));
+        assert_eq!(store.load(id).unwrap().unwrap().state, vec![2]);
+        assert_eq!(store.len().unwrap(), 1);
+        assert!(!store.task_dir(id).to_string_lossy().contains(".."));
+        assert!(store.task_dir(id).starts_with(store.version_dir()));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn file_store_prunes_and_removes() {
+        let root = temp_root();
+        let store = FileCheckpointStore::new(&root);
+        for state in 0..3 {
+            store.save(&Checkpoint::new("a", vec![state])).unwrap();
+        }
+        assert_eq!(store.prune("a", 1).unwrap(), 2);
+        assert_eq!(store.load("a").unwrap().unwrap().state, vec![2]);
+        assert!(store.remove("a").unwrap());
+        assert!(store.load("a").unwrap().is_none());
+        assert!(!store.remove("a").unwrap());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn file_store_rejects_bad_version_without_writing() {
+        let root = temp_root();
+        let store = FileCheckpointStore::new(&root);
+        let mut bad = Checkpoint::new("a", vec![]);
+        bad.version = CHECKPOINT_VERSION + 1;
+        assert!(matches!(
+            store.save(&bad),
+            Err(CheckpointError::UnsupportedVersion { .. })
+        ));
+        assert!(store.is_empty().unwrap());
+        cleanup(&root);
     }
 }

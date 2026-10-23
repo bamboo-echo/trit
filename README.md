@@ -130,6 +130,10 @@ let restored = store.lock().unwrap().restore(&MyRestorer, "counter")?;
 
 状态编码格式由任务决定（JSON / bincode / 自定义字节），协议只规定边界与版本。
 
+落盘用 `FileCheckpointStore`：布局 `<root>/v1/<hex(task_id)>/<generation>.json`。
+每次保存写同目录临时文件，再 `rename` 到**新**代文件，不覆盖旧代；加载取最大代。
+`prune(task_id, keep)` 控制保留代数，`remove(task_id)` 清理任务目录。
+
 指标可直接导出 Prometheus/OpenMetrics 文本：
 
 ```rust

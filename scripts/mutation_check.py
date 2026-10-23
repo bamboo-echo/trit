@@ -950,6 +950,30 @@ MUTANTS = [
         "new": "    restorer.restore(&checkpoint.task_id, &checkpoint.state)\n",
         "pkg": "trit-schedule",
         "filter": "rejects_unknown_version_and_unknown_task"
+    },
+    {
+        "name": "file checkpoint: 保存不校验版本",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "    pub fn save(&self, checkpoint: &Checkpoint) -> Result<u64, CheckpointError> {\n        checkpoint.validate()?;\n",
+        "new": "    pub fn save(&self, checkpoint: &Checkpoint) -> Result<u64, CheckpointError> {\n",
+        "pkg": "trit-schedule",
+        "filter": "file_store_rejects_bad_version_without_writing"
+    },
+    {
+        "name": "file checkpoint: 加载取最旧",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "    files.sort();\n    Ok(files.pop())\n",
+        "new": "    files.sort();\n    Ok(files.into_iter().next())\n",
+        "pkg": "trit-schedule",
+        "filter": "file_store_round_trips_versions_and_escapes_ids"
+    },
+    {
+        "name": "file checkpoint: prune 保留最旧",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "        for path in files.into_iter().take(remove) {\n",
+        "new": "        for path in files.into_iter().skip(keep) {\n",
+        "pkg": "trit-schedule",
+        "filter": "file_store_prunes_and_removes"
     }
 ]
 

@@ -17,7 +17,7 @@ pub mod runtime;
 
 pub use checkpoint::{
     CHECKPOINT_VERSION, Checkpoint, CheckpointError, CheckpointStore, CheckpointTask,
-    CheckpointedTask, TaskRestorer, restore_checkpoint, save_checkpoint,
+    CheckpointedTask, FileCheckpointStore, TaskRestorer, restore_checkpoint, save_checkpoint,
 };
 pub use resumable::{
     Progress, ResumableError, ResumableReport, ResumableSpec, ResumableTask, StepContext,

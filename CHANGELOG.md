@@ -62,6 +62,14 @@
 - 测试：检查点往返、存储覆盖/删除、版本拒绝、runtime 每步落盘并恢复。
 - 变异门 114 → 117（版本校验、空状态、恢复校验）。
 
+### Added（0.12 checkpoint files）
+
+- `FileCheckpointStore`：版本化目录 `<root>/v1/<hex(task_id)>/<generation>.json`；
+  临时文件 + rename 到新代文件（不覆盖），加载取最新代；`prune`/`remove`/`len`。
+- 任务 id 十六进制转义，路径分隔符/unicode 不落到文件名；临时文件不参与加载。
+- 测试：往返/代号递增、id 转义、prune/remove、版本拒绝；crate 33 → 36。
+- 变异门 117 → 120（保存版本校验、加载最新代、prune 保留）。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，
