@@ -74,7 +74,7 @@ MUTANTS = [
     },
     {
         "name": "circuit: 拓扑排序退回声明序",
-        "file": "crates\\trit-circuit\\src\\circuit\\graph.rs",
+        "file": "crates//trit-circuit//src//circuit//graph.rs",
         "old": "            if deps.iter().all(|d| resolved.contains(d)) {",
         "new": "            if true {",
         "pkg": "trit-circuit",
@@ -82,7 +82,7 @@ MUTANTS = [
     },
     {
         "name": "circuit: 引脚故障不注入",
-        "file": "crates\\trit-circuit\\src\\circuit\\sim.rs",
+        "file": "crates//trit-circuit//src//circuit//sim.rs",
         "old": "                ins[pin] = value;",
         "new": "                let _ = value;",
         "pkg": "trit-circuit",
@@ -98,7 +98,7 @@ MUTANTS = [
     },
     {
         "name": "atpg: 全向量矩阵枚举为空",
-        "file": "crates\\trit-circuit\\src\\atpg\\mod.rs",
+        "file": "crates//trit-circuit//src//atpg//mod.rs",
         "old": "    let total = 1u64 << circuit.input_count();",
         "new": "    let total = 0;",
         "pkg": "trit-circuit",
@@ -106,7 +106,7 @@ MUTANTS = [
     },
     {
         "name": "circuit: 不可观测误判为被遮蔽",
-        "file": "crates\\trit-circuit\\src\\circuit\\analyze.rs",
+        "file": "crates//trit-circuit//src//circuit//analyze.rs",
         "old": "                } else if reachable.contains(gate.output.name()) {",
         "new": "                } else if true {",
         "pkg": "trit-circuit",
@@ -114,7 +114,7 @@ MUTANTS = [
     },
     {
         "name": "circuit: Const 缺值不再报错",
-        "file": "crates\\trit-circuit\\src\\circuit\\validate.rs",
+        "file": "crates//trit-circuit//src//circuit//validate.rs",
         "old": "            (GateKind::Const, None) => {",
         "new": "            (GateKind::Const, None) if false => {",
         "pkg": "trit-circuit",
@@ -122,7 +122,7 @@ MUTANTS = [
     },
     {
         "name": "circuit: 非 Const 带值不再报错",
-        "file": "crates\\trit-circuit\\src\\circuit\\validate.rs",
+        "file": "crates//trit-circuit//src//circuit//validate.rs",
         "old": "            (kind, Some(_)) if kind != GateKind::Const => {",
         "new": "            (_, Some(_)) if false => {",
         "pkg": "trit-circuit",
@@ -130,7 +130,7 @@ MUTANTS = [
     },
     {
         "name": "circuit: 空信号名不再报错",
-        "file": "crates\\trit-circuit\\src\\circuit\\validate.rs",
+        "file": "crates//trit-circuit//src//circuit//validate.rs",
         "old": "        if sig.name().is_empty() {",
         "new": "        if false {",
         "pkg": "trit-circuit",
@@ -234,7 +234,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 多输入 NAND/NOR 忘记最终反相",
-        "file": "crates\\trit-circuit\\src\\verilog\\parse.rs",
+        "file": "crates//trit-circuit//src//verilog//parse.rs",
         "old": "                        if invert {",
         "new": "                        if false {",
         "pkg": "trit-circuit",
@@ -242,7 +242,7 @@ MUTANTS = [
     },
     {
         "name": "atpg: X 位只验证一种填充",
-        "file": "crates\\trit-circuit\\src\\atpg\\mod.rs",
+        "file": "crates//trit-circuit//src//atpg//mod.rs",
         "old": "    for fill in 0..(1u64 << xbits.len()) {",
         "new": "    for fill in 0..1 {",
         "pkg": "trit-circuit",
@@ -250,7 +250,7 @@ MUTANTS = [
     },
     {
         "name": "check: 覆盖率无法执行时仍然 PASS",
-        "file": "crates\\trit-cli\\src\\commands\\check.rs",
+        "file": "crates//trit-cli//src//commands//check.rs",
         "old": "    if atpg.is_none() && min_coverage > 0.0 {",
         "new": "    if false {",
         "pkg": "trit-cli",
@@ -274,7 +274,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: assign 的 ^ 退化成强加三值 Xor",
-        "file": "crates\\trit-circuit\\src\\verilog\\parse.rs",
+        "file": "crates//trit-circuit//src//verilog//parse.rs",
         "old": "                    VExpr::Or(..) => GateKind::Or,\n                    _ => GateKind::XorClassic,",
         "new": "                    VExpr::Or(..) => GateKind::Or,\n                    _ => GateKind::Xor,",
         "pkg": "trit-circuit",
@@ -394,7 +394,7 @@ MUTANTS = [
     },
     {
         "name": "circuit: 组合数溢出后饱和",
-        "file": "crates\\trit-circuit\\src\\circuit\\types.rs",
+        "file": "crates//trit-circuit//src//circuit//types.rs",
         "old": "        checked_pow3(self.input_count())\n",
         "new": "        Ok(checked_pow3(self.input_count()).unwrap_or(u64::MAX))\n",
         "pkg": "trit-circuit",
@@ -434,7 +434,7 @@ MUTANTS = [
     },
     {
         "name": "atpg: X 合并忽略唯一覆盖（保留全部故障）",
-        "file": "crates\\trit-circuit\\src\\atpg\\compact.rs",
+        "file": "crates//trit-circuit//src//atpg//compact.rs",
         "old": "                        need.retain(|fault| !detected.contains(fault));",
         "new": "                        need.retain(|_fault| true);",
         "pkg": "trit-circuit",
@@ -474,7 +474,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 向量位选择恒取 bit 0",
-        "file": "crates\\trit-circuit\\src\\verilog\\expr.rs",
+        "file": "crates//trit-circuit//src//verilog//expr.rs",
         "old": "                    return Ok(VExpr::Var(format!(\"{name}[{index}]\")));",
         "new": "                    return Ok(VExpr::Var(format!(\"{name}[0]\")));",
         "pkg": "trit-circuit",
@@ -482,7 +482,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 拼接按 MSB-first 误解",
-        "file": "crates\\trit-circuit\\src\\verilog\\expr.rs",
+        "file": "crates//trit-circuit//src//verilog//expr.rs",
         "old": "            for item in items.iter().rev() {\n",
         "new": "            for item in items.iter() {\n",
         "pkg": "trit-circuit",
@@ -490,7 +490,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 向量端口只展开 bit 0",
-        "file": "crates\\trit-circuit\\src\\verilog\\parse.rs",
+        "file": "crates//trit-circuit//src//verilog//parse.rs",
         "old": "                for index in order {",
         "new": "                for index in [0] {",
         "pkg": "trit-circuit",
@@ -498,7 +498,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 导出不分组向量端口",
-        "file": "crates\\trit-circuit\\src\\verilog\\export.rs",
+        "file": "crates//trit-circuit//src//verilog//export.rs",
         "old": "            (max, true, bus.ascending)",
         "new": "            (max, false, bus.ascending)",
         "pkg": "trit-circuit",
@@ -506,7 +506,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 右值深度预算失效",
-        "file": "crates\\trit-circuit\\src\\verilog\\expr.rs",
+        "file": "crates//trit-circuit//src//verilog//expr.rs",
         "old": "        if self.depth > MAX_RHS_DEPTH {\n",
         "new": "        if false {\n",
         "pkg": "trit-circuit",
@@ -1130,6 +1130,24 @@ def select(pkgs: list[str]) -> list[dict]:
     return [mutant for mutant in MUTANTS if mutant["pkg"] in pkgs]
 
 
+def preflight(mutants: list[dict]) -> list[str]:
+    """跑测试之前先把文件与锚点查一遍：路径写错/锚点漂移要立刻报全，不等到跑一半才崩。"""
+    problems: list[str] = []
+    for mutant in mutants:
+        raw = mutant["file"]
+        if "\\" in raw:
+            problems.append(f"{mutant['name']}: 路径含反斜杠（Linux 打不开）: {raw}")
+            continue
+        path = ROOT / raw
+        if not path.is_file():
+            problems.append(f"{mutant['name']}: 文件不存在: {raw}")
+            continue
+        count = path.read_text(encoding="utf-8").count(mutant["old"])
+        if count != 1:
+            problems.append(f"{mutant['name']}: 锚点出现 {count} 次（{raw}）")
+    return problems
+
+
 def main(pkgs: list[str]) -> int:
     # Windows 控制台默认可能是 GBK；变异名里有中国字与 Ł，统一按 UTF-8 输出。
     if hasattr(sys.stdout, "reconfigure"):
@@ -1145,6 +1163,13 @@ def main(pkgs: list[str]) -> int:
         }
         detail = ", ".join(f"{pkg}={count}" for pkg, count in counts.items())
         print(f"只跑所选包（{detail}）：{len(mutants)} 个变异")
+    problems = preflight(mutants)
+    if problems:
+        print(f"PREFLIGHT FAILED（{len(problems)}/{len(mutants)} 条）:")
+        for problem in problems:
+            print(f"  {problem}")
+        return 1
+
     baseline: dict[tuple[str, str], bool] = {}
     survived = 0
     for mutant in mutants:
