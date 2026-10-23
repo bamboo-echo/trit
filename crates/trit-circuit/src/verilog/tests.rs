@@ -687,13 +687,177 @@ fn hierarchical_missing_port_connection_is_rejected() {
 }
 
 #[test]
-fn hierarchical_vector_ports_are_rejected() {
+fn hierarchical_vector_ports_connect_whole_bus() {
+    let text = "module top(input [3:0] a, output [3:0] y);
+  child u0 (.p(a), .q(y));
+endmodule
+module child(input [3:0] p, output [3:0] q);
+  assign q = ~p;
+endmodule
+";
+    let values = [
+        ("a[0]", Ternary::False),
+        ("a[1]", Ternary::True),
+        ("a[2]", Ternary::False),
+        ("a[3]", Ternary::True),
+    ];
+    assert_eq!(hier_signal(text, &values, "y[0]"), Ternary::True);
+    assert_eq!(hier_signal(text, &values, "y[1]"), Ternary::False);
+    assert_eq!(hier_signal(text, &values, "y[2]"), Ternary::True);
+    assert_eq!(hier_signal(text, &values, "y[3]"), Ternary::False);
+
+    let circuit = parse_verilog(text).unwrap();
+    assert_eq!(circuit.buses.get("a").map(|bus| bus.width), Some(4));
+    assert_eq!(circuit.buses.get("y").map(|bus| bus.width), Some(4));
+    let report = analyze(&circuit, Algebra::Kleene).unwrap();
+    assert_eq!(report.input_count, 4);
+    let rendered = to_verilog(&circuit).unwrap();
+    assert!(rendered.contains("input [3:0] a"), "{rendered}");
+    assert!(rendered.contains("output [3:0] y"), "{rendered}");
+}
+
+#[test]
+fn hierarchical_vector_positional_connections_work() {
+    let text = "module top(input [1:0] a, output [1:0] y);
+  child u0 (a, y);
+endmodule
+module child(input [1:0] p, output [1:0] q);
+  assign q = p;
+endmodule
+";
+    let values = [("a[0]", Ternary::True), ("a[1]", Ternary::False)];
+    assert_eq!(hier_signal(text, &values, "y[0]"), Ternary::True);
+    assert_eq!(hier_signal(text, &values, "y[1]"), Ternary::False);
+}
+
+#[test]
+fn hierarchical_vector_bit_order_is_preserved() {
+    // 输入 bus 与输出 bus 分别映射；再用一个标量输出观察 p[0]，
+    // 避免“输入反向 + 输出反向”互相抵消而掩盖位序错误。
+    let text = "module top(input [3:0] a, output y0, output [3:0] y);
+  child u0 (.p(a), .q0(y0), .q(y));
+endmodule
+module child(input [3:0] p, output q0, output [3:0] q);
+  assign q0 = p[0];
+  assign q = p;
+endmodule
+";
+    let values = [
+        ("a[0]", Ternary::True),
+        ("a[1]", Ternary::False),
+        ("a[2]", Ternary::False),
+        ("a[3]", Ternary::False),
+    ];
+    assert_eq!(hier_signal(text, &values, "y0"), Ternary::True);
+    assert_eq!(hier_signal(text, &values, "y[0]"), Ternary::True);
+    let values = [
+        ("a[0]", Ternary::False),
+        ("a[1]", Ternary::True),
+        ("a[2]", Ternary::False),
+        ("a[3]", Ternary::False),
+    ];
+    assert_eq!(hier_signal(text, &values, "y0"), Ternary::False);
+    assert_eq!(hier_signal(text, &values, "y[1]"), Ternary::True);
+}
+
+#[test]
+fn hierarchical_vector_and_scalar_ports_mix() {
+    let text = "module top(input [1:0] a, input c, output [1:0] y, output d);
+  child u0 (.p(a), .c(c), .q(y), .d(d));
+endmodule
+module child(input [1:0] p, input c, output [1:0] q, output d);
+  assign q[0] = p[0] & c;
+  assign q[1] = p[1] | c;
+  assign d = ~c;
+endmodule
+";
+    let values = [
+        ("a[0]", Ternary::True),
+        ("a[1]", Ternary::False),
+        ("c", Ternary::False),
+    ];
+    assert_eq!(hier_signal(text, &values, "y[0]"), Ternary::False);
+    assert_eq!(hier_signal(text, &values, "y[1]"), Ternary::False);
+    assert_eq!(hier_signal(text, &values, "d"), Ternary::True);
+    let values = [
+        ("a[0]", Ternary::True),
+        ("a[1]", Ternary::False),
+        ("c", Ternary::True),
+    ];
+    assert_eq!(hier_signal(text, &values, "y[0]"), Ternary::True);
+    assert_eq!(hier_signal(text, &values, "y[1]"), Ternary::True);
+    assert_eq!(hier_signal(text, &values, "d"), Ternary::False);
+}
+
+#[test]
+fn hierarchical_internal_bus_connects_to_child_bus() {
+    let text = "module top(input [1:0] a, output [1:0] y);
+  wire [1:0] n;
+  assign n = ~a;
+  child u0 (.p(n), .q(y));
+endmodule
+module child(input [1:0] p, output [1:0] q);
+  assign q = p;
+endmodule
+";
+    let values = [("a[0]", Ternary::True), ("a[1]", Ternary::False)];
+    assert_eq!(hier_signal(text, &values, "y[0]"), Ternary::False);
+    assert_eq!(hier_signal(text, &values, "y[1]"), Ternary::True);
+}
+
+#[test]
+fn hierarchical_vector_width_mismatch_is_rejected() {
     let err = parse_verilog(
-        "module top(input [1:0] a, output y);\n  child u0 (.p(a[0]), .q(y));\nendmodule\n\
+        "module top(input [1:0] a, output y);\n  child u0 (.p(a), .q(y));\nendmodule\n\
+         module child(input [3:0] p, output q);\n  assign q = p[0];\nendmodule\n",
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("需要 4 位"), "{err}");
+}
+
+#[test]
+fn hierarchical_vector_port_rejects_single_bit() {
+    let err = parse_verilog(
+        "module top(input [3:0] a, output y);\n  child u0 (.p(a[0]), .q(y));\nendmodule\n\
+         module child(input [3:0] p, output q);\n  assign q = p[0];\nendmodule\n",
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("不能连接单比特"), "{err}");
+}
+
+#[test]
+fn hierarchical_scalar_port_rejects_whole_bus() {
+    let err = parse_verilog(
+        "module top(input [3:0] a, output y);\n  child u0 (.p(a), .q(y));\nendmodule\n\
          module child(input p, output q);\n  buf g (q, p);\nendmodule\n",
     )
     .unwrap_err();
-    assert!(err.to_string().contains("向量声明"), "{err}");
+    assert!(err.to_string().contains("标量，不能连接 4 位向量"), "{err}");
+}
+
+#[test]
+fn hierarchical_vector_round_trips_through_verilog_export() {
+    use crate::circuit::propagate;
+    use std::collections::BTreeMap;
+
+    let text = "module top(input [1:0] a, output [1:0] y);
+  child u0 (.p(a), .q(y));
+endmodule
+module child(input [1:0] p, output [1:0] q);
+  assign q = ~p;
+endmodule
+";
+    let circuit = parse_verilog(text).unwrap();
+    let rendered = to_verilog(&circuit).unwrap();
+    let again = parse_verilog(&rendered).unwrap();
+    let mut assignment = BTreeMap::new();
+    assignment.insert("a[0]".to_string(), Ternary::True);
+    assignment.insert("a[1]".to_string(), Ternary::False);
+    let left = propagate(&circuit, &assignment, Algebra::Kleene).unwrap();
+    let right = propagate(&again, &assignment, Algebra::Kleene).unwrap();
+    for bit in ["y[0]", "y[1]"] {
+        assert_eq!(left.signals.get(bit), right.signals.get(bit), "{bit}");
+    }
 }
 
 #[test]

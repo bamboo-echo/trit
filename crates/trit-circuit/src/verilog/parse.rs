@@ -802,5 +802,6 @@ fn parse_module_at(cleaned: &str, module_at: usize) -> Result<ModuleDef, Verilog
         circuit,
         instances,
         ports: port_order,
+        widths,
     })
 }

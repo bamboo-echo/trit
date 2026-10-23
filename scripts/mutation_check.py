@@ -534,6 +534,30 @@ MUTANTS = [
         "new": "    if false && used.contains(&renamed) {\n",
         "pkg": "trit-circuit",
         "filter": "hierarchical_generated_names_do_not_collide_with_user_signals"
+    },
+    {
+        "name": "hierarchy: 向量端口宽度不校验",
+        "file": "crates/trit-circuit/src/verilog/hierarchy.rs",
+        "old": "    if parent_width != child_width {\n",
+        "new": "    if false && parent_width != child_width {\n",
+        "pkg": "trit-circuit",
+        "filter": "hierarchical_vector_width_mismatch_is_rejected"
+    },
+    {
+        "name": "hierarchy: 向量端口接受单比特连接",
+        "file": "crates/trit-circuit/src/verilog/hierarchy.rs",
+        "old": "    if index.is_some() {\n",
+        "new": "    if false && index.is_some() {\n",
+        "pkg": "trit-circuit",
+        "filter": "hierarchical_vector_port_rejects_single_bit"
+    },
+    {
+        "name": "hierarchy: 向量 bus 逆序连线",
+        "file": "crates/trit-circuit/src/verilog/hierarchy.rs",
+        "old": "        .map(|index| (format!(\"{port}[{index}]\"), format!(\"{base}[{index}]\")))\n",
+        "new": "        .map(|index| (format!(\"{port}[{index}]\"), format!(\"{base}[{}]\", child_width - 1 - index)))\n",
+        "pkg": "trit-circuit",
+        "filter": "hierarchical_vector_bit_order_is_preserved"
     }
 ]
 
