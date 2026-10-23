@@ -170,6 +170,84 @@ pub struct TaskFailure {
     pub message: String,
 }
 
+/// 运行时统计快照。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeMetrics {
+    /// 实际开始执行的任务数。
+    pub started: usize,
+    /// 完成任务数。
+    pub completed: usize,
+    /// 失败任务数（0/1）。
+    pub failed: usize,
+    /// 取消/未执行任务数。
+    pub cancelled: usize,
+    /// Unknown 依赖延迟任务数。
+    pub deferred: usize,
+    /// 抢占次数。
+    pub preemptions: usize,
+    /// 执行的总 step 数（闭包任务固定等于 started）。
+    pub steps: u64,
+    /// 峰值资源占用。
+    pub peak_usage: Resources,
+}
+
+impl RuntimeMetrics {
+    /// Prometheus 指标默认前缀。
+    pub const DEFAULT_PROMETHEUS_PREFIX: &'static str = "trit_schedule";
+
+    /// 导出为 Prometheus/OpenMetrics 文本行。
+    pub fn to_prometheus(&self) -> String {
+        self.to_prometheus_with(Self::DEFAULT_PROMETHEUS_PREFIX)
+    }
+
+    /// 用指定前缀导出；空前缀回退到默认值。
+    pub fn to_prometheus_with(&self, prefix: &str) -> String {
+        use std::fmt::Write as _;
+        let prefix = if prefix.is_empty() {
+            Self::DEFAULT_PROMETHEUS_PREFIX
+        } else {
+            prefix
+        };
+        let mut out = String::new();
+        for (name, help, value) in [
+            ("started", "Tasks started (unique).", self.started as u64),
+            ("completed", "Tasks completed.", self.completed as u64),
+            ("failed", "Failed tasks (0 or 1).", self.failed as u64),
+            (
+                "cancelled",
+                "Tasks cancelled or not run.",
+                self.cancelled as u64,
+            ),
+            (
+                "deferred",
+                "Tasks deferred by unknown dependencies.",
+                self.deferred as u64,
+            ),
+            (
+                "preemptions",
+                "Preemptions between steps.",
+                self.preemptions as u64,
+            ),
+            ("steps", "Total steps executed.", self.steps),
+            (
+                "peak_cpu",
+                "Peak CPU units in use.",
+                self.peak_usage.cpu.into(),
+            ),
+            (
+                "peak_memory",
+                "Peak memory units in use.",
+                self.peak_usage.memory.into(),
+            ),
+        ] {
+            let _ = writeln!(out, "# HELP {prefix}_{name} {help}");
+            let _ = writeln!(out, "# TYPE {prefix}_{name} gauge");
+            let _ = writeln!(out, "{prefix}_{name} {value}");
+        }
+        out
+    }
+}
+
 /// runtime 执行结果。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeReport {
@@ -185,6 +263,15 @@ pub struct RuntimeReport {
     pub deferred: Vec<DeferredTask>,
     /// 运行期间峰值资源占用。
     pub peak_usage: Resources,
+    /// 统计快照。
+    pub metrics: RuntimeMetrics,
+}
+
+impl RuntimeReport {
+    /// 以 Prometheus 文本导出统计快照。
+    pub fn metrics_prometheus(&self) -> String {
+        self.metrics.to_prometheus()
+    }
 }
 
 /// runtime 构造错误。
@@ -211,6 +298,7 @@ struct Shared {
     dependents: Vec<Vec<usize>>,
     indegree: Vec<usize>,
     running: usize,
+    started: usize,
     stop: bool,
     completed: BTreeSet<String>,
     cancelled: BTreeSet<String>,
@@ -414,6 +502,16 @@ pub fn run_with_config(
             cancelled: Vec::new(),
             deferred: deferred_out,
             peak_usage: Resources::default(),
+            metrics: RuntimeMetrics {
+                started: 0,
+                completed: 0,
+                failed: 0,
+                cancelled: 0,
+                deferred: 0,
+                preemptions: 0,
+                steps: 0,
+                peak_usage: Resources::default(),
+            },
         });
     }
 
@@ -424,6 +522,7 @@ pub fn run_with_config(
             dependents,
             indegree: run_indegree,
             running: 0,
+            started: 0,
             stop: false,
             completed: BTreeSet::new(),
             cancelled: BTreeSet::new(),
@@ -460,6 +559,16 @@ pub fn run_with_config(
     for id in leftover {
         state.cancelled.insert(id);
     }
+    let metrics = RuntimeMetrics {
+        started: state.started,
+        completed: state.completed.len(),
+        failed: usize::from(state.failed.is_some()),
+        cancelled: state.cancelled.len(),
+        deferred: state.deferred.len(),
+        preemptions: 0,
+        steps: state.started as u64,
+        peak_usage: state.peak,
+    };
     Ok(RuntimeReport {
         workers,
         completed: state.completed.iter().cloned().collect(),
@@ -467,6 +576,7 @@ pub fn run_with_config(
         cancelled: state.cancelled.iter().cloned().collect(),
         deferred: state.deferred.clone(),
         peak_usage: state.peak,
+        metrics,
     })
 }
 
@@ -495,6 +605,7 @@ fn worker(shared: Arc<(Mutex<Shared>, Condvar)>, cancel: CancelToken) {
                 continue;
             };
             state.running += 1;
+            state.started += 1;
             let requirements = state.requirements[position];
             state.used = state
                 .used
@@ -836,5 +947,42 @@ mod tests {
         let config = RuntimeConfig::new(2).with_capacity(Resources::new(0, 6));
         run_with_config(tasks, config, CancelToken::new()).unwrap();
         assert_eq!(*log.lock().unwrap(), vec!["high", "low"]);
+    }
+}
+
+#[cfg(test)]
+mod metrics_export_tests {
+    use super::*;
+
+    #[test]
+    fn prometheus_exports_all_fields() {
+        let metrics = RuntimeMetrics {
+            started: 3,
+            completed: 2,
+            failed: 1,
+            cancelled: 4,
+            deferred: 5,
+            preemptions: 6,
+            steps: 7,
+            peak_usage: Resources::new(8, 9),
+        };
+        let text = metrics.to_prometheus_with("trit_test");
+        assert!(text.contains("# TYPE trit_test_started gauge"));
+        assert!(text.contains("trit_test_started 3\n"));
+        assert!(text.contains("trit_test_completed 2\n"));
+        assert!(text.contains("trit_test_failed 1\n"));
+        assert!(text.contains("trit_test_cancelled 4\n"));
+        assert!(text.contains("trit_test_deferred 5\n"));
+        assert!(text.contains("trit_test_preemptions 6\n"));
+        assert!(text.contains("trit_test_steps 7\n"));
+        assert!(text.contains("trit_test_peak_cpu 8\n"));
+        assert!(text.contains("trit_test_peak_memory 9\n"));
+        assert!(!text.contains("trit_schedule_"));
+        assert!(metrics.to_prometheus().contains("trit_schedule_steps 7\n"));
+        assert!(
+            metrics
+                .to_prometheus_with("")
+                .contains("trit_schedule_started 3\n")
+        );
     }
 }

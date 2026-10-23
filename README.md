@@ -80,6 +80,68 @@ let report = run_runtime(tasks, 2, CancelToken::new()).unwrap();
 `RuntimeTask::with_requirements(...)` 声明需求；队首任务放不下时等待，不跳过它去塞低优先任务。
 运行中的任务**不会**被抢占；优先级只影响准入顺序。
 
+### 可恢复任务协议（resumable）
+
+需要真正抢占时，任务要实现 `ResumableTask::step`：每次只推进一个有界步骤，返回
+`Progress::Yield` 表示可在步骤边界暂停；对象本身保存检查点状态。
+
+```rust
+use trit_schedule::{Progress, ResumableSpec, RuntimeConfig, StepContext, run_resumable,
+                     CancelToken, ResumableTask};
+
+struct Job { done: usize }
+impl ResumableTask for Job {
+    fn step(&mut self, _ctx: &StepContext) -> Progress {
+        self.done += 1;
+        if self.done == 10 { Progress::Done } else { Progress::Yield }
+    }
+}
+let report = run_resumable(
+    vec![ResumableSpec::new("job", vec![], Job { done: 0 })],
+    RuntimeConfig::new(1),
+    CancelToken::new(),
+).unwrap();
+```
+
+`run_resumable` 是**单线程步进式参考执行器**；`run_resumable_threaded` 是多线程版本：
+worker 在 `Yield` 边界检查更高优先级任务，必要时把当前任务放回 ready 并释放资源，
+任务对象保留、之后从原状态继续。两者都不强杀正在执行的 `step`。
+
+两个 runtime 报告都包含 `RuntimeMetrics`：`started/completed/failed/cancelled/deferred/
+preemptions/steps/peak_usage`。`started` 按任务去重，抢占后恢复不会重复计数。
+### 检查点协议（checkpoint）
+
+任务实现 `CheckpointTask::save_state` 编码自身状态；恢复方实现 `TaskRestorer::restore`
+按任务 id 重建任务。`Checkpoint` 带格式版本，`CheckpointStore` 按 id 覆盖保存。
+`CheckpointedTask` 把检查点任务包成普通 `ResumableTask`，在每次 `Yield`/`Done` 后写入
+共享存储，单线程/多线程执行器都能直接用。
+
+```rust
+let store = Arc::new(Mutex::new(CheckpointStore::new()));
+let task = CheckpointedTask::new("counter", Counter::new(10), Arc::clone(&store));
+let report = run_resumable(
+    vec![ResumableSpec::new("counter", vec![], task)],
+    RuntimeConfig::new(1),
+    CancelToken::new(),
+).unwrap();
+// 进程重启后：
+let restored = store.lock().unwrap().restore(&MyRestorer, "counter")?;
+```
+
+状态编码格式由任务决定（JSON / bincode / 自定义字节），协议只规定边界与版本。
+
+落盘用 `FileCheckpointStore`：布局 `<root>/v1/<hex(task_id)>/<generation>.json`。
+每次保存写同目录临时文件，再 `rename` 到**新**代文件，不覆盖旧代；加载取最大代。
+`prune(task_id, keep)` 控制保留代数，`remove(task_id)` 清理任务目录。
+
+指标可直接导出 Prometheus/OpenMetrics 文本：
+
+```rust
+let text = report.metrics.to_prometheus();          // 前缀 trit_schedule
+let text = report.metrics.to_prometheus_with("ci"); // 自定义前缀
+let text = report.metrics_prometheus();             // 报告便捷方法
+```
+
 ## 三生（sansheng）
 
 crates.io 包名用拼音 `sansheng`（`三生` 不能直接作 crate 名）。伞包统一暴露核心 API：

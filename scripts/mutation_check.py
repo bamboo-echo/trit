@@ -862,6 +862,118 @@ MUTANTS = [
         "new": "            if false {\n",
         "pkg": "trit-schedule",
         "filter": "task_exceeding_capacity_is_rejected"
+    },
+    {
+        "name": "resumable: 抢占丢失状态",
+        "file": "crates/trit-schedule/src/resumable.rs",
+        "old": "    tasks[victim] = Some(task);\n",
+        "new": "    let _ = task;\n",
+        "pkg": "trit-schedule",
+        "filter": "preempted_task_resumes_from_its_own_state"
+    },
+    {
+        "name": "resumable: 抢占优先级过滤反了",
+        "file": "crates/trit-schedule/src/resumable.rs",
+        "old": "        .filter(|position| priorities[*position] < high_priority)\n",
+        "new": "        .filter(|position| priorities[*position] > high_priority)\n",
+        "pkg": "trit-schedule",
+        "filter": "preempted_task_resumes_from_its_own_state"
+    },
+    {
+        "name": "resumable: 失败后不清理后续",
+        "file": "crates/trit-schedule/src/resumable.rs",
+        "old": "\n    cancel_pending(&mut ready, &mut running, &mut tasks, &mut cancelled, &ids);\n",
+        "new": "\n    if failed.is_none() { cancel_pending(&mut ready, &mut running, &mut tasks, &mut cancelled, &ids); }\n",
+        "pkg": "trit-schedule",
+        "filter": "failure_and_unknown_dependencies_are_reported"
+    },
+    {
+        "name": "threaded: 抢占丢失状态",
+        "file": "crates/trit-schedule/src/resumable_threaded.rs",
+        "old": "                        state.tasks[position] = Some(task);\n",
+        "new": "                        let _ = task;\n",
+        "pkg": "trit-schedule",
+        "filter": "threaded_preemption_keeps_task_state"
+    },
+    {
+        "name": "threaded: 抢占优先级过滤反了",
+        "file": "crates/trit-schedule/src/resumable_threaded.rs",
+        "old": "                        *p > priority && (state.idle == 0 || !might_fit(&state, *high))\n",
+        "new": "                        *p < priority && (state.idle == 0 || !might_fit(&state, *high))\n",
+        "pkg": "trit-schedule",
+        "filter": "threaded_preemption_keeps_task_state"
+    },
+    {
+        "name": "metrics: started 不唯一",
+        "file": "crates/trit-schedule/src/resumable_threaded.rs",
+        "old": "    if state.started_tasks.insert(position) {\n",
+        "new": "    if true {\n",
+        "pkg": "trit-schedule",
+        "filter": "threaded_preemption_keeps_task_state"
+    },
+    {
+        "name": "metrics: Prometheus completed 写成 started",
+        "file": "crates/trit-schedule/src/runtime.rs",
+        "old": "            (\"completed\", \"Tasks completed.\", self.completed as u64),\n",
+        "new": "            (\"completed\", \"Tasks completed.\", self.started as u64),\n",
+        "pkg": "trit-schedule",
+        "filter": "prometheus_exports_all_fields"
+    },
+    {
+        "name": "metrics: Prometheus 峰值内存写成 CPU",
+        "file": "crates/trit-schedule/src/runtime.rs",
+        "old": "                self.peak_usage.memory.into(),\n",
+        "new": "                self.peak_usage.cpu.into(),\n",
+        "pkg": "trit-schedule",
+        "filter": "prometheus_exports_all_fields"
+    },
+    {
+        "name": "checkpoint: 版本校验失效",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "        if self.version == CHECKPOINT_VERSION {\n",
+        "new": "        if true {\n",
+        "pkg": "trit-schedule",
+        "filter": "rejects_unknown_version_and_unknown_task"
+    },
+    {
+        "name": "checkpoint: 保存空状态",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "    Ok(Checkpoint::new(task_id, task.save_state()?))\n",
+        "new": "    Ok(Checkpoint::new(task_id, Vec::new()))\n",
+        "pkg": "trit-schedule",
+        "filter": "checkpoint_round_trips_progress"
+    },
+    {
+        "name": "checkpoint: 恢复不校验版本",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "    checkpoint.validate()?;\n    restorer.restore(&checkpoint.task_id, &checkpoint.state)\n",
+        "new": "    restorer.restore(&checkpoint.task_id, &checkpoint.state)\n",
+        "pkg": "trit-schedule",
+        "filter": "rejects_unknown_version_and_unknown_task"
+    },
+    {
+        "name": "file checkpoint: 保存不校验版本",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "    pub fn save(&self, checkpoint: &Checkpoint) -> Result<u64, CheckpointError> {\n        checkpoint.validate()?;\n",
+        "new": "    pub fn save(&self, checkpoint: &Checkpoint) -> Result<u64, CheckpointError> {\n",
+        "pkg": "trit-schedule",
+        "filter": "file_store_rejects_bad_version_without_writing"
+    },
+    {
+        "name": "file checkpoint: 加载取最旧",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "    files.sort();\n    Ok(files.pop())\n",
+        "new": "    files.sort();\n    Ok(files.into_iter().next())\n",
+        "pkg": "trit-schedule",
+        "filter": "file_store_round_trips_versions_and_escapes_ids"
+    },
+    {
+        "name": "file checkpoint: prune 保留最旧",
+        "file": "crates/trit-schedule/src/checkpoint.rs",
+        "old": "        for path in files.into_iter().take(remove) {\n",
+        "new": "        for path in files.into_iter().skip(keep) {\n",
+        "pkg": "trit-schedule",
+        "filter": "file_store_prunes_and_removes"
     }
 ]
 

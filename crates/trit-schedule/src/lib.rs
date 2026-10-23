@@ -10,11 +10,23 @@
 
 #![forbid(unsafe_code)]
 
+pub mod checkpoint;
+pub mod resumable;
+pub mod resumable_threaded;
 pub mod runtime;
 
+pub use checkpoint::{
+    CHECKPOINT_VERSION, Checkpoint, CheckpointError, CheckpointStore, CheckpointTask,
+    CheckpointedTask, FileCheckpointStore, TaskRestorer, restore_checkpoint, save_checkpoint,
+};
+pub use resumable::{
+    Progress, ResumableError, ResumableReport, ResumableSpec, ResumableTask, StepContext,
+    run_resumable,
+};
+pub use resumable_threaded::run_resumable_threaded;
 pub use runtime::{
-    CancelToken, Resources, RuntimeConfig, RuntimeError, RuntimeReport, RuntimeTask, TaskFailure,
-    run as run_runtime, run_with_config,
+    CancelToken, Resources, RuntimeConfig, RuntimeError, RuntimeMetrics, RuntimeReport,
+    RuntimeTask, TaskFailure, run as run_runtime, run_with_config,
 };
 
 use std::cmp::Reverse;

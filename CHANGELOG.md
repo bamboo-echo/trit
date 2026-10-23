@@ -29,6 +29,47 @@
 - 测试：6+6 超过 10 时串行、超容量拒绝、配额下高优先级先跑。
 - 变异门 103 → 106（容量、占用累计、超容量拒绝）。
 
+### Added（0.12 可恢复任务协议）
+
+- 新增 `ResumableTask::step`：步骤边界 `Yield` + 任务对象内检查点状态。
+- `run_resumable` 单线程步进式参考执行器：高优先任务在步骤之间抢占低优先任务，
+  低优先任务放回 ready 但状态保留，之后继续；资源配额同样生效。
+- 报告 `preemptions`、`steps`、`peak_usage`；取消/失败后不执行新 step。
+- 测试：抢占后从原步骤继续、优先级顺序、取消、失败/未知依赖、环/超容量。
+- 变异门 106 → 109（抢占状态、优先级过滤、失败清理）。
+
+### Added（0.12 threaded resumable + metrics）
+
+- `run_resumable_threaded`：worker 在 `Yield` 边界抢占，任务对象保留；资源/优先级/取消沿用协议。
+- `RuntimeMetrics` 统一指标：`started`（按任务去重）/`completed`/`failed`/`cancelled`/
+  `deferred`/`preemptions`/`steps`/`peak_usage`；闭包 runtime 与 resumable runtime 都有。
+- 测试：线程抢占后状态续跑、双 worker 重叠、取消/指标、单线程参考仍通过。
+- 变异门 109 → 112（线程抢占状态、优先级过滤、started 去重）。
+
+### Added（0.12 metrics export）
+
+- `RuntimeMetrics::to_prometheus()` / `to_prometheus_with(prefix)`：Prometheus/OpenMetrics
+  文本导出；报告提供 `metrics_prometheus()` 便捷方法；空前缀回退到 `trit_schedule`。
+- 导出字段与 `RuntimeMetrics` 一致；峰值拆为 `peak_cpu` / `peak_memory`。
+- 测试 `prometheus_exports_all_fields`；变异门 112 → 114。
+
+### Added（0.12 checkpoint protocol）
+
+- `CheckpointTask::save_state` + `TaskRestorer::restore`：可序列化状态协议，编码格式由任务决定。
+- `Checkpoint` 带 `version`，`CheckpointStore` 按任务 id 覆盖保存/读取/删除/恢复。
+- `CheckpointedTask` 包装器：每次 `Yield`/`Done` 后写入共享存储，可直接用于现有
+  单线程/线程 runtime。
+- 测试：检查点往返、存储覆盖/删除、版本拒绝、runtime 每步落盘并恢复。
+- 变异门 114 → 117（版本校验、空状态、恢复校验）。
+
+### Added（0.12 checkpoint files）
+
+- `FileCheckpointStore`：版本化目录 `<root>/v1/<hex(task_id)>/<generation>.json`；
+  临时文件 + rename 到新代文件（不覆盖），加载取最新代；`prune`/`remove`/`len`。
+- 任务 id 十六进制转义，路径分隔符/unicode 不落到文件名；临时文件不参与加载。
+- 测试：往返/代号递增、id 转义、prune/remove、版本拒绝；crate 33 → 36。
+- 变异门 117 → 120（保存版本校验、加载最新代、prune 保留）。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，
