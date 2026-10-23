@@ -235,6 +235,15 @@ trit check design.net --constraints io.json --min-coverage 0.9
 `delays` / `default_delay`。`trit check --library` 使用同一份模型。
 `--paths N` 列出最慢的 N 条路径（信号序列 + 延迟）；JSON 里是 `paths`。
 
+`--sdf file.sdf` 直接读 SDF 的 IOPATH 延迟（与 `--library` 互斥）：
+
+- 只取 `(CELL (CELLTYPE ...) (DELAY (ABSOLUTE (IOPATH ...))))`；rise/fall、`min:typ:max`
+  都取**最坏值**，`COND` 条件弧并入同一 celltype，最后**向上取整**为整数周期。
+- 按 celltype（`AND2` / `NAND3` / `INV` / `BUF` ...）聚合，同一类型取所有实例的最坏值；
+  不保留 per-instance 差异。`TIMESCALE` 不换算，SDF 未覆盖的门类型回退到 `--delay`。
+- 未知 celltype（如触发器）忽略；一个可识别延迟都没有时明确报错。
+- 这是 **SDF-lite**：用于把综合/布局后的延迟粗注进 STA-lite，不是签核级 SDF 语义。
+
 ## BDD 引擎（`--bdd`）
 
 第三条等价路径：把双导轨直接建成 BDD，差集 BDD 为 false 即等价。BDD 是 canonical 的，

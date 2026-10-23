@@ -678,6 +678,38 @@ MUTANTS = [
         "new": "        let arrival = 0;\n",
         "pkg": "trit-circuit",
         "filter": "input_arrival_and_output_required_constraints"
+    },
+    {
+        "name": "sdf: 取最小延迟",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "                    worst = worst.max(delay);\n",
+        "new": "                    worst = worst.min(delay);\n",
+        "pkg": "trit-circuit",
+        "filter": "sdf::tests::parses_and_rounds_up_the_worst_arc"
+    },
+    {
+        "name": "sdf: 向下取整",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "        let rounded = value.ceil();\n",
+        "new": "        let rounded = value.floor();\n",
+        "pkg": "trit-circuit",
+        "filter": "sdf::tests::parses_and_rounds_up_the_worst_arc"
+    },
+    {
+        "name": "sdf: 跨实例取最小",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "                    .and_modify(|current| *current = current.max(worst))\n",
+        "new": "                    .and_modify(|current| *current = current.min(worst))\n",
+        "pkg": "trit-circuit",
+        "filter": "sdf::tests::takes_the_max_across_instances_and_conditional_arcs"
+    },
+    {
+        "name": "sdf: 放行负值",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "        if !value.is_finite() || value < 0.0 {\n",
+        "new": "        if !value.is_finite() {\n",
+        "pkg": "trit-circuit",
+        "filter": "sdf::tests::rejects_bad_syntax_and_missing_delays"
     }
 ]
 

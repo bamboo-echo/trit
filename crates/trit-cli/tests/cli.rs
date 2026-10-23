@@ -931,3 +931,39 @@ fn jobs_do_not_change_atpg_or_bridge_output() {
     assert_eq!(parallel.2, 0, "stdout={} stderr={}", parallel.0, parallel.1);
     assert_eq!(serial.0, parallel.0);
 }
+
+#[test]
+fn sdf_delays_feed_timing_and_check() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let netlist = dir.join("and2.net");
+    let sdf = dir.join("and2.sdf");
+    let (stdout, stderr, code) = run(&[
+        "timing",
+        netlist.to_str().unwrap(),
+        "--sdf",
+        sdf.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("\"critical_path\": 3"), "{stdout}");
+    assert!(stdout.contains("\"arrival\": 3"), "{stdout}");
+
+    let (stdout, stderr, code) = run(&[
+        "check",
+        netlist.to_str().unwrap(),
+        "--sdf",
+        sdf.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let (_, _, code) = run(&[
+        "timing",
+        netlist.to_str().unwrap(),
+        "--sdf",
+        sdf.to_str().unwrap(),
+        "--library",
+        dir.join("timing_constraints.json").to_str().unwrap(),
+    ]);
+    assert_ne!(code, 0, "--sdf 与 --library 必须互斥");
+}

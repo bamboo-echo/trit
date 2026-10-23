@@ -55,6 +55,7 @@
 | SAT ATPG / 桥接 | ≤64 主输入 | 逐故障 CNF，`--jobs` 按故障分块；结果顺序固定 |
 | 位切片批量 | 任意长度 | 2 bit/elem、按字运算 |
 | 二进制互操作 | 任意长度 | `Option<unknowns>` + move-only 视图 |
+| SDF 延迟注入 | celltype 粒度 | 最坏 IOPATH、向上取整；不做 per-instance |
 
 ## 非目标
 

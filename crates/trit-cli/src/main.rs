@@ -218,6 +218,9 @@ enum Commands {
         /// 时序库 JSON（`default_delay` + `delays`），形如 `{"default_delay":1,"delays":{"AND":2}}`。
         #[arg(long, value_name = "FILE")]
         library: Option<std::path::PathBuf>,
+        /// SDF 延迟文件（保守子集：每类 celltype 取最坏 IOPATH，向上取整；TIMESCALE 不换算）。
+        #[arg(long, value_name = "FILE", conflicts_with = "library")]
+        sdf: Option<std::path::PathBuf>,
         /// I/O 时序约束 JSON（`input_arrival` / `output_required`）。
         #[arg(long, value_name = "FILE")]
         constraints: Option<std::path::PathBuf>,
@@ -267,6 +270,9 @@ enum Commands {
         /// 时序库 JSON。
         #[arg(long, value_name = "FILE")]
         library: Option<std::path::PathBuf>,
+        /// SDF 延迟文件（保守子集：每类 celltype 取最坏 IOPATH，向上取整）。
+        #[arg(long, value_name = "FILE", conflicts_with = "library")]
+        sdf: Option<std::path::PathBuf>,
         /// I/O 时序约束 JSON（`input_arrival` / `output_required`）。
         #[arg(long, value_name = "FILE")]
         constraints: Option<std::path::PathBuf>,
@@ -423,6 +429,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library,
+            sdf,
             constraints,
             paths,
             format,
@@ -433,6 +440,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library.as_deref(),
+            sdf.as_deref(),
             constraints.as_deref(),
             paths,
             format,
@@ -452,6 +460,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library,
+            sdf,
             constraints,
             min_coverage,
             format,
@@ -462,6 +471,7 @@ fn main() -> Result<()> {
             delay,
             load_delay,
             library.as_deref(),
+            sdf.as_deref(),
             constraints.as_deref(),
             min_coverage,
             format,
@@ -582,17 +592,29 @@ pub(crate) fn assignment_json(asg: &Assignment) -> serde_json::Value {
 /// ```
 pub(crate) fn timing_model(
     library: Option<&std::path::Path>,
+    sdf: Option<&std::path::Path>,
     delay: u32,
     load_delay: Option<u32>,
 ) -> Result<trit_circuit::timing::TimingModel> {
-    let mut model = match library {
-        Some(library) => {
+    let mut model = match (library, sdf) {
+        (Some(_), Some(_)) => {
+            anyhow::bail!("--library 与 --sdf 只能选一个");
+        }
+        (Some(library), None) => {
             let text = std::fs::read_to_string(library)
                 .with_context(|| format!("无法读取时序库 {}", library.display()))?;
             trit_circuit::timing::TimingModel::from_json(&text)
                 .with_context(|| format!("时序库解析失败：{}", library.display()))?
         }
-        None => trit_circuit::timing::TimingModel {
+        (None, Some(sdf)) => {
+            let text = std::fs::read_to_string(sdf)
+                .with_context(|| format!("无法读取 SDF {}", sdf.display()))?;
+            let mut model = trit_circuit::sdf::timing_model_from_sdf(&text)
+                .with_context(|| format!("SDF 解析失败：{}", sdf.display()))?;
+            model.default_delay = delay;
+            model
+        }
+        (None, None) => trit_circuit::timing::TimingModel {
             default_delay: delay,
             ..Default::default()
         },

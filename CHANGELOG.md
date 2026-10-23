@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added（0.11 SDF-lite 互操作）
+
+- **SDF 读取**：`trit_circuit::sdf::{parse_sdf, timing_model_from_sdf}`；`trit timing` /
+  `trit check` 增加 `--sdf FILE`（与 `--library` 互斥）。只取 `CELL/CELLTYPE/DELAY/ABSOLUTE/
+  IOPATH`，rise/fall 与 `min:typ:max` 取最坏值、`COND` 合并、向上取整；按 celltype 聚合，
+  `TIMESCALE` 不换算，未知 celltype 忽略，无可识别延迟时报错。
+- 测试：语法/缺延迟/负值拒绝、跨实例与条件弧最坏值、`min:typ:max`、CLI `timing`/`check`。
+- 变异门 83 → 87（新增：取最小值、floor、跨实例取最小、放行负值）。
+
 ### Added（0.11 并行 SAT）
 
 - **并行 ATPG / 桥接 SAT**：`generate_tests_sat_with_jobs` 与

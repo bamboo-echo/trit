@@ -13,12 +13,13 @@ pub(crate) fn cmd_timing(
     delay: u32,
     load_delay: Option<u32>,
     library: Option<&std::path::Path>,
+    sdf: Option<&std::path::Path>,
     constraints: Option<&std::path::Path>,
     paths: usize,
     format: Format,
 ) -> Result<()> {
     let circuit = load_circuit(path, from)?;
-    let model = timing_model(library, delay, load_delay)?;
+    let model = timing_model(library, sdf, delay, load_delay)?;
     let constraints = crate::load_timing_constraints(constraints)?;
     let report = trit_circuit::timing::analyze_timing_with_constraints(
         &circuit,

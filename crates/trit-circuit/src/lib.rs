@@ -13,6 +13,7 @@ pub mod netlist;
 mod parallel;
 mod pattern;
 mod sat_cnf;
+pub mod sdf;
 pub mod timing;
 pub mod verilog;
 
@@ -34,6 +35,7 @@ pub use map::{
     CellLibrary, CellTiming, MapError, MapStrategy, to_cells, to_cells_with_load, to_nand_only,
 };
 pub use netlist::{NetlistError, from_json, parse_netlist, to_json, to_netlist};
+pub use sdf::{SdfError, parse_sdf, timing_model_from_sdf};
 pub use timing::{
     OutputTiming, TimingConstraints, TimingError, TimingModel, TimingModelError, TimingPath,
     TimingReport, analyze_timing, analyze_timing_with_constraints, critical_paths,
