@@ -19,6 +19,7 @@ members = [
     "crates/trit-codec",
     "crates/trit-attn",
     "crates/trit-float",
+    "crates/trit-dot",
 ]
 
 [workspace.package]
