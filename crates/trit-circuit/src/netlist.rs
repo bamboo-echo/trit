@@ -114,7 +114,7 @@ pub fn parse_netlist(text: &str) -> Result<Circuit, NetlistError> {
 }
 
 /// 当前网表 JSON 格式版本；缺省 `format` 视为旧版 0。
-const JSON_FORMAT: u32 = 1;
+const JSON_FORMAT: u32 = 2;
 
 #[derive(serde::Serialize)]
 struct NetlistJson<'a> {
@@ -239,15 +239,15 @@ mod tests {
     fn json_format_is_versioned_and_rejects_newer() {
         let circuit = parse_netlist(AND).unwrap();
         let json = to_json(&circuit).unwrap();
-        assert!(json.contains("\"format\": 1"), "{json}");
+        assert!(json.contains("\"format\": 2"), "{json}");
 
         let legacy = serde_json::to_string(&circuit).unwrap();
         assert!(!legacy.contains("\"format\""), "{legacy}");
         assert_eq!(from_json(&legacy).unwrap(), circuit);
 
-        let newer = json.replace("\"format\": 1", "\"format\": 2");
+        let newer = json.replace("\"format\": 2", "\"format\": 3");
         let err = from_json(&newer).unwrap_err();
-        assert!(err.to_string().contains("格式版本 2"), "{err}");
+        assert!(err.to_string().contains("格式版本 3"), "{err}");
     }
 
     #[test]

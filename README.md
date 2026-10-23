@@ -315,6 +315,18 @@ python -m http.server 8765 --directory playground
 `trit circuit examples/and_gate.net`：输出含 `X` 的输入组合数、各输出值域、冗余输入与 stuck-at 不可测故障。
 只支持组合逻辑，不做时序/时钟。
 
+### 多模块与实例（标量 / `[N:0]` / `[0:N]` 向量）
+
+`parse_verilog` 支持一个文件里多个 `module` 与模块实例：
+
+- 连接支持 `.port(signal)` 与按端口顺序的位置连接；端口必须全部连接，重复连接报错；
+- 必须有且只有一个未被实例化的顶层模块；未知模块、递归、多顶层、重复实例名都返回错误；
+- 支持标量与 `[N:0]`、`[0:N]` 向量端口；向量端口只能连接同宽度的整条 bus，按位展开；
+  跨方向连接按**位序**映射（Verilog 左界是 MSB），宽度不匹配或把向量端口接到单比特都会明确报错；
+  单模块且无实例时保留原有完整向量行为；
+- 展开后的内部信号名加 `实例名__` 前缀；与用户信号冲突时显式报错，不静默复用；
+- 门数上限 10 万、嵌套 256 层，均在展开过程中检查，不是展开完再判。
+
 库侧 `trit_circuit::analyze_faults` 只做故障分析，不做 `3^n` 输出域枚举。
 `trit atpg examples/and_gate.net`：对每个门引脚的 stuck-at 故障生成**二进制**测试向量（贪心集合覆盖），
 输出覆盖率、向量数与不可测故障。可测性判定基于 `2^n` 二进制向量；`X` 输入不是物理测试向量，不计入。
@@ -375,12 +387,13 @@ JSON 输出含每对的 `testable`/`witness` 与测试向量 `patterns`。
 等宽逐位向量赋值 `assign y = a & b;`，以及尺寸常量 `<width>'<b|o|d|h><digits>`
 （如 `4'b1010`、`8'hFF`、`4'd9`，支持 `_` 分隔与 b/o/h 的 `x`/`z`）。
 内部按位展开成 `a[3]`… 这类单比特网，声明宽度保留在 `Circuit.buses`
-（`Bus { name, width }`）；导出按声明宽度重组，JSON 往返保留，也允许只建模向量的部分位。
-只支持 `[N:0]` 范围的组合逻辑，拒绝时序、`[0:N]`、复制语法 `{2{a}}`、位宽不匹配
+（`Bus { name, width, ascending }`）；导出按声明宽度与方向重组，JSON 往返保留，也允许只建模向量的部分位。
+支持 `[N:0]` 与 `[0:N]`（左界为 MSB）范围的组合逻辑，拒绝时序、其它范围、复制语法 `{2{a}}`、位宽不匹配
 与未声明向量的非连续位；`always/reg/initial` 一律拒绝。
 `trit netlist design.v --from verilog --to verilog` 可做向量端口往返。
 格式互转：`trit netlist design.net`（text → JSON），`trit netlist design.json --from json --to text`。
-JSON 带 `format: 1` 版本字段；缺少 `format` 的旧文件按 0 读取，更高版本会被拒绝。
+JSON 带 `format: 2` 版本字段（2 起记录向量方向）；缺少 `format` 的旧文件按 0 读取，
+`format: 1` 仍接受（按降序解释），更高版本会被拒绝。
 网表指令：`input` / `output` / `gate <AND|OR|XOR|NAND|NOR> <a> <b> <out>` / `not <a> <out>` /
 `buf <a> <out>` / `const <0|1|X> <out>`。`examples/x_mask.net` 是 `X & 0`、`X | 1` 遮蔽的最小例子。
 同一信号被多个源驱动、或主输入重复声明，都会在分析前报错。
@@ -430,6 +443,8 @@ OK     free slot must not reject on unknown hopelessness
 
 ## 范围
 
+- 三进制红利 / 模拟税 / 生态路径依赖 / 基数无关复杂度是四类不同问题，讨论前先归类：
+  [docs/TERNARY-BOUNDARIES.md](docs/TERNARY-BOUNDARIES.md)。
 - 只做**真值函数**三值逻辑；硬件四态 `0/1/X/Z` 与 X-optimism 不在范围内。
 - 不做时序模型检验、通用 SMT、完整硬件仿真。
 - 穷举参考是逐赋值的，18 变量约 12.6 s，仅用于小规模对拍。
