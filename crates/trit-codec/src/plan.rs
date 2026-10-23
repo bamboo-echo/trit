@@ -382,12 +382,8 @@ mod tests {
             let (encoding, bytes) = encode(values);
             let view = View::new(encoding, &bytes, values.len()).unwrap();
             assert_eq!(view.len(), values.len());
-            for index in 0..values.len() {
-                assert_eq!(
-                    view.get(index),
-                    Some(values[index]),
-                    "{encoding:?} @{index}"
-                );
+            for (index, value) in values.iter().enumerate() {
+                assert_eq!(view.get(index), Some(*value), "{encoding:?} @{index}");
             }
             assert_eq!(view.get(values.len()), None);
             let collected: Vec<Ternary> = view.iter().collect();
