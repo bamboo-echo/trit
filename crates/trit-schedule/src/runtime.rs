@@ -42,6 +42,82 @@ pub type TaskOutcome = Result<(), String>;
 
 type Job = Box<dyn FnOnce(&CancelToken) -> TaskOutcome + Send>;
 
+/// 资源配额（任意单位；`cpu` 与 `memory` 分开计）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resources {
+    /// CPU/槽位数。
+    pub cpu: u32,
+    /// 内存单位数。
+    pub memory: u32,
+}
+
+impl Resources {
+    /// 构造配额。
+    pub const fn new(cpu: u32, memory: u32) -> Self {
+        Self { cpu, memory }
+    }
+
+    /// 在 `used` 基础上再加 `self` 是否不超过 `capacity`。
+    pub fn fits_in(self, capacity: Self, used: Self) -> bool {
+        used.cpu
+            .checked_add(self.cpu)
+            .is_some_and(|cpu| cpu <= capacity.cpu)
+            && used
+                .memory
+                .checked_add(self.memory)
+                .is_some_and(|memory| memory <= capacity.memory)
+    }
+
+    /// 相加；溢出返回 `None`。
+    pub fn checked_add(self, other: Self) -> Option<Self> {
+        Some(Self {
+            cpu: self.cpu.checked_add(other.cpu)?,
+            memory: self.memory.checked_add(other.memory)?,
+        })
+    }
+
+    /// 释放已占资源。
+    pub fn release(self, other: Self) -> Self {
+        Self {
+            cpu: self.cpu.saturating_sub(other.cpu),
+            memory: self.memory.saturating_sub(other.memory),
+        }
+    }
+
+    /// 逐维取较大值（用于峰值）。
+    pub fn max(self, other: Self) -> Self {
+        Self {
+            cpu: self.cpu.max(other.cpu),
+            memory: self.memory.max(other.memory),
+        }
+    }
+}
+
+/// runtime 配置。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeConfig {
+    /// worker 数。
+    pub workers: usize,
+    /// 资源上限；`None` 表示不限制。
+    pub capacity: Option<Resources>,
+}
+
+impl RuntimeConfig {
+    /// 默认无资源配额。
+    pub fn new(workers: usize) -> Self {
+        Self {
+            workers,
+            capacity: None,
+        }
+    }
+
+    /// 设置资源上限。
+    pub fn with_capacity(mut self, capacity: Resources) -> Self {
+        self.capacity = Some(capacity);
+        self
+    }
+}
+
 /// 一个可执行任务。
 pub struct RuntimeTask {
     /// 唯一任务名。
@@ -50,6 +126,8 @@ pub struct RuntimeTask {
     pub priority: i32,
     /// 三值依赖。
     pub deps: Vec<Dependency>,
+    /// 资源需求；默认全 0。
+    pub requirements: Resources,
     /// 任务体；运行时拿到取消令牌。
     pub run: Job,
 }
@@ -65,6 +143,7 @@ impl RuntimeTask {
             id: id.into(),
             priority: 0,
             deps,
+            requirements: Resources::default(),
             run: Box::new(run),
         }
     }
@@ -72,6 +151,12 @@ impl RuntimeTask {
     /// 设置优先级。
     pub fn with_priority(mut self, priority: i32) -> Self {
         self.priority = priority;
+        self
+    }
+
+    /// 设置资源需求。
+    pub fn with_requirements(mut self, requirements: Resources) -> Self {
+        self.requirements = requirements;
         self
     }
 }
@@ -98,6 +183,8 @@ pub struct RuntimeReport {
     pub cancelled: Vec<String>,
     /// Unknown 依赖导致的延迟任务。
     pub deferred: Vec<DeferredTask>,
+    /// 运行期间峰值资源占用。
+    pub peak_usage: Resources,
 }
 
 /// runtime 构造错误。
@@ -106,6 +193,16 @@ pub enum RuntimeError {
     /// 图验证失败。
     #[error(transparent)]
     Schedule(#[from] ScheduleError),
+    /// 单个任务的资源需求超过容量，永远不会被调度。
+    #[error("任务 {task} 需要 {requirements:?}，超过容量 {capacity:?}")]
+    Unschedulable {
+        /// 任务名。
+        task: String,
+        /// 需求。
+        requirements: Resources,
+        /// 容量。
+        capacity: Resources,
+    },
 }
 
 struct Shared {
@@ -120,6 +217,10 @@ struct Shared {
     failed: Option<TaskFailure>,
     ids: Vec<String>,
     priorities: Vec<i32>,
+    requirements: Vec<Resources>,
+    used: Resources,
+    capacity: Option<Resources>,
+    peak: Resources,
     deferred: Vec<DeferredTask>,
 }
 
@@ -140,6 +241,20 @@ pub fn run(
     workers: usize,
     cancel: CancelToken,
 ) -> Result<RuntimeReport, RuntimeError> {
+    run_with_config(tasks, RuntimeConfig::new(workers), cancel)
+}
+
+/// 带资源配置的 runtime。
+///
+/// 配额是**严格优先级准入**：队首任务放不下时等待，不为了塞进低优先任务而跳过它；
+/// 运行中的任务不会被抢占。
+pub fn run_with_config(
+    tasks: Vec<RuntimeTask>,
+    config: RuntimeConfig,
+    cancel: CancelToken,
+) -> Result<RuntimeReport, RuntimeError> {
+    let workers = config.workers;
+    let capacity = config.capacity;
     if workers == 0 {
         return Err(ScheduleError::NoWorkers.into());
     }
@@ -201,6 +316,23 @@ pub fn run(
         }
     }
     let active_count = deferred.iter().filter(|reason| reason.is_none()).count();
+    if let Some(capacity) = capacity {
+        for position in 0..n {
+            if deferred[position].is_some() {
+                continue;
+            }
+            if !tasks[position]
+                .requirements
+                .fits_in(capacity, Resources::default())
+            {
+                return Err(RuntimeError::Unschedulable {
+                    task: tasks[position].id.clone(),
+                    requirements: tasks[position].requirements,
+                    capacity,
+                });
+            }
+        }
+    }
 
     let mut indegree = vec![0usize; n];
     let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -261,6 +393,7 @@ pub fn run(
         .collect();
     let ids: Vec<String> = tasks.iter().map(|task| task.id.clone()).collect();
     let priorities: Vec<i32> = tasks.iter().map(|task| task.priority).collect();
+    let requirements: Vec<Resources> = tasks.iter().map(|task| task.requirements).collect();
     let jobs: Vec<Option<Job>> = tasks.into_iter().map(|task| Some(task.run)).collect();
     let deferred_out: Vec<DeferredTask> = deferred
         .iter()
@@ -280,6 +413,7 @@ pub fn run(
             failed: None,
             cancelled: Vec::new(),
             deferred: deferred_out,
+            peak_usage: Resources::default(),
         });
     }
 
@@ -296,6 +430,10 @@ pub fn run(
             failed: None,
             ids,
             priorities,
+            requirements,
+            used: Resources::default(),
+            capacity,
+            peak: Resources::default(),
             deferred: deferred_out,
         }),
         Condvar::new(),
@@ -328,6 +466,7 @@ pub fn run(
         failed: state.failed.clone(),
         cancelled: state.cancelled.iter().cloned().collect(),
         deferred: state.deferred.clone(),
+        peak_usage: state.peak,
     })
 }
 
@@ -339,7 +478,15 @@ fn worker(shared: Arc<(Mutex<Shared>, Condvar)>, cancel: CancelToken) {
             state.stop = true;
             state.cancel_pending();
         }
-        if let Some((_priority, id, position)) = state.ready.pop() {
+        let fits = state.ready.peek().is_some_and(|(_, _, position)| {
+            state
+                .capacity
+                .is_none_or(|capacity| state.requirements[*position].fits_in(capacity, state.used))
+        });
+        if fits {
+            let Some((_priority, id, position)) = state.ready.pop() else {
+                continue;
+            };
             if state.stop {
                 state.cancelled.insert(id);
                 continue;
@@ -348,6 +495,12 @@ fn worker(shared: Arc<(Mutex<Shared>, Condvar)>, cancel: CancelToken) {
                 continue;
             };
             state.running += 1;
+            let requirements = state.requirements[position];
+            state.used = state
+                .used
+                .checked_add(requirements)
+                .expect("预检保证资源相加不溢出");
+            state.peak = state.peak.max(state.used);
             drop(state);
 
             let result = catch_unwind(AssertUnwindSafe(|| run(&cancel)))
@@ -355,6 +508,7 @@ fn worker(shared: Arc<(Mutex<Shared>, Condvar)>, cancel: CancelToken) {
 
             state = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             state.running -= 1;
+            state.used = state.used.release(state.requirements[position]);
             match result {
                 Ok(()) => {
                     state.completed.insert(id);
@@ -593,5 +747,94 @@ mod tests {
         assert_eq!(report.failed.unwrap().task, "bad");
         assert!(!report.completed.contains(&"after".to_string()));
         assert!(report.cancelled.contains(&"after".to_string()));
+    }
+
+    #[test]
+    fn quota_serializes_tasks_that_do_not_fit_together() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let max = Arc::new(AtomicUsize::new(0));
+        let make = |id: &str| {
+            let active = Arc::clone(&active);
+            let max = Arc::clone(&max);
+            RuntimeTask::new(id, vec![], move |_| {
+                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                max.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(30));
+                active.fetch_sub(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .with_requirements(Resources::new(0, 6))
+        };
+        let config = RuntimeConfig::new(2).with_capacity(Resources::new(0, 10));
+        let report =
+            run_with_config(vec![make("a"), make("b")], config, CancelToken::new()).unwrap();
+        assert_eq!(report.completed, vec!["a", "b"]);
+        assert_eq!(max.load(Ordering::SeqCst), 1, "6+6 超过 10，必须串行");
+        assert_eq!(report.peak_usage.memory, 6);
+    }
+
+    #[test]
+    fn task_exceeding_capacity_is_rejected() {
+        let task =
+            RuntimeTask::new("huge", vec![], |_| Ok(())).with_requirements(Resources::new(0, 11));
+        let config = RuntimeConfig::new(1).with_capacity(Resources::new(0, 10));
+        assert!(matches!(
+            run_with_config(vec![task], config, CancelToken::new()),
+            Err(RuntimeError::Unschedulable { .. })
+        ));
+    }
+
+    #[test]
+    fn quota_accumulates_across_tasks() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let max = Arc::new(AtomicUsize::new(0));
+        let make = |id: &str| {
+            let active = Arc::clone(&active);
+            let max = Arc::clone(&max);
+            RuntimeTask::new(id, vec![], move |_| {
+                let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                max.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(30));
+                active.fetch_sub(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .with_requirements(Resources::new(0, 4))
+        };
+        let config = RuntimeConfig::new(3).with_capacity(Resources::new(0, 8));
+        let report = run_with_config(
+            vec![make("a"), make("b"), make("c")],
+            config,
+            CancelToken::new(),
+        )
+        .unwrap();
+        assert_eq!(report.completed.len(), 3);
+        assert_eq!(
+            max.load(Ordering::SeqCst),
+            2,
+            "4+4+4 在容量 8 下只能并行两个"
+        );
+        assert_eq!(report.peak_usage.memory, 8);
+    }
+
+    #[test]
+    fn priority_admission_wins_under_quota() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let make = |id: &str, priority: i32, log: Arc<Mutex<Vec<String>>>| {
+            let id = id.to_string();
+            let logged = id.clone();
+            RuntimeTask::new(id, vec![], move |_| {
+                log.lock().unwrap().push(logged.clone());
+                Ok(())
+            })
+            .with_priority(priority)
+            .with_requirements(Resources::new(0, 6))
+        };
+        let tasks = vec![
+            make("low", 0, Arc::clone(&log)),
+            make("high", 10, Arc::clone(&log)),
+        ];
+        let config = RuntimeConfig::new(2).with_capacity(Resources::new(0, 6));
+        run_with_config(tasks, config, CancelToken::new()).unwrap();
+        assert_eq!(*log.lock().unwrap(), vec!["high", "low"]);
     }
 }

@@ -102,8 +102,9 @@
 - **v0.11（已完成，0.11.0）**：并行 ATPG/桥接、共享 CNF（10k 门/40k 故障 2.6 s）、
   策略断言并行；SDF per-instance；Verilog 整数参数/实例覆盖；CLI 全局硬超时。
 - **v0.12（进行中）**：`trit-schedule` 静态三值 DAG 调度（True/False/Unknown、多 worker、
-  关键路径）与依赖驱动 runtime（协作式取消、失败停止派发）已完成；下一步强制抢占/资源约束，
-  以及 SDF 引脚级/TIMESCALE、Liberty/SDC、100k 门、Python/C 绑定与 1.0 API 收口。
+  关键路径）与依赖驱动 runtime（协作式取消、失败停止派发、cpu/memory 配额、严格优先级准入）
+  已完成；不做运行中强制抢占。下一步 SDF 引脚级/TIMESCALE、Liberty/SDC、100k 门、
+  Python/C 绑定与 1.0 API 收口。
 
 ## 参考
 

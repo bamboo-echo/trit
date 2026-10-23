@@ -21,6 +21,14 @@
   未知依赖、panic 转失败、环/零 worker 拒绝。
 - 变异门 100 → 103（取消、依赖传播、失败停止）。
 
+### Added（0.12 资源配额）
+
+- `Resources { cpu, memory }` + `RuntimeConfig::with_capacity`；任务 `with_requirements`。
+- 严格优先级准入：队首放不下时等待；运行中任务不抢占。
+- 超过容量的单任务直接 `Unschedulable`；报告新增 `peak_usage`。
+- 测试：6+6 超过 10 时串行、超容量拒绝、配额下高优先级先跑。
+- 变异门 103 → 106（容量、占用累计、超容量拒绝）。
+
 ## [0.11.0] - 2026-10-23
 
 0.10 与 0.11 合并发布：并行/共享 CNF、SDF per-instance、Verilog 参数化、CLI 硬超时，

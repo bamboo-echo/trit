@@ -76,6 +76,10 @@ let report = run_runtime(tasks, 2, CancelToken::new()).unwrap();
 取消是**协作式**的：未开始的任务不再启动；已经在跑的任务不会被强杀，必须自己检查 token。
 失败或取消后停止派发新任务，报告 `completed` / `failed` / `cancelled` / `deferred`。
 
+资源配额用 `RuntimeConfig::with_capacity(Resources::new(cpu, memory))`，任务用
+`RuntimeTask::with_requirements(...)` 声明需求；队首任务放不下时等待，不跳过它去塞低优先任务。
+运行中的任务**不会**被抢占；优先级只影响准入顺序。
+
 ## 三生（sansheng）
 
 crates.io 包名用拼音 `sansheng`（`三生` 不能直接作 crate 名）。伞包统一暴露核心 API：
