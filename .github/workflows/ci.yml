@@ -56,6 +56,17 @@ jobs:
       - name: Every file within budget or shrinking-only debt
         run: python3 scripts/module_budget.py
 
+  stress:
+    name: stress (high pressure invariants)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Extreme vectors, word boundaries, large random payloads
+        run: cargo test --release --locked -p trit-dot -p trit-codec -p trit-float -p trit-gpu --tests
+
   publish-graph:
     name: publish graph (no dep on unpublished crates)
     runs-on: ubuntu-latest
