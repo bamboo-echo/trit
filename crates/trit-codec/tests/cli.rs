@@ -143,3 +143,14 @@ fn checksum_append_then_verify_passes() {
     let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(v["valid"], true);
 }
+
+#[test]
+fn sop_cli_basic() {
+    // rows JSON：[[input_string, output_char], ...]。
+    // True 行 = (a,b=False) 的全部三个具体赋值 → 应化简成单条 "X0"。
+    let (stdout, _, code) = run(&["sop", "[[\"00\",\"1\"],[\"x0\",\"1\"],[\"10\",\"1\"]]"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("sop 输出必须是合法 JSON");
+    assert_eq!(v["term_count"], 1);
+    assert_eq!(v["terms"], serde_json::json!(["X0"]));
+}
