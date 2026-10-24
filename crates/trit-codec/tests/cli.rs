@@ -143,3 +143,19 @@ fn checksum_append_then_verify_passes() {
     let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(v["valid"], true);
 }
+
+#[test]
+fn rle_cli_round_trips() {
+    // 111XX00001 → runs [["1",3],["X",2],["0",4],["1",1]]，总长 10。
+    let (stdout, _, code) = run(&["rle", "111XX00001"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["run_count"], 4);
+    let runs = v["runs"].to_string();
+    let trits = v["trits"].as_str().unwrap().to_string();
+
+    let (stdout, _, code) = run(&["rle", "--decode", "--len", &trits.len().to_string(), &runs]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["trits"], "111XX00001");
+}

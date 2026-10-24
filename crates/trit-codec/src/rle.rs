@@ -7,6 +7,7 @@
 //! 设计边界：
 //!
 //! - `count` 用 `u32`——单条游程最长 42.9 亿 trit，实验层足够；超长序列请自行切块。
+//!   即使输入真的超出该上限，`encode` 也只在 `u32::MAX` 处饱和，不溢出、不 panic。
 //! - 编码**总是可逆**：相邻游程 value 必不同（合并规则保证），解码只按 `count` 展开。
 //! - 解码必须给出 `expected_len`：游程流本身不带总长，外部声明才能在篡改后显式报错，
 //!   而不是静默多解或少解。
@@ -18,11 +19,14 @@ use trit_core::value::Ternary;
 /// 编码：把连续相同的 trit 合并成 `(value, count)`。
 ///
 /// 空输入编码为空列表；单 trit 输入编码为一条 `count=1`。
+///
+/// 单条游程计数在 `u32::MAX` 处饱和（绝不溢出 panic）；现实中不可能喂进 42.9 亿个
+/// 相同 trit，但「永不 panic」是本 crate 的铁律。
 pub fn encode(values: &[Ternary]) -> Vec<(Ternary, u32)> {
     let mut runs: Vec<(Ternary, u32)> = Vec::new();
     for &value in values {
         match runs.last_mut() {
-            Some((last, count)) if *last == value => *count += 1,
+            Some((last, count)) if *last == value => *count = count.saturating_add(1),
             _ => runs.push((value, 1)),
         }
     }
@@ -36,27 +40,36 @@ pub fn encode(values: &[Ternary]) -> Vec<(Ternary, u32)> {
 /// - 任一 `count == 0` → [`CodecError::RleZeroCount`]；
 /// - 展开后总长度 ≠ `expected_len` → [`CodecError::RleLengthMismatch`]。
 ///
-/// 空游程列表 + `expected_len == 0` 合法（还原空序列）。
+/// 空游程列表 + `expected_len == 0` 合法（还原空序列）；空游程 + `expected_len > 0`
+/// 属于长度不符。`expected_len` 视为不可信输入：先纯校验求和、确认与它相等之后才
+/// 分配输出缓冲，因此垃圾长度只会得到结构化错误，不会触发异常分配或 panic。
 pub fn decode(runs: &[(Ternary, u32)], expected_len: usize) -> Result<Vec<Ternary>, CodecError> {
-    let mut out = Vec::with_capacity(expected_len);
-    let mut actual: usize = 0;
-    for &(value, count) in runs {
-        if count == 0 {
-            return Err(CodecError::RleZeroCount);
+    // 第一遍：校验 + 求和，不依据 expected_len 做任何分配。
+    let total: usize = {
+        let mut acc: usize = 0;
+        for &(_, count) in runs {
+            if count == 0 {
+                return Err(CodecError::RleZeroCount);
+            }
+            acc = acc
+                .checked_add(count as usize)
+                .ok_or(CodecError::RleLengthMismatch {
+                    expected: expected_len,
+                    actual: usize::MAX,
+                })?;
         }
-        actual = actual
-            .checked_add(count as usize)
-            .ok_or(CodecError::RleLengthMismatch {
-                expected: expected_len,
-                actual: usize::MAX,
-            })?;
-        out.extend(std::iter::repeat_n(value, count as usize));
-    }
-    if actual != expected_len {
+        acc
+    };
+    if total != expected_len {
         return Err(CodecError::RleLengthMismatch {
             expected: expected_len,
-            actual,
+            actual: total,
         });
+    }
+    // 第二遍：此时 total 已验证 == expected_len，分配大小是可信的。
+    let mut out = Vec::with_capacity(total);
+    for &(value, count) in runs {
+        out.extend(std::iter::repeat_n(value, count as usize));
     }
     Ok(out)
 }
@@ -87,7 +100,10 @@ mod tests {
     use super::*;
 
     fn v(chars: &[char]) -> Vec<Ternary> {
-        chars.iter().map(|c| Ternary::parse_char(*c).unwrap()).collect()
+        chars
+            .iter()
+            .map(|c| Ternary::parse_char(*c).unwrap())
+            .collect()
     }
 
     #[test]
@@ -109,9 +125,16 @@ mod tests {
         let runs = encode(&v(&['1', '1', '1', 'X', 'X', '0']));
         assert_eq!(
             runs,
-            vec![(Ternary::True, 3), (Ternary::Unknown, 2), (Ternary::False, 1)]
+            vec![
+                (Ternary::True, 3),
+                (Ternary::Unknown, 2),
+                (Ternary::False, 1)
+            ]
         );
-        assert_eq!(decode(&runs, 6).unwrap(), v(&['1', '1', '1', 'X', 'X', '0']));
+        assert_eq!(
+            decode(&runs, 6).unwrap(),
+            v(&['1', '1', '1', 'X', 'X', '0'])
+        );
     }
 
     #[test]
@@ -137,6 +160,42 @@ mod tests {
                 expected: 5,
                 actual: 3
             })
+        ));
+    }
+
+    #[test]
+    fn empty_runs_with_positive_len_is_a_length_mismatch() {
+        // 没有游程却声称要还原非空序列——不是合法空输入，按长度不符拒绝。
+        assert!(matches!(
+            decode(&[], 3),
+            Err(CodecError::RleLengthMismatch {
+                expected: 3,
+                actual: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn zero_count_mid_stream_is_rejected() {
+        // 第一条合法，第二条 count=0——也要拒绝，而不是只查第一条。
+        let runs = vec![(Ternary::True, 2), (Ternary::False, 0)];
+        assert!(matches!(decode(&runs, 2), Err(CodecError::RleZeroCount)));
+    }
+
+    #[test]
+    fn garbage_huge_expected_len_does_not_panic() {
+        // expected_len 是不可信输入：垃圾值必须返回结构化错误，绝不触发异常分配。
+        let runs = vec![(Ternary::True, 1)];
+        assert!(matches!(
+            decode(&runs, usize::MAX),
+            Err(CodecError::RleLengthMismatch {
+                expected: usize::MAX,
+                actual: 1
+            })
+        ));
+        assert!(matches!(
+            decode(&[], usize::MAX),
+            Err(CodecError::RleLengthMismatch { .. })
         ));
     }
 
