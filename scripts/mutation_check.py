@@ -81,6 +81,46 @@ MUTANTS = [
         "filter": "evaluation_is_independent_of_gate_declaration_order"
     },
     {
+        "name": "verilog: 拼接嵌套不计深度",
+        "file": "crates/trit-circuit/src/verilog/expr.rs",
+        "old": "                self.enter()?;" + "\n" + "                let parsed = self.parse_concat_body();" + "\n" + "                self.leave();" + "\n" + "                parsed",
+        "new": "                let parsed = self.parse_concat_body();" + "\n" + "                parsed",
+        "pkg": "trit-circuit",
+        "filter": "deeply_nested_concat_returns_limit_not_stack_overflow"
+    },
+    {
+        "name": "verilog: 二元运算链不封顶",
+        "file": "crates/trit-circuit/src/verilog/expr.rs",
+        "old": "        self.ops += 1;" + "\n" + "        if self.ops > MAX_RHS_OPS {",
+        "new": "        self.ops += 1;" + "\n" + "        if self.ops > MAX_RHS_OPS * 40 {",
+        "pkg": "trit-circuit",
+        "filter": "long_operator_chain_returns_limit_not_stack_overflow"
+    },
+    {
+        "name": "sdf: 括号深度护栏失效",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "                self.depth += 1;" + "\n" + "                if self.depth > MAX_SDF_DEPTH {",
+        "new": "                self.depth += 1;" + "\n" + "                if false {",
+        "pkg": "trit-circuit",
+        "filter": "budget_rejects_deep_nesting_and_oversized_input"
+    },
+    {
+        "name": "sdf: 输入字节预算失效",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "    if text.len() > MAX_SDF_BYTES {",
+        "new": "    if false {",
+        "pkg": "trit-circuit",
+        "filter": "budget_rejects_deep_nesting_and_oversized_input"
+    },
+    {
+        "name": "params: 表达式嵌套护栏失效",
+        "file": "crates/trit-circuit/src/verilog/params.rs",
+        "old": "        self.depth += 1;" + "\n" + "        if self.depth > MAX_PARAM_DEPTH {",
+        "new": "        self.depth += 1;" + "\n" + "        if false {",
+        "pkg": "trit-circuit",
+        "filter": "deep_parameter_expression_returns_limit_not_stack_overflow"
+    },
+    {
         "name": "circuit: 引脚故障不注入",
         "file": "crates//trit-circuit//src//circuit//sim.rs",
         "old": "                ins[pin] = value;",

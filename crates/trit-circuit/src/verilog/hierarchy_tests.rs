@@ -450,6 +450,24 @@ fn named_parameter_override_changes_width() {
 }
 
 #[test]
+fn deep_parameter_expression_returns_limit_not_stack_overflow() {
+    // 复审 H03：参数表达式的括号递归不设防，3 万层曾直接栈溢出。
+    // 深括号放在**覆盖**里——默认值不求值，覆盖必经 eval_expr。
+    let deep = "(".repeat(30_000) + "1" + &")".repeat(30_000);
+    let text = format!(
+        "module leaf #(parameter W = 2) (\n\
+         input a, output y);\n\
+         assign y = a;\n\
+         endmodule\n\
+         module top(input a, output y);\n\
+         leaf #(.W({deep})) u (.a(a), .y(y));\n\
+         endmodule\n"
+    );
+    let err = parse_verilog(&text).unwrap_err();
+    assert_eq!(err.kind, VerilogErrorKind::Limit, "{err:?}");
+}
+
+#[test]
 fn parent_parameter_flows_to_positional_child_override() {
     let text = "module leaf #(parameter W = 2) (\n\
                     input [W-1:0] a, input [W-1:0] b, output [W-1:0] y);\n\

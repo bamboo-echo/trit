@@ -409,6 +409,7 @@ fn eval_expr(text: &str, params: &BTreeMap<String, i64>) -> Result<i64, VerilogE
     let mut parser = ExprParser {
         chars: text.chars().collect(),
         at: 0,
+        depth: 0,
         params,
         source: text,
     };
@@ -423,15 +424,37 @@ fn eval_expr(text: &str, params: &BTreeMap<String, i64>) -> Result<i64, VerilogE
 struct ExprParser<'a> {
     chars: Vec<char>,
     at: usize,
+    depth: usize,
     params: &'a BTreeMap<String, i64>,
     source: &'a str,
 }
+
+/// 参数表达式的括号/一元嵌套上限：`factor` 是递归下降，不设防会耗尽栈
+/// （文本 1 MiB 的预算拦不住 30,000 层 `((((…))))`）。
+const MAX_PARAM_DEPTH: usize = 256;
 
 impl ExprParser<'_> {
     fn skip(&mut self) {
         while self.chars.get(self.at).is_some_and(|ch| ch.is_whitespace()) {
             self.at += 1;
         }
+    }
+
+    /// 进入下一层递归前记深度；成功/失败都要还原（这里用闭包保证两条路径都走）。
+    fn enter_then(
+        &mut self,
+        recurse: impl FnOnce(&mut Self) -> Result<i64, VerilogError>,
+    ) -> Result<i64, VerilogError> {
+        self.depth += 1;
+        if self.depth > MAX_PARAM_DEPTH {
+            self.depth -= 1;
+            return Err(VerilogError::limit(format!(
+                "参数表达式嵌套超过 {MAX_PARAM_DEPTH} 层"
+            )));
+        }
+        let result = recurse(self);
+        self.depth -= 1;
+        result
     }
 
     fn expr(&mut self) -> Result<i64, VerilogError> {
@@ -493,7 +516,7 @@ impl ExprParser<'_> {
         };
         if ch == '(' {
             self.at += 1;
-            let value = self.expr()?;
+            let value = self.enter_then(|parser| parser.expr())?;
             self.skip();
             if self.chars.get(self.at) != Some(&')') {
                 return Err(message("参数表达式缺少 ')'"));
@@ -503,7 +526,7 @@ impl ExprParser<'_> {
         }
         if ch == '+' || ch == '-' {
             self.at += 1;
-            let value = self.factor()?;
+            let value = self.enter_then(|parser| parser.factor())?;
             return if ch == '-' {
                 value.checked_neg().ok_or_else(|| message("参数表达式溢出"))
             } else {

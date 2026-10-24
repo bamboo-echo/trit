@@ -12,6 +12,11 @@ use crate::timing::TimingModel;
 
 type InstanceDelayMap = BTreeMap<(String, String), f64>;
 
+/// SDF 输入字节数上限：在解析前拒绝超大文件（与 Verilog 同额）。
+const MAX_SDF_BYTES: usize = 1 << 20;
+/// SDF 括号嵌套深度上限：`parse_node` 是递归下降，深度不设防会耗尽栈。
+const MAX_SDF_DEPTH: usize = 256;
+
 /// SDF 读取错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SdfError {
@@ -29,6 +34,9 @@ pub enum SdfError {
     /// 延迟值不是非负有限数。
     #[error("SDF 延迟值无效：{0}")]
     InvalidDelay(String),
+    /// 输入超出预算（字节数或括号嵌套深度）。
+    #[error("SDF 超出预算：{0}")]
+    Limit(String),
 }
 
 /// SDF 中一个实例的最坏延迟（周期，向上取整）。
@@ -142,6 +150,12 @@ fn rounded_delay(value: f64, name: &str) -> Result<u32, SdfError> {
 }
 
 fn collect_sdf(text: &str) -> Result<(BTreeMap<String, f64>, InstanceDelayMap), SdfError> {
+    if text.len() > MAX_SDF_BYTES {
+        return Err(SdfError::Limit(format!(
+            "SDF 文本 {} 字节，超过上限 {MAX_SDF_BYTES}",
+            text.len()
+        )));
+    }
     let nodes = Parser::new(text).parse_all()?;
     let mut raw = BTreeMap::new();
     let mut instances = BTreeMap::new();
@@ -306,6 +320,7 @@ enum Node {
 struct Parser<'a> {
     bytes: &'a [u8],
     at: usize,
+    depth: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -313,6 +328,7 @@ impl<'a> Parser<'a> {
         Self {
             bytes: text.as_bytes(),
             at: 0,
+            depth: 0,
         }
     }
 
@@ -335,12 +351,20 @@ impl<'a> Parser<'a> {
         match byte {
             b'(' => {
                 self.at += 1;
+                // 深度护栏只在成功路径上递减；出错时整个 Parser 随之丢弃，不必还原。
+                self.depth += 1;
+                if self.depth > MAX_SDF_DEPTH {
+                    return Err(SdfError::Limit(format!(
+                        "SDF 括号嵌套超过 {MAX_SDF_DEPTH} 层"
+                    )));
+                }
                 let mut items = Vec::new();
                 loop {
                     self.skip_trivia();
                     match self.bytes.get(self.at) {
                         Some(b')') => {
                             self.at += 1;
+                            self.depth -= 1;
                             return Ok(Node::List(items));
                         }
                         None => return Err(self.error(self.at, "括号未闭合")),
@@ -513,6 +537,22 @@ mod tests {
             parse_sdf("(DELAYFILE (CELL (CELLTYPE \"AND2\") (IOPATH a y (-1.0))))"),
             Err(SdfError::InvalidDelay(_))
         ));
+    }
+
+    #[test]
+    fn budget_rejects_deep_nesting_and_oversized_input() {
+        // 复审 H02：3 万层括号曾直接栈溢出（abort 134），超大文本无预算。
+        let deep = format!("{}x{}", "(".repeat(30_000), ")".repeat(30_000));
+        assert!(matches!(parse_sdf(&deep), Err(SdfError::Limit(_))));
+        let oversized = " ".repeat(MAX_SDF_BYTES + 1);
+        assert!(matches!(parse_sdf(&oversized), Err(SdfError::Limit(_))));
+        // 正常深度要放行：250 层嵌套不超限。
+        let nested = format!(
+            "(DELAYFILE {}(DESIGN \"x\"){})",
+            "(".repeat(250),
+            ")".repeat(250)
+        );
+        assert_eq!(parse_sdf(&nested).unwrap_err(), SdfError::NoDelays);
     }
 
     #[test]

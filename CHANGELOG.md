@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Fixed（复审 P0 批次 1：解析递归护栏，H01–H03 栈溢出封堵）
+
+全面复审（`_handoff/trit-v0.12.0-全面代码复审.md`）的三个**可远程触发的栈溢出**（隔离探针
+实测 abort 134）：解析器是递归下降，文本字节上限拦不住深层嵌套——三处分别加护栏，
+超限返回 `Limit` 类错误而非进程 abort：
+
+- **H01 Verilog assign 右值**（`verilog/expr.rs`）：拼接 `{a,{a,{…}}}` 此前不计深度
+  （只有括号/一元计）→ 纳入 `MAX_RHS_DEPTH`（256）；二元平链构造成左深 AST 后
+  `bit_expr`/`synth_v` 递归遍历栈溢出 → 新增 `MAX_RHS_OPS = 256`（每消耗一个运算符计数，
+  超 `+1` 即报错）。2 万层拼接、3 万项平链现在都返回 `VerilogErrorKind::Limit`。
+- **H02 SDF**（`sdf.rs`）：`parse_node` 对括号嵌套无上限、`collect_sdf` 不拒绝超大文本 →
+  新增 `MAX_SDF_DEPTH = 256` 深度护栏与 `MAX_SDF_BYTES = 1 MiB` 字节预算；
+  `SdfError` 新增 `Limit` 变体。
+- **H03 Verilog 参数表达式**（`verilog/params.rs`）：`ExprParser::factor` 对括号/一元
+  递归不设防 → `MAX_PARAM_DEPTH = 256`（`enter_then` 闭包保证两条路径都还原深度）。
+- 测试 +5（拼接深度、链上限 +1、预算内链可综合、SDF 深度/字节、参数深括号——其中
+  SDF 250 层与预算内链同时验证**护栏不误伤**）。变异门 185 → **190**（新增 5 条，
+  trit-circuit **90/90** 实跑全抓）。workspace **636/0**；fmt/clippy/模块预算绿。
+- 教训一条：长链测试最初写 3 万项，「阈值 ×40」的变异仍会报 Limit 而存活——改成
+  「上限 +1」项后阈值任何放大立即暴露，且不再依赖栈溢出 abort 才判红。
+
 ### Fixed（复审修复：平衡三进制 codec 与 trit-float 的溢出/语义缺陷）
 
 外部复审（无 Rust 工具链、按 std 契约推断）+ 本地逐条实测确认后修复；实验层
