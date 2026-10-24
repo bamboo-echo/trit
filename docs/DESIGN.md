@@ -93,7 +93,21 @@
   路径依赖没有版本可填 ⇒ 打包失败。共享代码只能下沉到可发布 crate。这条由 `scripts/publish_graph.py` 强制；
 - **入口是独立二进制**（`trit-net`、`trit-machines`、…），不并进 `trit` CLI，避免实验面污染稳定命令行；
 - **结论要带回边界标签**：实验层里关于「三值红利」的结论必须按 `docs/TERNARY-BOUNDARIES.md` 归类，
-  并同时给二进制基线（§6）与高压测试（§7）。
+  并同时给二进制基线（§6）与高压测试（§7）；
+- **彼此不许互相依赖**的例外是 dev-dependencies（不进发布链，`cargo package` 剥离 path dev-deps，
+  2026-10-24 实证并由 `scripts/publish_graph.py` 放行）。
+
+## 不批的设计提案（存档：防止同一设计被反复重提）
+
+- **2026-10-24，PR #116 的 `trit-codec::layout`（packed ↔ dual-rail `Bitplanes`）——不批**。
+  问题一：`Bitplanes` 在 trit-codec 里**另设了第二套双导轨类型**，而双导轨的规范表示
+  已下沉在可发布的 `trit-core::TriVec`（`bulk.rs`，含导轨维护与边界校验）——两套互不
+  互通的类型意味着双份维护与两套非法导轨策略。问题二：`Bitplanes::get` 对非法 `(1,1)`
+  导轨直接 `panic!`，违反 codec「非法输入显式报错而不是猜」的铁律（字段还是 `pub`，
+  调用方可构造出非法态）。判据：`x^i mod g` 式的重复实现不做；要桥接 packed ↔ dual-rail，
+  正确设计是**桥到 `TriVec`**（`trit-core` 已有 `get`/`set`/`try_from_binary`），无需新类型。
+  该模块已从 PR #116 剔除（quantize / sparse / interleave / checksum 四组件设计可批，随 PR 合入）。
+  重提条件：以 TriVec 为桥、非法导轨返回结构化错误、给出一个 codec 侧的真实消费方。
 
 ## 路线
 

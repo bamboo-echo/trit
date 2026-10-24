@@ -1617,6 +1617,46 @@ MUTANTS = [
             "filter": "column_packing_and_matmul_match_scalar_reference"
     },
     {
+        "name": "codec: 量化 scale 用最小值",
+        "file": "crates/trit-codec/src/quantize.rs",
+        "old": "    let scale = values.iter().map(|w| w.abs()).fold(0.0f32, f32::max);",
+        "new": "    let scale = values.iter().map(|w| w.abs()).fold(0.0f32, f32::min);",
+        "pkg": "trit-codec",
+        "filter": "symmetric_distribution_maps_to_three_buckets"
+    },
+    {
+        "name": "codec: 量化阈值边界改含等号",
+        "file": "crates/trit-codec/src/quantize.rs",
+        "old": "                if *w > threshold {",
+        "new": "                if *w >= threshold {",
+        "pkg": "trit-codec",
+        "filter": "boundary_value_equal_to_threshold_is_unknown"
+    },
+    {
+        "name": "codec: 稀疏下标允许重复",
+        "file": "crates/trit-codec/src/sparse.rs",
+        "old": "            && index <= p",
+        "new": "            && index < p",
+        "pkg": "trit-codec",
+        "filter": "duplicate_index_is_rejected"
+    },
+    {
+        "name": "codec: 交织行列读反",
+        "file": "crates/trit-codec/src/interleave.rs",
+        "old": "            let idx = r * cols + c;\n            if idx < n {",
+        "new": "            let idx = c * cols + r;\n            if idx < n {",
+        "pkg": "trit-codec",
+        "filter": "hand_known_example"
+    },
+    {
+        "name": "codec: verify 对截断码字放行",
+        "file": "crates/trit-codec/src/checksum.rs",
+        "old": "    if codeword.len() < CHECKSUM_LEN {\n        return false;\n    }",
+        "new": "    if codeword.len() < CHECKSUM_LEN {\n        return true;\n    }",
+        "pkg": "trit-codec",
+        "filter": "truncated_codeword_is_rejected"
+    },
+    {
         "name": "core: 取反把 X 变成 0",
         "file": "crates/trit-core/src/value.rs",
         "old": "            Self::Unknown => Self::Unknown,\n        }\n    }\n}\n\n/// **Kleene** 合取",
