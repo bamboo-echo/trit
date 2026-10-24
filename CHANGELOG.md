@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Added（三进制构建工具 M0：`trit build`）
+
+- `trit-build <src.tri> [--out DIR] [--algebra k3] [--force] [--check]`（独立实验 crate）：解析 → `simplify` → **穷举复核**
+  （不等价即构建失败、不写产物）→ 产物 `expr.txt` / `truth.csv` / `truth.tritbin` / `lookup.c`
+  + `build.json`；内容哈希增量缓存，`--check` 校验产物完整性。
+- `TRB1` 容器：魔数 + 版本 + 语义 + 变量数 + 长度 + **双导轨位平面**（2 bit/trit）+ FNV-64 尾；
+  基 3 打包/GF(3) CRC-3 因发布图门禁（实验 crate 不许互依）留到 M2。
+- `lookup.c` 是刻意边界：三值语义固化为查表，执行交给 cc/rustc（不重写二进制后端）。
+- 测试 +4（产物/缓存命中/篡改检测/重建不命中缓存）；变异门 251 → **253**（trit-build 3/3）。
+- **双轨并行**（`--manifest jobs.json [--jobs N] [--prefer ternary|binary|balanced] [--dry-run]`）：
+  三进制轨优先、二进制轨（外部 `cargo`/`rustc`）只吃剩余槽位，**不抢占**；分配策略是纯函数
+  `schedule::pick`（4 条单测），`--dry-run` 先出方案。实测 7 任务/4 槽：wall 171 ms、busy 205 ms，
+  6 个 `.tri` 在 cargo 的 163 ms 内全部完成。
+- **M1：Verilog 子集读入**（`d.v / --output / --expect`）：复用 `trit-circuit::parse_verilog` +
+  `propagate`，与 `.tri` 链路真值表**逐行对拍**，不一致即失败、不写 `build.json`；清单新增
+  `{"kind":"verilog"}`（归三进制轨）。测试 +4；变异锚点 +1。
+- **M2：TRB2 基 3 打包 + 运行时 + 双导轨导出**：`truth.tritbin` 改为 `TRB2`（5 trit/字节 +
+  GF(3) CRC-3，27 trit 由 35 B 降到 **17 B**；12 变量 132,883 → **106,300 B**，−20.00%）；
+  `--decode` 校验魔数/长度/CRC 并重出 CSV/`lookup.c`；`runtime/trit_runtime.{c,h}` 是
+  **独立的 C 解码实现**，逐 trit 与 Rust 端对拍；`--emit-verilog` 导出双导轨 `design.v`
+  （仅 kleene，非 kleene 显式报错），由测试内位级解释器与真值表逐行比对。
+  测试 +12（含解码-重编码逐字节回环、非法字节、缓存键区分 `--emit-verilog`）；变异锚点 +4。
+- **M3：位并行真值表 + e-graph 重写**：12 变量（531,441 行）算表由标量 299 ms 降到
+  **23.8 ms**（每轮 64 组赋值；门语义从 `Algebra` 取 3×3 结果表按最小项铺开，K3/Ł3/B3 共用）；
+  e-graph 规则**先自证后加载**（≤3 变量穷举，不过就不进图），按节点数最小提取，整链再穷举复核；
+  `build.json`/`expr.txt` 记录用到的规则。产物与 M2 **逐字节相同**。
+  顺带修正双导轨导出的 `^`：本仓 `Expr::Xor` 是强加法 ⊕（U 传染），按布尔异或导出会与真值表对不上。
+  测试 +9；变异锚点 +4（规则自证、重写接入、强加法导出、位并行算子）。
+- 文档 `docs/TERNARY-TOOLCHAIN.md`：论文依据（LLVM/MLIR/egg/BitNet/平衡三进制，DOI 已核）、
+  分层设计、M0–M3 验收判据、继续靠 LLVM/Rust 的职责表、未验证清单。
+
 ### Added（GGUF → MOD 入向导入）
 
 - `trit-texture::gguf::import_gguf`：读 **GGUF v2/v3**，把未量化张量（`F32`/`F16`/`BF16`）
