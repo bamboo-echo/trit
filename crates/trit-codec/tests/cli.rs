@@ -143,3 +143,19 @@ fn checksum_append_then_verify_passes() {
     let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(v["valid"], true);
 }
+
+#[test]
+fn delta_cli_round_trips() {
+    let raw = "10X01XX10";
+    let (stdout, _, code) = run(&["delta", raw]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert_eq!(v["trits"], raw);
+    let deltas = v["deltas"].as_str().unwrap().to_string();
+
+    let (stdout, _, code) = run(&["delta", "--decode", &deltas]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert_eq!(v["deltas"], deltas);
+    assert_eq!(v["trits"], raw);
+}
