@@ -5,6 +5,10 @@
 //! 映射成「连续码字」，在机械位置传感、旋转编码器、跨时钟域信号里能把跳变的
 //! 误读降到最低。
 //!
+//! 为什么对错误检测友好：相邻状态只差一位，转动/采样时的亚稳态或抖动只会读到
+//! **相邻的合法码字**，解码出的位置偏差最小，绝不会一步跳到不相干的状态；
+//! 反过来，观测到「两位同时跳变」就强烈提示一次传输/采样错误，而不是正常步进。
+//!
 //! 编码规则（k[i] 是 index 的三进制位，k[0] = LSB，k[n] = 0 为虚拟高位）：
 //!
 //! - `g[i] = (k[i] - k[i+1]) mod 3`，i = 0..n-1；
@@ -13,13 +17,14 @@
 //! 解码反向递推（从虚拟高位 k[n]=0 开始）：
 //!
 //! - `k[i] = (k[i+1] + g[i]) mod 3`；
-//! - 还原后 `index = Σ k[i] · 3^i`。
+//! - 还原后 `index = Σ k[i] · 3^i`（Horner 法累加，不重复算幂）。
 //!
 //! 边界：
 //!
 //! - `n = 0`：只有 `index == 0` 合法，码字为空、解码空码字得 0；
 //! - `index >= 3^n` → [`CodecError::GrayIndexOutOfRange`]；
-//! - `3^n` 用 `checked_pow` 算，n 大到溢出时也归为越界（实验层 n ≤ 12 完全够用）。
+//! - `3^n` 用 `checked_pow` 算，n 大到溢出 usize 时也归为越界。64 位 usize 在
+//!   `n ≥ 41` 时溢出，实验用途（n ≤ 12）远在安全区内。
 
 use crate::CodecError;
 use trit_core::value::Ternary;
@@ -53,20 +58,29 @@ pub fn encode(index: usize, n: usize) -> Result<Vec<Ternary>, CodecError> {
     Ok(word)
 }
 
-/// 解码：把 n 位格雷码字还原成 index（LSB 在前）。
+/// 解码：把 n 位格雷码字还原成 index（LSB 在 `word[0]`）。
 ///
 /// 任何长度的合法 trit 字都可逆；空字解码为 0。
+///
+/// 溢出：当 `3^n` 超出 `usize` 容量时（64 位约 n ≥ 41，远超实验用途），还原出的
+/// index 无法用 `usize` 表示。本函数**绝不 panic**：改用 `checked_mul`/`checked_add`
+/// 的 Horner 累加，一旦不可表示就饱和返回 [`usize::MAX`] 作为哨兵。由 [`encode`]
+/// 产出的合法码字 n ≤ 40（64 位），永远不会走到这条路径。
 pub fn decode(word: &[Ternary]) -> usize {
     let n = word.len();
     if n == 0 {
         return 0;
     }
-    let mut k_next = 0usize; // k[n] = 0
+    let mut k_next = 0usize; // k[n] = 0 虚拟高位
     let mut index = 0usize;
-    // 从 MSB 往 LSB 递推：i = n-1, n-2, ..., 0
+    // 从 MSB（i=n-1）往 LSB（i=0）递推 k[i] = (k[i+1] + g[i]) mod 3，
+    // 同时 Horner 累加 index = index*3 + k_i，避免反复算 3^i（那才是溢出 panic 的来源）。
     for i in (0..n).rev() {
         let k_i = (k_next + word[i].index()) % 3;
-        index += k_i * 3usize.pow(i as u32);
+        index = index
+            .checked_mul(3)
+            .and_then(|v| v.checked_add(k_i))
+            .unwrap_or(usize::MAX);
         k_next = k_i;
     }
     index
@@ -123,7 +137,14 @@ mod tests {
                 .zip(words[k + 1].iter())
                 .filter(|(a, b)| a != b)
                 .count();
-            assert_eq!(dist, 1, "idx {k} vs {} words {} {}", k + 1, chars(&words[k]), chars(&words[k + 1]));
+            assert_eq!(
+                dist,
+                1,
+                "idx {k} vs {} words {} {}",
+                k + 1,
+                chars(&words[k]),
+                chars(&words[k + 1])
+            );
             // round-trip
             assert_eq!(decode(&words[k]), k);
         }
@@ -153,5 +174,49 @@ mod tests {
             let w = encode(0, n).unwrap();
             assert_eq!(w.len(), n);
         }
+    }
+
+    #[test]
+    fn n_one_exhaustive() {
+        // n=1：3 个状态 0/X/1，相邻两两汉明距离 1，往返恒等。
+        let words: Vec<Vec<Ternary>> = (0..3).map(|i| encode(i, 1).unwrap()).collect();
+        assert_eq!(
+            words.iter().map(|w| chars(w)).collect::<Vec<_>>(),
+            ["0", "X", "1"]
+        );
+        for k in 0..2 {
+            let dist = words[k]
+                .iter()
+                .zip(words[k + 1].iter())
+                .filter(|(a, b)| a != b)
+                .count();
+            assert_eq!(dist, 1, "idx {k} vs {}", k + 1);
+            assert_eq!(decode(&words[k]), k);
+        }
+        assert_eq!(decode(&words[2]), 2);
+    }
+
+    #[test]
+    fn zero_index_is_all_false_anchor() {
+        // k=0 的三进制位全 0 ⇒ g[i]=(0-0)=0 ⇒ 码字全 False（"000…0"），这是格雷码的锚点。
+        for n in 0..=6usize {
+            let w = encode(0, n).unwrap();
+            assert!(
+                w.iter().all(|t| *t == Ternary::False),
+                "n={n} -> {}",
+                chars(&w)
+            );
+            assert_eq!(decode(&w), 0, "n={n}");
+        }
+    }
+
+    #[test]
+    fn overlong_word_saturates_without_panicking() {
+        // 60 位码字还原出的 index 远超 usize::MAX（32/64 位都溢出）。
+        // 实验层铁律：绝不 panic——必须饱和到 usize::MAX 而非 debug 下的 multiply overflow。
+        let word = vec![Ternary::True; 60];
+        assert_eq!(decode(&word), usize::MAX);
+        // 空字仍得 0（不受饱和影响）。
+        assert_eq!(decode(&[]), 0);
     }
 }
