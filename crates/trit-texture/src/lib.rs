@@ -618,6 +618,41 @@ mod tests {
     }
 
     #[test]
+    fn block_shape_is_mip_friendly() {
+        // 回归门：块形状必须都是 2 的幂，否则 mip 链每级减半后很快不合法，
+        // 正常 2 的幂纹理就得补边（v1 的 4×10 高须 %10 ⇒ 恒定 25% 填充）。
+        //
+        // 这正是「零槽位浪费」的陷阱：40 恰被 5 整除看着很美，但 10 不是 2 的幂，
+        // 于是每级减半都失去合法性。要把这条钉死，防止有人为了省 1.6% 打包税
+        // 把块改回 4×10。
+        assert!(
+            BLOCK_WIDTH.is_power_of_two(),
+            "块宽 {BLOCK_WIDTH} 必须是 2 的幂，否则 mip 链断裂"
+        );
+        assert!(
+            BLOCK_HEIGHT.is_power_of_two(),
+            "块高 {BLOCK_HEIGHT} 必须是 2 的幂，否则 mip 链断裂"
+        );
+        // 方形块：宽高相等时任意 2 的幂纹理都能一路 mip 到 1×1。
+        assert_eq!(BLOCK_WIDTH, BLOCK_HEIGHT, "非方块会让 mip 衰减不对称");
+        // 逐级减半：从 4096 一路到**块尺寸**（8），每一级都必须是块的整数倍。
+        // 低于一个块的层级（4/2/1）在语义上就是空的——mip 链到底了，不是非法。
+        let mut side = 4096usize;
+        while side >= BLOCK_WIDTH {
+            assert!(
+                side.is_multiple_of(BLOCK_WIDTH),
+                "{side} 不是块宽 {BLOCK_WIDTH} 的倍数，该级 mip 非法"
+            );
+            side /= 2;
+        }
+        // 停下时必须恰好是「减半后不再够一个块」，而不是提前卡在某个中间层。
+        assert!(
+            side < BLOCK_WIDTH,
+            "mip 链应在块尺寸处到底，实际停在 {side}"
+        );
+    }
+
+    #[test]
     fn baseline_roundtrips_endpoint_colors_exactly() {
         // 二进制基线与 TT3 同端点同调色板，仅索引编码不同——位打包写错会丢色。
         for raw in [
