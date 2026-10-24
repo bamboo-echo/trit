@@ -57,9 +57,9 @@ fn intersect(a: &[Ternary], b: &[Ternary]) -> Option<Vec<Ternary>> {
 ///
 /// - `terms` 为空 → `Ok(0)`；
 /// - 所有积项长度必须一致，否则 [`CodecError::TermArityMismatch`]；
-/// - `3^n` 超出 `u64` 时返回 [`CodecError::CubeTooLarge`]（n > [`MAX_N`]），
+/// - `3^n` 超出 `u64` 时返回 [`CodecError::CubeTooLarge`]（n > `MAX_N`），
 ///   绝不静默截断或返回 0；
-/// - 积项数 m > [`MAX_TERMS`] 时返回 [`CodecError::TermSetTooLarge`]，
+/// - 积项数 m > `MAX_TERMS` 时返回 [`CodecError::TermSetTooLarge`]，
 ///   绝不 panic。
 pub fn count(terms: &[Vec<Ternary>]) -> Result<u64, CodecError> {
     if terms.is_empty() {
