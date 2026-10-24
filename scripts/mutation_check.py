@@ -1992,7 +1992,38 @@ MUTANTS = [
         "pkg": "trit-circuit",
         "filter": "parser_rejects_structurally_invalid_input"
     },
-
+    {
+        "name": "gguf: 接受非 v2/v3 版本",
+        "file": "crates/trit-texture/src/gguf.rs",
+        "old": '    if !SUPPORTED_VERSIONS.contains(&version) {',
+        "new": '    if false {',
+        "pkg": "trit-texture",
+        "filter": "rejects_bad_magic_version_and_quantized_types"
+    },
+    {
+        "name": "gguf: 张量长度不校验",
+        "file": "crates/trit-texture/src/gguf.rs",
+        "old": '    if needed > data.len() {',
+        "new": '    if false {',
+        "pkg": "trit-texture",
+        "filter": "rejects_non_finite_and_truncated"
+    },
+    {
+        "name": "gguf: 放行 NaN/Inf",
+        "file": "crates/trit-texture/src/gguf.rs",
+        "old": '    if !value.is_finite() {',
+        "new": '    if false {',
+        "pkg": "trit-texture",
+        "filter": "rejects_non_finite_and_truncated"
+    },
+    {
+        "name": "gguf: 阈值不做有限性校验",
+        "file": "crates/trit-texture/src/gguf.rs",
+        "old": '    if !options.zero_threshold.is_finite() || options.zero_threshold < 0.0 {',
+        "new": '    if false {',
+        "pkg": "trit-texture",
+        "filter": "unsupported_nan_threshold_is_rejected"
+    }
 
 ]
 
