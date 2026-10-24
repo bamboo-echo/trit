@@ -118,4 +118,20 @@ pub enum CodecError {
         /// 冲突积项的长度。
         found: usize,
     },
+    /// 积项数超过容斥枚举的可表示上限（`2^m` 个子集）。
+    #[error("积项数 {found} 超过容斥上限 {max}（需枚举 2^{found} 个子集）")]
+    TermSetTooLarge {
+        /// 实际收到的积项数。
+        found: usize,
+        /// 允许的最大积项数。
+        max: usize,
+    },
+    /// 三值立方体 `3^n` 超出 `u64` 表示范围。
+    #[error("三值立方体 3^{n} 超出 u64 范围（n 最大允许 {max}）")]
+    CubeTooLarge {
+        /// 实际位数 n。
+        n: usize,
+        /// 允许的最大位数（3^max < u64::MAX）。
+        max: usize,
+    },
 }
