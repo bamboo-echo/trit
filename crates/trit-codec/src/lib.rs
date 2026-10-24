@@ -110,6 +110,10 @@ pub enum CodecError {
         /// 冲突行的下标（按调用方传入顺序）。
         row: usize,
     },
+    /// 真值表不是 SOP 可表示的：化简结果无法与 True 集合逐点等价
+    /// （存在某个 True 赋值，无法用「不过度覆盖」的积项覆盖）。
+    #[error("真值表不是 SOP 可表示的：化简结果与 True 集合逐点不等价")]
+    TruthTableNotRepresentable,
     /// SOP 积项长度不一致。
     #[error("SOP 积项元数不一致：期望 {expected}，遇到 {found}")]
     TermArityMismatch {
