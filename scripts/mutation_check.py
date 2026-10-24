@@ -1299,16 +1299,16 @@ MUTANTS = [
     {
         "name": "dot: 二值公式丢掉系数 2",
         "file": "crates/trit-dot/src/lib.rs",
-        "old": "    len as i64 - 2 * i64::from(mismatches)",
-        "new": "    len as i64 - i64::from(mismatches)",
+        "old": '        return len as i64 - 2 * mismatches as i64;',
+        "new": '        return len as i64 - mismatches as i64;',
         "pkg": "trit-dot",
         "filter": "bipolar_dot_matches_scalar"
     },
     {
         "name": "dot: 三值点积少减一项",
         "file": "crates/trit-dot/src/lib.rs",
-        "old": "            let mismatches = ((self.pos[block] & other.neg[block])\n                | (self.neg[block] & other.pos[block]))\n                .count_ones();\n            total += i64::from(matches) - i64::from(mismatches);",
-        "new": "            let mismatches = ((self.pos[block] & other.neg[block])\n                | (self.neg[block] & other.pos[block]))\n                .count_ones();\n            total += i64::from(matches);",
+        "old": '            sums[lane] += i64::from(matches) - i64::from(mismatches);',
+        "new": '            sums[lane] += i64::from(matches);',
         "pkg": "trit-dot",
         "filter": "ternary_dot_matches_scalar_across_block_boundaries"
     },
@@ -1319,6 +1319,54 @@ MUTANTS = [
         "new": "            total += i64::from(pp) - i64::from(pn) - i64::from(np);\n        }\n        total\n    }\n\n    /// 非零块数",
         "pkg": "trit-dot",
         "filter": "ternary_dot_matches_scalar_across_block_boundaries"
+    },
+    {
+        "name": 'dot: 展开体丢掉负负项',
+        "file": 'crates/trit-dot/src/lib.rs',
+        "old": '            let matches = ((pa[lane] & pb[lane]) | (na[lane] & nb[lane])).count_ones();',
+        "new": '            let matches = (pa[lane] & pb[lane]).count_ones();',
+        "pkg": 'trit-dot',
+        "filter": 'ternary_dot_matches_scalar_across_block_boundaries'
+    },
+    {
+        "name": 'dot: 展开体的尾巴不算不匹配',
+        "file": 'crates/trit-dot/src/lib.rs',
+        "old": '    for lane in 0..rest_a_pos.len() {\n        let matches = ((rest_a_pos[lane] & rest_b_pos[lane])\n            | (rest_a_neg[lane] & rest_b_neg[lane]))\n            .count_ones();\n        let mismatches = ((rest_a_pos[lane] & rest_b_neg[lane])\n            | (rest_a_neg[lane] & rest_b_pos[lane]))\n            .count_ones();\n        total += i64::from(matches) - i64::from(mismatches);\n    }\n    total',
+        "new": '    for lane in 0..rest_a_pos.len() {\n        let matches = ((rest_a_pos[lane] & rest_b_pos[lane])\n            | (rest_a_neg[lane] & rest_b_neg[lane]))\n            .count_ones();\n        let mismatches = ((rest_a_pos[lane] & rest_b_neg[lane])\n            | (rest_a_neg[lane] & rest_b_pos[lane]))\n            .count_ones();\n        total += i64::from(matches);\n    }\n    total',
+        "pkg": 'trit-dot',
+        "filter": 'unrolled_matches_dense_on_all_tail_lengths'
+    },
+    {
+        "name": 'sim: LUT 二元槽位步长写成 2',
+        "file": 'crates/trit-circuit/src/circuit/sim.rs',
+        "old": '                gate.lut[ins[0].index() * 3 + ins[1].index()]',
+        "new": '                gate.lut[ins[0].index() * 2 + ins[1].index()]',
+        "pkg": 'trit-circuit',
+        "filter": 'lookups_match_gate_semantics_for_every_algebra'
+    },
+    {
+        "name": 'sim: LUT 一元槽位多乘 3',
+        "file": 'crates/trit-circuit/src/circuit/sim.rs',
+        "old": '                gate.lut[ins[0].index()]',
+        "new": '                gate.lut[ins[0].index() * 3]',
+        "pkg": 'trit-circuit',
+        "filter": 'lookups_match_gate_semantics_for_every_algebra'
+    },
+    {
+        "name": 'sim: LUT 填充把二元下标按 2 进位',
+        "file": 'crates/trit-circuit/src/circuit/sim.rs',
+        "old": '                                Ternary::from_index(index / 3),',
+        "new": '                                Ternary::from_index(index / 2),',
+        "pkg": 'trit-circuit',
+        "filter": 'lookups_match_gate_semantics_for_every_algebra'
+    },
+    {
+        "name": 'core: 序号还原把 Unknown 当成 True',
+        "file": 'crates/trit-core/src/value.rs',
+        "old": '            1 => Self::Unknown,',
+        "new": '            1 => Self::True,',
+        "pkg": 'trit-core',
+        "filter": 'index_round_trips_and_lut_stride_is_three_wide'
     },
     {
         "name": "gpu: 位并行少减一项",

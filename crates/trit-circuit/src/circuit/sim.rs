@@ -311,13 +311,14 @@ struct CompiledGate {
     original: usize,
     kind: GateKind,
     const_value: Option<Ternary>,
+    /// 预计算的 9 项真值表（`a*3+b` 为下标）；一次查表代替 `match`。
+    lut: [Ternary; 9],
     inputs: Vec<usize>,
     output: usize,
 }
 
 /// 索引化仿真器：信号名只在编译期查一次，逐向量求值只碰 `Vec<Ternary>`。
 pub(crate) struct Simulator<'a> {
-    alg: Algebra,
     index: HashMap<&'a str, usize>,
     inputs: Vec<usize>,
     outputs: Vec<usize>,
@@ -347,10 +348,31 @@ impl<'a> Simulator<'a> {
         let mut gates = Vec::with_capacity(order.len());
         for original in order {
             let gate = &circuit.gates[original];
+            let mut lut = [Ternary::False; 9];
+            match gate.kind.arity() {
+                1 => {
+                    for (a, slot) in lut.iter_mut().enumerate().take(3) {
+                        *slot = gate.kind.eval(&[Ternary::from_index(a)], alg);
+                    }
+                }
+                2 => {
+                    for (index, slot) in lut.iter_mut().enumerate() {
+                        *slot = gate.kind.eval(
+                            &[
+                                Ternary::from_index(index / 3),
+                                Ternary::from_index(index % 3),
+                            ],
+                            alg,
+                        );
+                    }
+                }
+                _ => {}
+            }
             gates.push(CompiledGate {
                 original,
                 kind: gate.kind,
                 const_value: gate.const_value,
+                lut,
                 inputs: gate
                     .inputs
                     .iter()
@@ -360,7 +382,6 @@ impl<'a> Simulator<'a> {
             });
         }
         Ok(Self {
-            alg,
             index,
             inputs,
             outputs,
@@ -439,9 +460,7 @@ impl<'a> Simulator<'a> {
     }
 
     fn run(&mut self, fault: Option<(usize, usize, Ternary)>, overrides: &[(usize, Ternary)]) {
-        let Self {
-            alg, gates, values, ..
-        } = self;
+        let Self { gates, values, .. } = self;
         for gate in gates.iter() {
             if let Some(&(_, forced)) = overrides.iter().find(|(slot, _)| *slot == gate.output) {
                 values[gate.output] = forced;
@@ -458,10 +477,13 @@ impl<'a> Simulator<'a> {
             {
                 ins[pin] = value;
             }
+            // 去分支：一次查表，不再按门类型走 9 路 match。
             let output = if gate.kind == GateKind::Const {
                 gate.const_value.unwrap_or(Ternary::False)
+            } else if arity == 2 {
+                gate.lut[ins[0].index() * 3 + ins[1].index()]
             } else {
-                gate.kind.eval(&ins[..arity], *alg)
+                gate.lut[ins[0].index()]
             };
             values[gate.output] = output;
         }
