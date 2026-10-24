@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added（trit-codec：量化/稀疏/交织/校验四个小编解码组件，PR #116 修后合入）
+
+- `quantize`：f32 ↔ trit 三值量化/反量化（TWN 风格，`beta=0.7` 默认，scale = max(|w|)），
+  附 L2 量化误差读数；**有损是设计目的**（crate 文档的无损不变式已随之修订）。
+- `sparse`：三值 COO 稀疏容器——只存非 Unknown 的 `(index, value)`，解码校验
+  下标严格递增/不越界（结构化错误）。
+- `interleave`：块交织/解交织（行写列读），把 burst error 打散配合 hamming 纠错；
+  `block=1` 或 `≥ len` 恒等，尾巴 ragged 可逆。
+- `checksum`：GF(3) CRC-3（`x³+2x+1`），只检错不纠错；文档声明的**本原性（x 模 g 阶 = 26）
+  已钉成测试**（多项式乘法/约减逐位验证，26 步循环）。
+- CLI 新增 quantize / dequantize / sparse / interleave / checksum 子命令。
+- 测试 +14（codec 52 → 66）；变异门 202 → **207**（新增 5 条：
+  量化 scale 折向、阈值边界、稀疏重复下标、交织行列、verify 截断放行）。
+- **同 PR 的 `layout` 模块被设计否决剔除**（另设第二套双导轨类型 + panic 策略），
+  记录见 `docs/DESIGN.md`「不批的设计提案」。外部贡献（bamboo-echo），ZCode 复审合入。
+
 ### Added（三进制 GPU 内核研究：三值矩阵乘 + TT3 纹理解码，真机实测）
 
 trit-gpu 新增两个三进制 GPU 内核（`gpu` feature 后），全部与 CPU 镜像真机对拍：

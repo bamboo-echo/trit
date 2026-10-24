@@ -134,4 +134,49 @@ mod tests {
     fn checksum_length_is_three() {
         assert_eq!(compute(&v(&['1', '0'])).len(), 3);
     }
+
+    #[test]
+    fn generator_is_primitive_order_twenty_six() {
+        // 文档声明 g(x)=x³+2x+1 在 GF(3) 上本原：x 模 g 的阶恰为 3³−1=26。
+        // 这是"距 13 的双错不可检、其余双错可检"结论的前提——多项式一变即红。
+        // 多项式以系数向量（低次在前）表示，做 GF(3) 乘法与模 g 约减。
+        // 生产常量 GEN 是高次在前；测试统一转成低次在前做对齐。
+        let gen_low: Vec<i32> = GEN.iter().rev().copied().collect();
+        let mul = |a: &[i32], b: &[i32]| -> Vec<i32> {
+            let mut out = vec![0i32; a.len() + b.len() - 1];
+            for (i, &x) in a.iter().enumerate() {
+                for (j, &y) in b.iter().enumerate() {
+                    out[i + j] = (out[i + j] + x * y).rem_euclid(3);
+                }
+            }
+            out
+        };
+        let reduce = |mut p: Vec<i32>| -> Vec<i32> {
+            while p.len() >= gen_low.len() {
+                let top = *p.last().unwrap();
+                let shift = p.len() - gen_low.len();
+                if top != 0 {
+                    for (j, &g) in gen_low.iter().enumerate() {
+                        p[shift + j] = (p[shift + j] - top * g).rem_euclid(3);
+                    }
+                }
+                p.pop();
+            }
+            while p.len() > 1 && *p.last().unwrap() == 0 {
+                p.pop();
+            }
+            p
+        };
+        // x 的幂序列模 g：从常数 1 起步连乘 26 次 x，必须 x^26 ≡ 1 且之前都不为 1。
+        let mut power = vec![1i32]; // 1
+        for exponent in 1..=26 {
+            power = reduce(mul(&power, &[0, 1]));
+            let is_one = power == vec![1i32];
+            if exponent < 26 {
+                assert!(!is_one, "x^{exponent} ≡ 1：g 不是本原");
+            } else {
+                assert!(is_one, "x^26 ≢ 1：阶不是 26");
+            }
+        }
+    }
 }
