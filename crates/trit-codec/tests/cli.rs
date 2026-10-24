@@ -143,3 +143,20 @@ fn checksum_append_then_verify_passes() {
     let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(v["valid"], true);
 }
+
+#[test]
+fn count_cli_basic() {
+    // 手算："0X1" 覆盖 3 个赋值，"100" 覆盖 1 个，两者在首位 0/1 冲突无交集。
+    // 并集 = 3 + 1 = 4。
+    let (stdout, _, code) = run(&["count", "[\"0X1\",\"100\"]"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["count"], 4);
+    assert_eq!(v["terms"], serde_json::json!(["0X1", "100"]));
+
+    // 重叠情形："X0X"（9 个）完全包含 "X00"（3 个）→ 并集仍为 9。
+    let (stdout, _, code) = run(&["count", "[\"X0X\",\"X00\"]"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["count"], 9);
+}
