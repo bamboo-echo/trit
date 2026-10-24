@@ -143,3 +143,22 @@ fn checksum_append_then_verify_passes() {
     let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(v["valid"], true);
 }
+
+#[test]
+fn gray_cli_round_trips() {
+    // encode：gray --index 5 --n 2。手算 n=2 时 index 5 的码字应为 "XX"（锚点）。
+    let (stdout, _, code) = run(&["gray", "--index", "5", "--n", "2"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert_eq!(v["index"], 5);
+    assert_eq!(v["n"], 2);
+    let codeword = v["codeword"].as_str().unwrap().to_string();
+    assert_eq!(codeword, "XX");
+
+    // decode：gray --decode <codeword>，index 必须往返回 5。
+    let (stdout, _, code) = run(&["gray", "--decode", &codeword]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert_eq!(v["word"], codeword);
+    assert_eq!(v["index"], 5);
+}
