@@ -8,6 +8,12 @@ use super::{VerilogError, message};
 
 /// assign 右值的最大嵌套深度。
 const MAX_RHS_DEPTH: usize = 256;
+/// 单条 assign 里二元运算符的总数上限。
+///
+/// 平链会构造成左深 AST，`bit_expr` / `synth_v` 再递归遍历它——不设上限时
+/// 超长链在**合成阶段**栈溢出（解析本身是循环，深度护栏拦不住）。取值与
+/// `MAX_RHS_DEPTH` 同档：测试线程 2 MiB 栈上，左深 256 层 × 2 帧仍有足够余量。
+pub(super) const MAX_RHS_OPS: usize = 256;
 
 /// `assign` 右值的小型表达式树（Verilog 语义：`^` 是经典异或）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +37,7 @@ pub(super) struct RhsParser {
     chars: Vec<char>,
     pos: usize,
     depth: usize,
+    ops: usize,
 }
 
 impl RhsParser {
@@ -39,6 +46,7 @@ impl RhsParser {
             chars: text.chars().collect(),
             pos: 0,
             depth: 0,
+            ops: 0,
         }
     }
 
@@ -54,6 +62,17 @@ impl RhsParser {
 
     fn leave(&mut self) {
         self.depth = self.depth.saturating_sub(1);
+    }
+
+    /// 每消耗一个二元运算符记一次数；平链的左深 AST 深度由这里封顶。
+    fn count_op(&mut self) -> Result<(), VerilogError> {
+        self.ops += 1;
+        if self.ops > MAX_RHS_OPS {
+            return Err(VerilogError::limit(format!(
+                "assign 表达式的二元运算超过 {MAX_RHS_OPS} 次"
+            )));
+        }
+        Ok(())
     }
 
     fn skip_ws(&mut self) {
@@ -93,6 +112,7 @@ impl RhsParser {
                 if self.peek() == Some('|') {
                     self.pos += 1;
                 }
+                self.count_op()?;
                 let right = self.parse_xor()?;
                 left = VExpr::Or(Box::new(left), Box::new(right));
             } else {
@@ -116,6 +136,7 @@ impl RhsParser {
                 }
                 _ => return Ok(left),
             };
+            self.count_op()?;
             let right = self.parse_and()?;
             let mut expr = VExpr::Xor(Box::new(left), Box::new(right));
             if negated {
@@ -134,6 +155,7 @@ impl RhsParser {
                 if self.peek() == Some('&') {
                     self.pos += 1;
                 }
+                self.count_op()?;
                 let right = self.parse_unary()?;
                 left = VExpr::And(Box::new(left), Box::new(right));
             } else {
@@ -160,22 +182,12 @@ impl RhsParser {
         self.skip_ws();
         match self.peek() {
             Some('{') => {
-                self.pos += 1;
-                let mut items = Vec::new();
-                loop {
-                    items.push(self.parse_or()?);
-                    self.skip_ws();
-                    match self.bump() {
-                        Some(',') => continue,
-                        Some('}') => break,
-                        _ => {
-                            return Err(VerilogError::unsupported(
-                                "拼接缺少 '}'（只支持 {a, b, ...}，不支持复制语法）",
-                            ));
-                        }
-                    }
-                }
-                Ok(VExpr::Concat(items))
+                // 拼接和括号一样是递归文法分支，必须计入深度——否则
+                // `{a,{a,{…}}}` 的嵌套不设防，在解析期就耗尽栈。
+                self.enter()?;
+                let parsed = self.parse_concat_body();
+                self.leave();
+                parsed
             }
             Some('(') => {
                 self.pos += 1;
@@ -233,6 +245,24 @@ impl RhsParser {
             }
             Some(ch) => Err(message(format!("assign 表达式里出现意外字符 {ch:?}"))),
             None => Err(message("assign 表达式不完整")),
+        }
+    }
+
+    fn parse_concat_body(&mut self) -> Result<VExpr, VerilogError> {
+        self.pos += 1; // '{' 已消费
+        let mut items = Vec::new();
+        loop {
+            items.push(self.parse_or()?);
+            self.skip_ws();
+            match self.bump() {
+                Some(',') => continue,
+                Some('}') => return Ok(VExpr::Concat(items)),
+                _ => {
+                    return Err(VerilogError::unsupported(
+                        "拼接缺少 '}'（只支持 {a, b, ...}，不支持复制语法）",
+                    ));
+                }
+            }
         }
     }
 }

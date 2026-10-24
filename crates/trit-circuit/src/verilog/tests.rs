@@ -573,3 +573,40 @@ fn export_uses_declared_bus_width_for_partial_wire() {
     assert!(text.contains("wire [7:0] t;"), "{text}");
     assert!(text.contains("buf g0 (t[3], a)"), "{text}");
 }
+
+#[test]
+fn deeply_nested_concat_returns_limit_not_stack_overflow() {
+    // 复审 H01：拼接是递归文法分支，2 万层嵌套曾直接栈溢出（abort 134）。
+    let mut text = String::from("module m(input a, output y);\nassign y = ");
+    for _ in 0..20_000 {
+        text.push('{');
+    }
+    text.push('a');
+    for _ in 0..20_000 {
+        text.push('}');
+    }
+    text.push_str(";\nendmodule\n");
+    let err = parse_verilog(&text).unwrap_err();
+    assert_eq!(err.kind, VerilogErrorKind::Limit, "{err:?}");
+}
+
+#[test]
+fn long_operator_chain_returns_limit_not_stack_overflow() {
+    // 复审 H01：平链构造成左深 AST，合成阶段递归遍历曾栈溢出。
+    // 用「上限 +1」项：护栏阈值被放大或禁用的任何变异都会立刻变绿暴露，
+    // 且这个深度本身能安全综合（不依赖栈溢出 abort 才判红）。
+    let chain = std::iter::repeat_n("a & ", super::expr::MAX_RHS_OPS + 1).collect::<String>();
+    let text = format!("module m(input a, output y);\nassign y = {chain}a;\nendmodule\n");
+    let err = parse_verilog(&text).unwrap_err();
+    assert_eq!(err.kind, VerilogErrorKind::Limit, "{err:?}");
+}
+
+#[test]
+fn chains_within_the_op_budget_still_parse() {
+    // 护栏不该拦住正常宽度的链：刚好不超限的 & 链要能解析并综合。
+    let chain = std::iter::repeat_n("a & ", super::expr::MAX_RHS_OPS - 1).collect::<String>();
+    let text = format!("module m(input a, output y);\nassign y = {chain}a;\nendmodule\n");
+    let circuit = parse_verilog(&text).unwrap();
+    // N 个运算符恰好综合出 N 个与门。
+    assert_eq!(circuit.gates.len(), super::expr::MAX_RHS_OPS - 1);
+}
