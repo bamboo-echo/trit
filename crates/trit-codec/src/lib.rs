@@ -20,7 +20,6 @@ pub mod balanced;
 pub mod checksum;
 pub mod hamming;
 pub mod interleave;
-pub mod layout;
 pub mod pack;
 pub mod plan;
 pub mod quantize;
