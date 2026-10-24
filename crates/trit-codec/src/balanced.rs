@@ -33,12 +33,24 @@ pub fn encode(value: i64) -> String {
 }
 
 /// 解码平衡三进制字符串；空串与非法字符会报错，溢出也会报错。
+///
+/// 前导 `0` 允许（`"00+0"` 与 `"+0"` 同值）；单字符 `"+"` / `"-"` 是 ±1。
+/// 剥掉前导 `0` 后超过 41 位的数值必然超出 i64（见模块文档），直接按溢出拒绝，
+/// 所以超长全零串不会真的按位循环。
 pub fn decode(text: &str) -> Result<i64, CodecError> {
     if text.is_empty() {
         return Err(CodecError::Empty);
     }
+    // 前导零只是冗余书写，剥掉后 41 位已覆盖整个 i64。
+    let trimmed = text.trim_start_matches('0');
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+    if trimmed.chars().count() > 41 {
+        return Err(CodecError::Overflow);
+    }
     let mut value: i128 = 0;
-    for ch in text.chars() {
+    for ch in trimmed.chars() {
         let digit = match ch {
             '+' => 1i128,
             '0' => 0,
@@ -54,8 +66,13 @@ pub fn decode(text: &str) -> Result<i64, CodecError> {
 }
 
 /// `n` 位平衡三进制能表示的绝对值上界。
+///
+/// `(3^80-1)/2 ≈ 7.4e37` 仍在 i128 内；`3^81` 起超出 i128，真实上界只能
+/// **饱和到 `i128::MAX`** 表示——不再溢出 panic。
 pub fn range(n: u32) -> i128 {
-    (3i128.pow(n) - 1) / 2
+    3i128
+        .checked_pow(n)
+        .map_or(i128::MAX, |power| (power - 1) / 2)
 }
 
 #[cfg(test)]
@@ -105,5 +122,28 @@ mod tests {
         // 41 个 + 已经超过 i64。
         let huge: String = std::iter::repeat_n('+', 41).collect();
         assert!(matches!(decode(&huge), Err(CodecError::Overflow)));
+    }
+
+    #[test]
+    fn range_is_exact_up_to_eighty_then_saturates() {
+        assert_eq!(range(0), 0);
+        assert_eq!(range(1), 1);
+        assert_eq!(range(2), 4);
+        assert!(range(80) > 0 && range(80) < i128::MAX, "{}", range(80));
+        // 3^81 超出 i128：饱和而不是 panic。
+        assert_eq!(range(81), i128::MAX);
+        assert_eq!(range(u32::MAX), i128::MAX);
+    }
+
+    #[test]
+    fn decode_accepts_redundant_zeros_but_bounds_the_work() {
+        assert_eq!(decode("00+0").unwrap(), 3);
+        assert_eq!(decode(&"0".repeat(1_000_000)).unwrap(), 0);
+        // 剥掉前导零后 42 位：数值必然超出 i64。
+        let huge: String = std::iter::repeat_n('+', 42).collect();
+        assert!(matches!(decode(&huge), Err(CodecError::Overflow)));
+        // 41 位边界仍按数值判断：i64::MAX 的编码恰好 41 位，必须可解。
+        assert_eq!(decode(&encode(i64::MAX)).unwrap(), i64::MAX);
+        assert_eq!(decode(&encode(i64::MIN)).unwrap(), i64::MIN);
     }
 }

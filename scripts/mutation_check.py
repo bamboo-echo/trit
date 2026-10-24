@@ -1241,6 +1241,22 @@ MUTANTS = [
         "filter": "small_values"
     },
     {
+        "name": "balanced: range 饱和值写成 0",
+        "file": "crates/trit-codec/src/balanced.rs",
+        "old": "        .map_or(i128::MAX, |power| (power - 1) / 2)",
+        "new": "        .map_or(0, |power| (power - 1) / 2)",
+        "pkg": "trit-codec",
+        "filter": "range_is_exact_up_to_eighty_then_saturates"
+    },
+    {
+        "name": "balanced: 位数上限把 41 位也拒",
+        "file": "crates/trit-codec/src/balanced.rs",
+        "old": "    if trimmed.chars().count() > 41 {",
+        "new": "    if trimmed.chars().count() >= 41 {",
+        "pkg": "trit-codec",
+        "filter": "decode_accepts_redundant_zeros_but_bounds_the_work"
+    },
+    {
         "name": "net-format: 不校验魔数",
         "file": "crates/trit-net/src/format.rs",
         "old": "    if magic != MAGIC {",
@@ -1305,10 +1321,50 @@ MUTANTS = [
         "filter": "arithmetic_is_exact_when_digits_fit"
     },
     {
+        "name": "float: 加法对齐溢出改回饱和",
+        "file": "crates/trit-float/src/lib.rs",
+        "old": "        let Some(boosted) = high.checked_mul(3i128.pow(shift as u32)) else {\n            return Self::new(high, high_exp, precision);\n        };",
+        "new": "        let boosted = high.saturating_mul(3i128.pow(shift as u32));",
+        "pkg": "trit-float",
+        "filter": "adding_zero_returns_the_operand_unchanged"
+    },
+    {
+        "name": "float: digit_count 取回 abs",
+        "file": "crates/trit-float/src/lib.rs",
+        "old": "    let mut rest = value.unsigned_abs();",
+        "new": "    let mut rest = value.abs() as u128;",
+        "pkg": "trit-float",
+        "filter": "extreme_mantissa_and_exponent_do_not_panic"
+    },
+    {
+        "name": "float: 丢位除法回到先减后除",
+        "file": "crates/trit-float/src/lib.rs",
+        "old": "    let quotient = value.div_euclid(3);",
+        "new": "    let quotient = (value - remainder) / 3;",
+        "pkg": "trit-float",
+        "filter": "extreme_mantissa_and_exponent_do_not_panic"
+    },
+    {
+        "name": "float: 相等把精度算进去",
+        "file": "crates/trit-float/src/lib.rs",
+        "old": "        self.mantissa == other.mantissa && self.exponent == other.exponent",
+        "new": "        self.mantissa == other.mantissa\n            && self.exponent == other.exponent\n            && self.precision == other.precision",
+        "pkg": "trit-float",
+        "filter": "equality_and_order_are_numeric_not_representational"
+    },
+    {
+        "name": "float: 对齐溢出判成更小",
+        "file": "crates/trit-float/src/lib.rs",
+        "old": "        None if high > 0 => std::cmp::Ordering::Greater,",
+        "new": "        None if high > 0 => std::cmp::Ordering::Less,",
+        "pkg": "trit-float",
+        "filter": "equality_and_order_are_numeric_not_representational"
+    },
+    {
         "name": "float: 乘法指数相减",
         "file": "crates/trit-float/src/lib.rs",
-        "old": "            self.exponent + other.exponent,",
-        "new": "            self.exponent - other.exponent,",
+        "old": "            self.exponent.saturating_add(other.exponent),",
+        "new": "            self.exponent.saturating_sub(other.exponent,",
         "pkg": "trit-float",
         "filter": "arithmetic_is_exact_when_digits_fit"
     },
