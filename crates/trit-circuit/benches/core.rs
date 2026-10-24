@@ -8,7 +8,7 @@ use std::time::Instant;
 use std::collections::BTreeMap;
 
 use trit_circuit::{
-    CellLibrary, MapStrategy, TimingModel, analyze_timing, generate_tests, parse_netlist,
+    CellLibrary, MapStrategy, TimingModel, analyze, analyze_timing, generate_tests, parse_netlist,
     parse_verilog, propagate_exact, propagate_exact_with_jobs, to_cells_with_load, to_nand_only,
 };
 use trit_core::algebra::Algebra;
@@ -131,6 +131,9 @@ fn main() {
     });
     bench("atpg (6 inputs)", 50, || {
         generate_tests(&atpg_circuit, Algebra::Kleene)
+    });
+    bench("analyze (6 inputs)", 50, || {
+        analyze(&atpg_circuit, Algebra::Kleene)
     });
 
     let (exact8, assign8) = exact_case(8);

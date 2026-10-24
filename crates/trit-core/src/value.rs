@@ -15,6 +15,7 @@ use std::fmt;
 /// 顺序即枚举顺序，`Ord` 的派生保证 `False < Unknown < True`，
 /// 方便用 `min` / `max` 表达格序的 `AND` / `OR`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum Ternary {
     /// 假（0）。
     False,
@@ -100,6 +101,22 @@ impl Ternary {
 
     /// 三值的所有取值，按 `False < Unknown < True` 顺序。
     pub const ALL: [Self; 3] = [Self::False, Self::Unknown, Self::True];
+
+    /// 三态序号：`False = 0`、`Unknown = 1`、`True = 2`（可用来索引 9 项 LUT）。
+    pub const fn index(self) -> usize {
+        // `repr(u8)` + 声明顺序（False < Unknown < True）⇒ 这个转换是免费的。
+        self as usize
+    }
+
+    /// 由序号还原；`0/1/2` 之外回退到 `Unknown`（保守）。
+    pub const fn from_index(index: usize) -> Self {
+        match index {
+            0 => Self::False,
+            1 => Self::Unknown,
+            2 => Self::True,
+            _ => Self::Unknown,
+        }
+    }
 
     /// `bool -> Ternary`：`true -> True`，`false -> False`（无分支 Select）。
     pub const fn from_bool(value: bool) -> Self {
@@ -208,6 +225,24 @@ impl fmt::Display for Ternary {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn index_round_trips_and_lut_stride_is_three_wide() {
+        use Ternary::{False, True, Unknown};
+        assert_eq!([False.index(), Unknown.index(), True.index()], [0, 1, 2]);
+        for value in Ternary::ALL {
+            assert_eq!(Ternary::from_index(value.index()), value);
+        }
+        // 9 项 LUT 用 `a*3 + b`，任意 (a, b) 都必须落到不同槽位，
+        // 否则真值表会互相覆盖。
+        let mut seen = std::collections::BTreeSet::new();
+        for a in 0..3 {
+            for b in 0..3 {
+                assert!(seen.insert(a * 3 + b), "槽位重复：a={a} b={b}");
+            }
+        }
+        assert_eq!(seen.len(), 9);
+    }
 
     #[test]
     fn operators_use_kleene_and_classic_xor() {

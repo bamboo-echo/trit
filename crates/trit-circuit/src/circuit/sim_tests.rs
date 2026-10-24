@@ -120,3 +120,66 @@ fn over_budget_falls_back_without_splitting() {
     assert!(!result.exact);
     assert_eq!(result.completions, 0);
 }
+
+#[test]
+fn lookups_match_gate_semantics_for_every_algebra() {
+    // 索引化 Simulator 用预计算 LUT 代替 `match`；这里把每种门 × 3^arity 个输入 ×
+    // 3 种代数全枚举一遍，逐点对拍 `GateKind::eval`。槽位步长、填充下标、一元/二元
+    // 分支任何一个写错，都会有一个点对不上。
+    use super::{Gate, Signal, Simulator};
+
+    const BINARY: [GateKind; 6] = [
+        GateKind::And,
+        GateKind::Or,
+        GateKind::Xor,
+        GateKind::XorClassic,
+        GateKind::Nand,
+        GateKind::Nor,
+    ];
+    const UNARY: [GateKind; 2] = [GateKind::Not, GateKind::Buf];
+
+    let mut circuit = Circuit::new("lut");
+    circuit.inputs.push(Signal::new("a"));
+    circuit.inputs.push(Signal::new("b"));
+    for kind in BINARY {
+        let name = format!("{}_ab", kind.as_str());
+        circuit.add_gate(Gate::new(
+            kind,
+            vec![Signal::new("a"), Signal::new("b")],
+            Signal::new(&name),
+        ));
+        circuit.outputs.push(Signal::new(&name));
+    }
+    for kind in UNARY {
+        let name = format!("{}_a", kind.as_str());
+        circuit.add_gate(Gate::new(kind, vec![Signal::new("a")], Signal::new(&name)));
+        circuit.outputs.push(Signal::new(&name));
+    }
+
+    for alg in Algebra::ALL {
+        let mut simulator = Simulator::new(&circuit, alg).expect("电路应可仿真");
+        for a in Ternary::ALL {
+            for b in Ternary::ALL {
+                let values = simulator.eval_inputs(&[a, b]).to_vec();
+                for kind in BINARY {
+                    let slot = simulator.signal_index(&format!("{}_ab", kind.as_str()));
+                    assert_eq!(
+                        values[slot],
+                        kind.eval(&[a, b], alg),
+                        "{} a={a:?} b={b:?} alg={alg:?}",
+                        kind.as_str()
+                    );
+                }
+                for kind in UNARY {
+                    let slot = simulator.signal_index(&format!("{}_a", kind.as_str()));
+                    assert_eq!(
+                        values[slot],
+                        kind.eval(&[a], alg),
+                        "{} a={a:?} alg={alg:?}",
+                        kind.as_str()
+                    );
+                }
+            }
+        }
+    }
+}

@@ -4,7 +4,8 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use trit_dot::{
-    BLOCK_BITS, OPS, TernaryBits, bipolar_dot, float_dot, float_dot_4acc, pack_bipolar, scalar_dot,
+    BLOCK_BITS, OPS, TernaryBits, bipolar_dot, bipolar_dot_portable, dot_words_unrolled, float_dot,
+    float_dot_4acc, pack_bipolar, scalar_dot,
 };
 
 fn main() -> ExitCode {
@@ -133,10 +134,15 @@ fn bench(args: &[String]) -> Result<(), String> {
     }
 
     let ns_ternary = time(iters, || bits_a.dot(&bits_b));
+    let ns_portable = time(iters, || bits_a.dot_portable(&bits_b));
     let ns_ternary_naive = time(iters, || bits_a.dot_naive(&bits_b));
+    let ns_unrolled = time(iters, || {
+        dot_words_unrolled(&bits_a.pos, &bits_a.neg, &bits_b.pos, &bits_b.neg)
+    });
     let ns_sparse = time(iters, || sparse_bits_a.dot_sparse(&sparse_bits_b));
     let ns_block_sparse = time(iters, || block_bits_a.dot_sparse(&block_bits_b));
     let ns_bipolar = time(iters, || bipolar_dot(&packed_a, &packed_b, len));
+    let ns_bipolar_portable = time(iters, || bipolar_dot_portable(&packed_a, &packed_b, len));
     let ns_float = time(iters, || float_dot(&float_a, &float_b));
     let ns_float4 = time(iters, || float_dot_4acc(&float_a, &float_b));
     let per = |ns: u128| ns as f64 / len as f64;
@@ -157,23 +163,31 @@ fn bench(args: &[String]) -> Result<(), String> {
         },
         "timings_ns": {
             "ternary_dense": ns_ternary,
+            "ternary_portable": ns_portable,
             "ternary_dense_naive": ns_ternary_naive,
+            "ternary_unrolled": ns_unrolled,
             "ternary_element_sparse_90pct": ns_sparse,
             "ternary_block_sparse_90pct": ns_block_sparse,
             "bipolar": ns_bipolar,
+            "bipolar_portable": ns_bipolar_portable,
             "f32_scalar_naive": ns_float,
             "f32_scalar_4acc": ns_float4,
         },
         "ns_per_element": {
             "ternary_dense": per(ns_ternary),
+            "ternary_portable": per(ns_portable),
             "ternary_dense_naive": per(ns_ternary_naive),
+            "ternary_unrolled": per(ns_unrolled),
             "ternary_element_sparse_90pct": per(ns_sparse),
             "ternary_block_sparse_90pct": per(ns_block_sparse),
             "bipolar": per(ns_bipolar),
+            "bipolar_portable": per(ns_bipolar_portable),
             "f32_scalar_naive": per(ns_float),
             "f32_scalar_4acc": per(ns_float4),
         },
         "two_popc_over_four": ns_ternary_naive as f64 / ns_ternary as f64,
+        "portable_over_dispatch": ns_portable as f64 / ns_ternary as f64,
+        "unrolled_over_loop": ns_ternary as f64 / ns_unrolled as f64,
         "nonzero_blocks": {
             "element_sparse_a": sparse_bits_a.nonzero_blocks(),
             "element_sparse_b": sparse_bits_b.nonzero_blocks(),

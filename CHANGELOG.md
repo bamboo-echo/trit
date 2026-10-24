@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Changed（底层：去分支查表 + 硬件 POPCNT 派发）
+
+- `Simulator` 的门求值从「按门类型 9 路 `match`」改成**每门预计算真值表**：
+  `CompiledGate` 带上 `lut: [Ternary; 9]`（一元 3 项、二元 9 项），热循环里只剩
+  一次下标运算 + 一次查表。ATPG 主路径同机实测 **115.1 / 125.7 / 113.8 µs →
+  99.3 / 99.8 / 106.4 µs**（多次取中位，约 13%），`analyze` 在噪声内（~535–558 µs）。
+- `Ternary` 加 `#[repr(u8)]` 与 `index()` / `from_index()`，`False = 0`、`Unknown = 1`、
+  `True = 2`，LUT 下标 `a*3 + b` 直接来自序号，零转换成本。
+- `trit-dot` 的三值/二值点积加**运行时派发**：`std::arch::is_x86_feature_detected!("popcnt")`
+  命中时走 `#[target_feature(enable = "popcnt")]` 的 4 路展开内核，否则回退便携单累加器。
+  默认构建里 `objdump` 原本**一条 `popcnt` 都没有**（`count_ones` 被展开成约 12 条软件位运算），
+  派发后 37 条。同机同构建（Arrow Lake Ultra 7 270K Plus）每 trit 实测：
+  1 Mi 派发 **0.0088–0.0092 ns** vs 便携 **0.0128–0.0137 ns**（1.35–1.45×）；
+  16 Mi 派发 **0.0103–0.0106 ns** vs 便携 **0.0128–0.0129 ns**（1.22×，已开始吃带宽）。
+  纯 4 路展开而不开 `popcnt` 反而慢 12%（软件 popcount 延迟长、展开只增寄存器压力）——
+  这条负结果保留在 `dot_words_unrolled` 的 A/B 读数里。
+- 二值基线同待遇派发（否则比的不是编码而是谁碰巧拿到指令）：1 Mi **0.0038** vs 便携
+  **0.0057–0.0058 ns/元素**；三值/二值比值仍约 2.3×，与「双导轨 2 bit vs 1 bit」相符。
+  `f32` 标量 4 累加器 0.14–0.16 ns/元素，三值位并行约 **16–18×** 于它（1 Mi）。
+- `trit-dot` 的 `#![forbid(unsafe_code)]` 收窄为 `#![deny(unsafe_code)]`，唯一放开处是
+  `popcnt` 模块（两个 `#[target_feature]` 内核），其余代码仍禁止 unsafe。
+- 测试：`dot` 新增 3 条（派发 vs 便携逐值一致、各种尾巴长度、4 个 lane 独立贡献），
+  `trit-core` 新增 1 条（序号往返 + 9 槽不重叠）。变异门 168 → **174**。
+
 ### Changed（精确传播：索引化内循环 + 有上限的并行）
 
 - `propagate_exact` 的枚举不再对每个完成调用 `propagate`（那会为**每个信号**建
