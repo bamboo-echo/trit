@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Fixed（复审修复：平衡三进制 codec 与 trit-float 的溢出/语义缺陷）
+
+外部复审（无 Rust 工具链、按 std 契约推断）+ 本地逐条实测确认后修复；实验层
+（`publish = false`）按其建议优先级 H1 → M1 → M2 → M3 落地：
+
+- **`balanced::range(n)` 溢出 panic（H1）**：`3i128.pow(n)` 在 `n ≥ 81` 越界 panic；
+  改 `checked_pow`，越界**饱和到 `i128::MAX`**（`range(80) ≈ 7.4e37` 仍精确）。
+- **`balanced::decode` 无长度上限（M3）**：超长全零串会按位循环百万次。现在先剥
+  前导 `0`（`"00+0"` 与 `"+0"` 同值，行为不变、写入文档），剥后超 41 位直接
+  `Overflow`——41 位已覆盖整个 i64，42 位数值必然越界。
+- **`TritFloat` 极值 panic（M1，实测比复审多两处）**：`digit_count` 对 `i128::MIN`
+  取 `abs()` panic → 改 `unsigned_abs()`；`drop_digit` 的 `(value - remainder)` 对
+  `±i128` 极值下溢 → 改 `div_euclid`（数学等价）；指数 `+=` / 相加 / 相减全部
+  `saturating`；`Neg` 改 `saturating_neg`。
+- **`TritFloat` 加法静默改值（复审 H10，比 panic 更重）**：`x + 0` 对大指数 `x` 曾被
+  `saturating_mul` 改写约 72%。对齐溢出时较小项低于任何精度的半个 ulp，**丢弃**
+  而不是饱和——`x + 0 == x` 恢复成立。
+- **`TritFloat` 的 `Eq` 把 `precision` 算进去且无 `Ord`（M2）**：改为**数值**相等/全序
+  （规格化后 `(mantissa, exponent)` 是数值规范形，逐字段比较即数值比较）；
+  `from_f64(1.0, 10) == from_f64(1.0, 20)` 成立，补 `PartialOrd + Ord`（对齐溢出按
+  符号定序）。
+- 测试：codec +2（range 80/81/饱和、剥零/41 位边界/i64::MAX 往返）、float +3
+  （`x+0` 恒等、极值不 panic、数值相等与全序含对齐溢出分支）。变异门 178 → **185**
+  （1 条随 `saturating` 迁移，新增 7 条；codec 7/7、float 8/8 实跑全抓——其中
+  「对齐溢出判成更小」首轮存活，补齐 shift>80 与 `3^40×3^41` 两类断言后判红）。
+
 ### Changed（拆最后一个上帝模块：verilog/parse.rs，预算台账清零）
 
 - `verilog/parse.rs` **861 → 471 行**，按职责拆出三个子模块，代码原样搬移（语义零改动）：

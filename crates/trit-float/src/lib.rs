@@ -19,7 +19,7 @@ pub const MIN_PRECISION: u32 = 1;
 pub const MAX_PRECISION: u32 = 40;
 
 /// 一个平衡三进制浮点数。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct TritFloat {
     mantissa: i128,
     exponent: i32,
@@ -82,12 +82,17 @@ impl TritFloat {
         } else {
             (other.mantissa, self.mantissa, other.exponent, self.exponent)
         };
-        let shift = high_exp - low_exp;
+        // i64 里做差：i32 极值相减本身会溢出。
+        let shift = i64::from(high_exp) - i64::from(low_exp);
         if shift > 76 {
             // 差值超过 i128 的安全范围，较小项相对影响 < 3^-76，直接丢弃。
             return Self::new(high, high_exp, precision);
         }
-        let boosted = high.saturating_mul(3i128.pow(shift as u32));
+        // 对齐同样可能溢出（大尾数 × 3^shift）。此时较小项低于任何精度的半个 ulp，
+        // 同样丢弃——不允许 saturating 静默改值（`x + 0` 必须还是 `x`）。
+        let Some(boosted) = high.checked_mul(3i128.pow(shift as u32)) else {
+            return Self::new(high, high_exp, precision);
+        };
         Self::new(boosted.saturating_add(low), low_exp, precision)
     }
 
@@ -96,7 +101,7 @@ impl TritFloat {
         let precision = self.precision.max(other.precision);
         Self::new(
             self.mantissa.saturating_mul(other.mantissa),
-            self.exponent + other.exponent,
+            self.exponent.saturating_add(other.exponent),
             precision,
         )
     }
@@ -104,7 +109,7 @@ impl TritFloat {
     /// 取反实现见 [`std::ops::Neg`]。
     fn flipped(self) -> Self {
         Self {
-            mantissa: -self.mantissa,
+            mantissa: self.mantissa.saturating_neg(),
             ..self
         }
     }
@@ -176,17 +181,17 @@ fn normalize(mut mantissa: i128, mut exponent: i32, precision: u32) -> (i128, i3
     }
     while mantissa % 3 == 0 {
         mantissa /= 3;
-        exponent += 1;
+        exponent = exponent.saturating_add(1);
     }
     while digit_count(mantissa) > precision {
         mantissa = drop_digit(mantissa);
-        exponent += 1;
+        exponent = exponent.saturating_add(1);
         if mantissa == 0 {
             return (0, 0);
         }
         while mantissa % 3 == 0 {
             mantissa /= 3;
-            exponent += 1;
+            exponent = exponent.saturating_add(1);
         }
     }
     (mantissa, exponent)
@@ -195,7 +200,8 @@ fn normalize(mut mantissa: i128, mut exponent: i32, precision: u32) -> (i128, i3
 /// 丢掉最低位并做最近舍入；平衡三进制的余数只有 `±1`，所以就是向零截断。
 fn drop_digit(value: i128) -> i128 {
     let remainder = value.rem_euclid(3);
-    let quotient = (value - remainder) / 3;
+    // div_euclid 等价于 `(value - remainder) / 3`，但后者对 ±i128 极值会先下溢。
+    let quotient = value.div_euclid(3);
     if remainder <= 1 {
         quotient
     } else {
@@ -205,12 +211,80 @@ fn drop_digit(value: i128) -> i128 {
 
 fn digit_count(value: i128) -> u32 {
     let mut count = 0;
-    let mut rest = value.abs();
+    // unsigned_abs：i128::MIN 的 |x| 不存在于 i128，abs() 会 panic。
+    let mut rest = value.unsigned_abs();
     while rest > 0 {
         rest /= 3;
         count += 1;
     }
     count
+}
+
+/// 相等与全序都按**数值**（`mantissa · 3^exponent`）判定，不看 `precision`：
+/// `from_f64(1.0, 10) == from_f64(1.0, 20)`。规格化后的 `(mantissa, exponent)`
+/// 是数值的规范形（尾数不再被 3 整除），逐字段比较就是数值比较。
+impl PartialEq for TritFloat {
+    fn eq(&self, other: &Self) -> bool {
+        self.mantissa == other.mantissa && self.exponent == other.exponent
+    }
+}
+
+impl Eq for TritFloat {}
+
+impl PartialOrd for TritFloat {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TritFloat {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self.is_zero(), other.is_zero()) {
+            (true, true) => return Ordering::Equal,
+            (true, false) => {
+                return if other.mantissa > 0 {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                };
+            }
+            (false, true) => {
+                return if self.mantissa > 0 {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                };
+            }
+            _ => {}
+        }
+        if self.exponent == other.exponent {
+            return self.mantissa.cmp(&other.mantissa);
+        }
+        let shift = i64::from(self.exponent) - i64::from(other.exponent);
+        if shift > 0 {
+            align_cmp(self.mantissa, shift, other.mantissa)
+        } else {
+            align_cmp(other.mantissa, -shift, self.mantissa).reverse()
+        }
+    }
+}
+
+/// `high · 3^shift` 与 `low` 的大小；对齐溢出说明前者超出 i128 表示范围，
+/// 必大于后者（`low` 本身是 i128），按 `high` 的符号判定。
+fn align_cmp(high: i128, shift: i64, low: i128) -> std::cmp::Ordering {
+    let boosted = if shift > 80 {
+        None
+    } else {
+        3i128
+            .checked_pow(shift as u32)
+            .and_then(|power| high.checked_mul(power))
+    };
+    match boosted {
+        Some(boosted) => boosted.cmp(&low),
+        None if high > 0 => std::cmp::Ordering::Greater,
+        None => std::cmp::Ordering::Less,
+    }
 }
 
 #[cfg(test)]
@@ -280,5 +354,72 @@ mod tests {
         assert_eq!(float.precision(), MIN_PRECISION);
         let float = TritFloat::new(1, 0, 99);
         assert_eq!(float.precision(), MAX_PRECISION);
+    }
+
+    #[test]
+    fn adding_zero_returns_the_operand_unchanged() {
+        // 大指数 + 0 曾被 saturating_mul 静默改值（相对误差 ~72%）；必须原样返回。
+        let x = TritFloat::new(1000, 75, 40);
+        let sum = x + TritFloat::zero(40);
+        assert_eq!(sum, x);
+        assert_eq!(sum.mantissa(), 1000);
+        assert_eq!(sum.exponent(), 75);
+        // 对齐溢出时小项低于半个 ulp：丢弃而不是饱和改值。
+        let y = x + TritFloat::new(1, 0, 40);
+        assert_eq!(y, x);
+    }
+
+    #[test]
+    fn extreme_mantissa_and_exponent_do_not_panic() {
+        // digit_count 曾对 i128::MIN 取 abs() 直接 panic；现在规格化到 40 位。
+        let float = TritFloat::new(i128::MIN, 0, 40);
+        assert!(float.to_f64().is_finite());
+        assert!(float.mantissa().abs() < 3i128.pow(40));
+        // 指数加减饱和而不是溢出 panic。
+        let huge = TritFloat::new(1, i32::MAX, 5) * TritFloat::new(1, 5, 5);
+        assert_eq!(huge.exponent(), i32::MAX);
+        let stripped = TritFloat::new(3, i32::MAX, 5);
+        assert_eq!(stripped.exponent(), i32::MAX);
+        let tiny = TritFloat::new(1, i32::MIN, 5) + TritFloat::new(1, i32::MAX, 5);
+        assert_eq!(tiny.exponent(), i32::MAX);
+        // 取反对极端尾数饱和而不是 panic。
+        let neg = -TritFloat::new(i128::MAX, 0, 40);
+        assert!(neg.mantissa() < 0);
+    }
+
+    #[test]
+    fn equality_and_order_are_numeric_not_representational() {
+        // 相等看数值不看 precision。
+        assert_eq!(
+            TritFloat::from_f64(1.0, 10).unwrap(),
+            TritFloat::from_f64(1.0, 20).unwrap()
+        );
+        assert_ne!(TritFloat::new(2, 0, 5), TritFloat::new(2, 1, 5));
+        // 数值全序：跨精度、跨指数、含零与负数。
+        let mut values = [
+            TritFloat::from_f64(-9.0, 6).unwrap(),
+            TritFloat::zero(20),
+            TritFloat::from_f64(2.5, 8).unwrap(),
+            TritFloat::from_f64(4.0, 2).unwrap(),
+            TritFloat::from_f64(100.0, 30).unwrap(),
+        ];
+        values.sort();
+        let sorted: Vec<f64> = values.iter().map(|value| value.to_f64()).collect();
+        assert!(
+            sorted.windows(2).all(|pair| pair[0] <= pair[1]),
+            "{sorted:?}"
+        );
+        assert!(TritFloat::from_f64(2.0, 5).unwrap() < TritFloat::from_f64(3.0, 5).unwrap());
+        assert!(TritFloat::from_f64(-3.0, 5).unwrap() < TritFloat::from_f64(-2.0, 5).unwrap());
+        // 对齐溢出路径：3^100 远超 i128 尾数范围，符号定序。
+        assert!(TritFloat::new(1, 100, 5) > TritFloat::new(i128::MAX, 0, 5));
+        assert!(TritFloat::new(-1, 100, 5) < TritFloat::new(-i128::MAX, 0, 5));
+        // 指数差直接超过 80（3^80 已是 i128 内最大幂）：不必算，符号定序。
+        assert!(TritFloat::new(1, 200, 5) > TritFloat::new(2, 0, 5));
+        assert!(TritFloat::new(-1, 200, 5) < TritFloat::new(-2, 0, 5));
+        // 尾数满 40 位再对齐 3^41：乘积超出 i128，走 checked 的 None 分支。
+        let big = 3i128.pow(40) - 1;
+        assert!(TritFloat::new(big, 41, 40) > TritFloat::new(1, 0, 5));
+        assert!(TritFloat::new(-big, 41, 40) < TritFloat::new(-1, 0, 5));
     }
 }
