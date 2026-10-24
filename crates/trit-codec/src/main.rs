@@ -2,7 +2,10 @@
 
 use std::process::ExitCode;
 
-use trit_codec::{balanced, checksum, count, delta, gray, hamming, interleave, pack, plan, quantize, rle, sparse, sop};
+use trit_codec::{
+    balanced, checksum, count, delta, gray, hamming, interleave, pack, plan, quantize, rle, sop,
+    sparse,
+};
 use trit_core::value::Ternary;
 
 fn main() -> ExitCode {
@@ -638,7 +641,10 @@ fn sop_cmd(args: &[String]) -> Result<(), String> {
         rows.push((input, out));
     }
     let terms = sop::minimize(&rows).map_err(|e| e.to_string())?;
-    let text_terms: Vec<String> = terms.iter().map(|t| t.iter().map(|x| x.as_char()).collect()).collect();
+    let text_terms: Vec<String> = terms
+        .iter()
+        .map(|t| t.iter().map(|x| x.as_char()).collect())
+        .collect();
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
