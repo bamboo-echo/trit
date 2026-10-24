@@ -262,7 +262,7 @@ cargo run --release -p trit-cli -- verify examples/policy.json
   `Limit`／`BudgetExceeded` 错误；策略展开在分配大子树之前扣节点预算。
 - CLI 在默认值上收紧：`table` / REPL 与 WASM 只允许 10 个变量，网表分析最多 10 个主输入。
 
-`python scripts/mutation_check.py` 对 **174** 条关键规则做单点文本变异并跑对应回归，
+`python scripts/mutation_check.py` 对 **178** 条关键规则做单点文本变异并跑对应回归，
 测试必须变红才算抓住；`--pkg <crate>` 只跑改动过的 crate（PR 门），全量每周跑一次。
 
 ### 六道门（每道一个判定，均带自证）

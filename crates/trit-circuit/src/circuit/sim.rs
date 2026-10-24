@@ -310,9 +310,12 @@ fn merge_completions(
 struct CompiledGate {
     original: usize,
     kind: GateKind,
-    const_value: Option<Ternary>,
     /// 预计算的 9 项真值表（`a*3+b` 为下标）；一次查表代替 `match`。
     lut: [Ternary; 9],
+    /// 第一操作数的下标步长：二元 3、一元 1、常量 0。
+    stride: usize,
+    /// 第二操作数掩码：二元 3（保留 0/1/2）、一元与常量 0（丢掉 `b`）。
+    bmask: usize,
     inputs: Vec<usize>,
     output: usize,
 }
@@ -348,14 +351,23 @@ impl<'a> Simulator<'a> {
         let mut gates = Vec::with_capacity(order.len());
         for original in order {
             let gate = &circuit.gates[original];
+            // 三类门折成同一条下标公式 `a*stride + (b & bmask)`：
+            // 常量 → 0，一元 → a，二元 → 3a+b。热循环里再没有类型判断。
             let mut lut = [Ternary::False; 9];
-            match gate.kind.arity() {
+            let (stride, bmask) = match gate.kind.arity() {
+                0 => {
+                    // 只有 lut[0] 可寻址（stride 与 bmask 都把 a、b 折成 0）。
+                    // 不做防御性 fill：错编址会立刻读到未填的 `False`，测试抓得住。
+                    lut[0] = gate.const_value.unwrap_or(Ternary::False);
+                    (0, 0)
+                }
                 1 => {
                     for (a, slot) in lut.iter_mut().enumerate().take(3) {
                         *slot = gate.kind.eval(&[Ternary::from_index(a)], alg);
                     }
+                    (1, 0)
                 }
-                2 => {
+                _ => {
                     for (index, slot) in lut.iter_mut().enumerate() {
                         *slot = gate.kind.eval(
                             &[
@@ -365,14 +377,15 @@ impl<'a> Simulator<'a> {
                             alg,
                         );
                     }
+                    (3, 3)
                 }
-                _ => {}
-            }
+            };
             gates.push(CompiledGate {
                 original,
                 kind: gate.kind,
-                const_value: gate.const_value,
                 lut,
+                stride,
+                bmask,
                 inputs: gate
                     .inputs
                     .iter()
@@ -466,26 +479,19 @@ impl<'a> Simulator<'a> {
                 values[gate.output] = forced;
                 continue;
             }
-            let arity = gate.kind.arity();
             let mut ins = [Ternary::Unknown; 2];
             for (slot, &source) in ins.iter_mut().zip(gate.inputs.iter()) {
                 *slot = values[source];
             }
             if let Some((original, pin, value)) = fault
                 && original == gate.original
-                && pin < arity
+                && pin < gate.kind.arity()
             {
                 ins[pin] = value;
             }
-            // 去分支：一次查表，不再按门类型走 9 路 match。
-            let output = if gate.kind == GateKind::Const {
-                gate.const_value.unwrap_or(Ternary::False)
-            } else if arity == 2 {
-                gate.lut[ins[0].index() * 3 + ins[1].index()]
-            } else {
-                gate.lut[ins[0].index()]
-            };
-            values[gate.output] = output;
+            // 去分支：一次查表，门类型/元数已经编码进 stride 与 bmask。
+            values[gate.output] =
+                gate.lut[ins[0].index() * gate.stride + (ins[1].index() & gate.bmask)];
         }
     }
 }

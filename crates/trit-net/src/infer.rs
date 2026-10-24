@@ -102,9 +102,14 @@ fn as_offset(value: Ternary) -> i32 {
     }
 }
 
+/// 符号函数：`<0 → -1`、`0 → 0`、`>0 → 1`。两次比较合成，无数据分支。
+fn sign(value: i32) -> i32 {
+    (value > 0) as i32 - (value < 0) as i32
+}
+
 fn from_offset(value: i32) -> Sign {
-    match value {
-        value if value < 0 => Sign::Neg,
+    match sign(value) {
+        -1 => Sign::Neg,
         0 => Sign::Zero,
         _ => Sign::Pos,
     }
@@ -126,13 +131,7 @@ pub fn forward(model: &Model, inputs: &[Ternary]) -> Result<Vec<Sign>, ModelErro
             for (input, value) in values.iter().enumerate() {
                 acc += i32::from(layer.weights[output][input]) * *value;
             }
-            next.push(if acc < 0 {
-                -1
-            } else if acc > 0 {
-                1
-            } else {
-                0
-            });
+            next.push(sign(acc));
         }
         values = next;
     }
@@ -162,34 +161,17 @@ fn conservative(model: &Model, inputs: &[Ternary]) -> Result<Vec<Option<Sign>>, 
             let mut low = i32::from(layer.bias[output]);
             let mut high = i32::from(layer.bias[output]);
             for input in 0..layer.inputs {
-                let weight = i32::from(layer.weights[output][input]);
-                if weight >= 0 {
-                    low += weight * lows[input];
-                    high += weight * highs[input];
-                } else {
-                    low += weight * highs[input];
-                    high += weight * lows[input];
-                }
+                // `w >= 0` 时贡献区间是 `[w*lows, w*highs]`，`w < 0` 时端点翻转。
+                // min/max 各取一次代替按权重符号分支——随机权重对分支预测器是噪声。
+                let low_term = i32::from(layer.weights[output][input]) * lows[input];
+                let high_term = i32::from(layer.weights[output][input]) * highs[input];
+                low += low_term.min(high_term);
+                high += low_term.max(high_term);
             }
-            let neg_possible = low < 0;
-            let zero_possible = low <= 0 && 0 <= high;
-            let pos_possible = high > 0;
-            let min_sign = if neg_possible {
-                -1
-            } else if zero_possible {
-                0
-            } else {
-                1
-            };
-            let max_sign = if pos_possible {
-                1
-            } else if zero_possible {
-                0
-            } else {
-                -1
-            };
-            next_lows.push(min_sign);
-            next_highs.push(max_sign);
+            // 区间压缩成符号：`sign(low)` / `sign(high)`（原 neg/zero/pos 三连分支
+            // 里 `zero_possible` 对 `sign` 是冗余的——`high >= low` 恒成立）。
+            next_lows.push(sign(low));
+            next_highs.push(sign(high));
         }
         lows = next_lows;
         highs = next_highs;
@@ -303,7 +285,7 @@ pub fn analyze(model: &Model, inputs: &[Ternary], budget: usize) -> Result<Analy
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Model;
+    use crate::model::{Layer, Model};
 
     fn model(json: &str) -> Model {
         Model::from_json(json).unwrap()
@@ -423,5 +405,59 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn negative_weight_interval_spans_for_unknown_input() {
+        // w=-1、输入 X：端点项是 (w*lows, w*highs) = (+1, -1)，区间 [-1,+1] 应弃权。
+        // 下界不取端点最小值（或取错端点）会把区间折成单点。
+        let model = model(r#"{"layers":[{"inputs":1,"outputs":1,"weights":[[-1]],"bias":[0]}]}"#);
+        let analysis = analyze(&model, &[Ternary::Unknown], 4).unwrap();
+        assert_eq!(analysis.conservative[0], None);
+    }
+
+    #[test]
+    fn conservative_interval_never_contradicts_exact() {
+        // 随机小网络对拍：精确枚举判「确定」的输出，保守区间要么同号、要么弃权。
+        // 区间只许比真值宽——min/max 端点取反、符号压缩写错都会在这里翻车。
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self) -> u64 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                self.0
+            }
+        }
+        let layer = |rng: &mut Rng, inputs: usize, outputs: usize| Layer {
+            inputs,
+            outputs,
+            weights: (0..outputs)
+                .map(|_| (0..inputs).map(|_| (rng.next() % 3) as i8 - 1).collect())
+                .collect(),
+            bias: (0..outputs).map(|_| (rng.next() % 3) as i8 - 1).collect(),
+        };
+        for seed in 1..=40u64 {
+            let mut rng = Rng(seed | 1);
+            let model = Model {
+                layers: vec![layer(&mut rng, 3, 3), layer(&mut rng, 3, 1)],
+            };
+            let values: Vec<Ternary> = (0..3)
+                .map(|_| match rng.next() % 3 {
+                    0 => Ternary::False,
+                    1 => Ternary::True,
+                    _ => Ternary::Unknown,
+                })
+                .collect();
+            let analysis = analyze(&model, &values, 64).unwrap();
+            assert!(analysis.exact, "3 个输入内必在预算内");
+            for (output, outcome) in analysis.outputs.iter().enumerate() {
+                if let Outcome::Definite(sign) = outcome
+                    && let Some(conserved) = analysis.conservative[output]
+                {
+                    assert_eq!(conserved, *sign, "seed={seed} output={output}");
+                }
+            }
+        }
     }
 }

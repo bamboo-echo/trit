@@ -1161,10 +1161,26 @@ MUTANTS = [
         "filter": "ambiguous_output_carries_both_witnesses"
     },
     {
-        "name": "net: 区间下界用上界",
+        "name": "net: 区间下界不取端点最小值",
         "file": "crates/trit-net/src/infer.rs",
-        "old": "low += weight * lows[input];",
-        "new": "low += weight * highs[input];",
+        "old": "low += low_term.min(high_term);",
+        "new": "low += low_term;",
+        "pkg": "trit-net",
+        "filter": "negative_weight_interval_spans_for_unknown_input"
+    },
+    {
+        "name": "net: 符号函数把负数当零",
+        "file": "crates/trit-net/src/infer.rs",
+        "old": "    (value > 0) as i32 - (value < 0) as i32",
+        "new": "    (value > 0) as i32",
+        "pkg": "trit-net",
+        "filter": "binary_forward_is_sign_of_weighted_sum"
+    },
+    {
+        "name": "net: 区间压缩下界拿上界算",
+        "file": "crates/trit-net/src/infer.rs",
+        "old": "            next_lows.push(sign(low));",
+        "new": "            next_lows.push(sign(high));",
         "pkg": "trit-net",
         "filter": "cancellation_is_exact_but_interval_is_blind"
     },
@@ -1337,18 +1353,34 @@ MUTANTS = [
         "filter": 'unrolled_matches_dense_on_all_tail_lengths'
     },
     {
-        "name": 'sim: LUT 二元槽位步长写成 2',
+        "name": 'sim: 热循环丢掉 bmask',
         "file": 'crates/trit-circuit/src/circuit/sim.rs',
-        "old": '                gate.lut[ins[0].index() * 3 + ins[1].index()]',
-        "new": '                gate.lut[ins[0].index() * 2 + ins[1].index()]',
+        "old": '                gate.lut[ins[0].index() * gate.stride + (ins[1].index() & gate.bmask)]',
+        "new": '                gate.lut[ins[0].index() * gate.stride + ins[1].index()]',
         "pkg": 'trit-circuit',
         "filter": 'lookups_match_gate_semantics_for_every_algebra'
     },
     {
-        "name": 'sim: LUT 一元槽位多乘 3',
+        "name": 'sim: 一元步长抹平成二元',
         "file": 'crates/trit-circuit/src/circuit/sim.rs',
-        "old": '                gate.lut[ins[0].index()]',
-        "new": '                gate.lut[ins[0].index() * 3]',
+        "old": '                        *slot = gate.kind.eval(&[Ternary::from_index(a)], alg);\n                    }\n                    (1, 0)',
+        "new": '                        *slot = gate.kind.eval(&[Ternary::from_index(a)], alg);\n                    }\n                    (3, 0)',
+        "pkg": 'trit-circuit',
+        "filter": 'lookups_match_gate_semantics_for_every_algebra'
+    },
+    {
+        "name": 'sim: 二元 bmask 抹掉第二操作数',
+        "file": 'crates/trit-circuit/src/circuit/sim.rs',
+        "old": '                    }\n                    (3, 3)\n                }',
+        "new": '                    }\n                    (3, 0)\n                }',
+        "pkg": 'trit-circuit',
+        "filter": 'lookups_match_gate_semantics_for_every_algebra'
+    },
+    {
+        "name": 'sim: 常量槽位不写常量值',
+        "file": 'crates/trit-circuit/src/circuit/sim.rs',
+        "old": '                    lut[0] = gate.const_value.unwrap_or(Ternary::False);',
+        "new": '                    lut[0] = Ternary::False;',
         "pkg": 'trit-circuit',
         "filter": 'lookups_match_gate_semantics_for_every_algebra'
     },
