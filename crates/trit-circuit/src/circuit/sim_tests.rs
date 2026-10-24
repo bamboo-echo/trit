@@ -124,8 +124,8 @@ fn over_budget_falls_back_without_splitting() {
 #[test]
 fn lookups_match_gate_semantics_for_every_algebra() {
     // 索引化 Simulator 用预计算 LUT 代替 `match`；这里把每种门 × 3^arity 个输入 ×
-    // 3 种代数全枚举一遍，逐点对拍 `GateKind::eval`。槽位步长、填充下标、一元/二元
-    // 分支任何一个写错，都会有一个点对不上。
+    // 3 种代数全枚举一遍，逐点对拍 `GateKind::eval`。stride/bmask 编码、填充下标、
+    // 常量门的 0 步长，任何一个写错，都会有一个点对不上。
     use super::{Gate, Signal, Simulator};
 
     const BINARY: [GateKind; 6] = [
@@ -141,6 +141,7 @@ fn lookups_match_gate_semantics_for_every_algebra() {
     let mut circuit = Circuit::new("lut");
     circuit.inputs.push(Signal::new("a"));
     circuit.inputs.push(Signal::new("b"));
+    circuit.add_gate(Gate::constant(Ternary::True, Signal::new("const_t")));
     for kind in BINARY {
         let name = format!("{}_ab", kind.as_str());
         circuit.add_gate(Gate::new(
@@ -155,12 +156,16 @@ fn lookups_match_gate_semantics_for_every_algebra() {
         circuit.add_gate(Gate::new(kind, vec![Signal::new("a")], Signal::new(&name)));
         circuit.outputs.push(Signal::new(&name));
     }
+    circuit.outputs.push(Signal::new("const_t"));
 
     for alg in Algebra::ALL {
         let mut simulator = Simulator::new(&circuit, alg).expect("电路应可仿真");
+        let const_slot = simulator.signal_index("const_t");
         for a in Ternary::ALL {
             for b in Ternary::ALL {
                 let values = simulator.eval_inputs(&[a, b]).to_vec();
+                // 常量门走 stride=0 路径：无论输入如何都必须读回常量本身。
+                assert_eq!(values[const_slot], Ternary::True, "a={a:?} b={b:?}");
                 for kind in BINARY {
                     let slot = simulator.signal_index(&format!("{}_ab", kind.as_str()));
                     assert_eq!(

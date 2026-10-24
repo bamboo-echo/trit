@@ -8,8 +8,9 @@ use std::time::Instant;
 use std::collections::BTreeMap;
 
 use trit_circuit::{
-    CellLibrary, MapStrategy, TimingModel, analyze, analyze_timing, generate_tests, parse_netlist,
-    parse_verilog, propagate_exact, propagate_exact_with_jobs, to_cells_with_load, to_nand_only,
+    CellLibrary, GateKind, MapStrategy, TimingModel, analyze, analyze_timing, generate_tests,
+    parse_netlist, parse_verilog, propagate_exact, propagate_exact_with_jobs, to_cells_with_load,
+    to_nand_only,
 };
 use trit_core::algebra::Algebra;
 use trit_core::value::Ternary;
@@ -108,6 +109,101 @@ fn bench<T>(name: &str, iters: u32, mut body: impl FnMut() -> T) {
     println!("{name:<24} {iters:>7}  {per_iter:>10.2} us/iter");
 }
 
+/// 分支可预测性探针：同一批求值，输入「随机」vs「固定」。
+///
+/// 二进制引擎里的 `if (state == 1) … else if (state == 0) …` 便宜或贵，取决于
+/// **数据**：固定输入时分支预测器能学会，随机输入时学不会。三值查表没有这个
+/// 变量——两种输入应当同样快。这张 2×2 表就是把「分支预测失败」这块钱量出来。
+fn branch_probe() {
+    const N: usize = 1 << 20;
+    const KINDS: [GateKind; 6] = [
+        GateKind::And,
+        GateKind::Or,
+        GateKind::Xor,
+        GateKind::XorClassic,
+        GateKind::Nand,
+        GateKind::Nor,
+    ];
+
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    // 第二项是 KINDS 的下标，避免在计时循环里再做一次门类型查找。
+    let random: Vec<(usize, Ternary, Ternary)> = (0..N)
+        .map(|i| {
+            let kind = i % KINDS.len();
+            let a = Ternary::from_index((next() % 3) as usize);
+            let b = Ternary::from_index((next() % 3) as usize);
+            (kind, a, b)
+        })
+        .collect();
+    let fixed: Vec<(usize, Ternary, Ternary)> = (0..N)
+        .map(|i| (i % KINDS.len(), Ternary::True, Ternary::False))
+        .collect();
+
+    // 与 Simulator 里 `CompiledGate.lut` 同构：每种门一张 `a*3+b` 的表。
+    let luts: [[Ternary; 9]; 6] = std::array::from_fn(|kind| {
+        let mut lut = [Ternary::False; 9];
+        for (index, slot) in lut.iter_mut().enumerate() {
+            *slot = KINDS[kind].eval(
+                &[
+                    Ternary::from_index(index / 3),
+                    Ternary::from_index(index % 3),
+                ],
+                Algebra::Kleene,
+            );
+        }
+        lut
+    });
+
+    fn per_op(iters: u32, mut body: impl FnMut() -> usize) -> f64 {
+        black_box(body());
+        let start = Instant::now();
+        for _ in 0..iters {
+            black_box(body());
+        }
+        start.elapsed().as_secs_f64() * 1e9 / f64::from(iters) / N as f64
+    }
+
+    let eval_match = |items: &[(usize, Ternary, Ternary)]| -> usize {
+        items
+            .iter()
+            .map(|(kind, a, b)| KINDS[*kind].eval(&[*a, *b], Algebra::Kleene).index())
+            .sum()
+    };
+    let eval_lut = |items: &[(usize, Ternary, Ternary)]| -> usize {
+        items
+            .iter()
+            .map(|(kind, a, b)| luts[*kind][a.index() * 3 + b.index()].index())
+            .sum()
+    };
+
+    let match_random = per_op(3, || eval_match(&random));
+    let match_fixed = per_op(3, || eval_match(&fixed));
+    let lut_random = per_op(3, || eval_lut(&random));
+    let lut_fixed = per_op(3, || eval_lut(&fixed));
+
+    println!("{:<24} {:>9}  {:>9}", "branch probe", "random", "fixed");
+    println!(
+        "{:<24} {match_random:>9.3}  {match_fixed:>9.3}   ns/op  (match 求值)",
+        "by match"
+    );
+    println!(
+        "{:<24} {lut_random:>9.3}  {lut_fixed:>9.3}   ns/op  (查表)",
+        "by lut"
+    );
+    println!(
+        "{:<24} {:>9.2}  {:>9.2}   x      (match/lut)",
+        "speedup",
+        match_random / lut_random,
+        match_fixed / lut_fixed
+    );
+}
+
 fn main() {
     let netlist = chain_netlist();
     let verilog = chain_verilog();
@@ -135,6 +231,8 @@ fn main() {
     bench("analyze (6 inputs)", 50, || {
         analyze(&atpg_circuit, Algebra::Kleene)
     });
+
+    branch_probe();
 
     let (exact8, assign8) = exact_case(8);
     let (exact12, assign12) = exact_case(12);

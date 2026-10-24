@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Changed（分支无关化收尾：stride/bmask 编码 + 保守区间 min/max）
+
+- `Simulator` 热循环去掉最后两个结构性分支（`if kind == Const` / `else if arity == 2`）：
+  门类型/元数编码进 `CompiledGate.stride`（常量 0、一元 1、二元 3）与 `bmask`
+  （二元 3、其余 0），热循环只剩同一条 `lut[a*stride + (b & bmask)]`。ATPG 同机读数
+  98.1–102.8 µs（上一组 99.3–106.4 µs 区间内，无回归）。常量槽位只填可寻址的 `lut[0]`、
+  不做防御性 `fill`——错编址会立刻读到未填的 `False`，测试抓得住。
+- **分支预测失败机制读数**（`benches/core.rs` 新增 branch probe，2×2 表）：
+  `match` 求值在随机输入 **7.1–7.3 ns/op** vs 固定输入 **1.6–1.9 ns**（≈4×——分支预测器
+  学不会的分支）；查表两种输入持平（0.66–1.05 ns），随机输入下 match/LUT 差 **9–11×**。
+  这张表把「图里说的分支预测税」变成了可复算的同机数字。
+- `trit-net` 保守区间分析去数据分支：每权重 `if weight >= 0` 改为端点项 `min`/`max`
+  各取一次（`w<0` 时区间端点翻转由 min/max 吸收，任意权重都成立）；逐层符号压缩从
+  neg/zero/pos 三连分支化成 `sign(x) = (x>0) - (x<0)`（原 `zero_possible` 对 `sign`
+  是冗余条件——`high >= low` 恒成立）。同机读数：`analyze 128×128×3`
+  **131.96 → 39.9–40.1 µs（≈3.3×）**；`forward` 13.8 → 14.2–14.3 µs（噪声边缘，如实记）。
+- `trit-net` 接入首个基准 `benches/net.rs`（前向 + 区间分析的同机读数）。
+- 测试：逐点对拍补 Const 门（stride=0 路径）；`trit-net` 新增 2 条（负权重区间必须弃权、
+  40 组随机「保守区间不得与精确枚举矛盾」对拍）。变异门 174 → **178**
+  （3 条锚点随重构迁移到 stride/bmask 与 min/max 形态，另新增 4 条，逐条实跑判红）。
+
 ### Changed（底层：去分支查表 + 硬件 POPCNT 派发）
 
 - `Simulator` 的门求值从「按门类型 9 路 `match`」改成**每门预计算真值表**：
