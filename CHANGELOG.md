@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Changed（拆最后一个上帝模块：verilog/parse.rs，预算台账清零）
+
+- `verilog/parse.rs` **861 → 471 行**，按职责拆出三个子模块，代码原样搬移（语义零改动）：
+  - `build.rs`（119）：`Builder`——assign 右值到门的降级（临时信号、门数预算、表达式综合）；
+  - `decl.rs`（195）：端口/线网声明解析（位宽范围、名字列表、`declare_ports`/`mark_used`）；
+  - `instance.rs`（108）：模块实例语句（命名/位置连接）。
+  `parse.rs` 只留顶层编排（模块扫描、header、语句分发）。
+- **模块预算台账清零**：`module_budget_baseline.json` 的 `over_budget` 从 1 件
+  （parse.rs 861）变为 **0 件**——全仓 157 个 `.rs` 文件无一超 800 行预算，
+  之后任何新上帝对象直接红，不再有登记缓冲。
+- 变异门锚点随迁 3 条（`向量声明记成 1 位`/`向量端口只展开 bit 0` → `decl.rs`，
+  `assign 的 ^` → `build.rs`），总数不变（178）；`升序 LHS`/`多输入 NAND/NOR` 两条留在
+  `parse.rs` 原锚点。顺带把两条双斜杠路径归一化。
+
 ### Changed（分支无关化收尾：stride/bmask 编码 + 保守区间 min/max）
 
 - `Simulator` 热循环去掉最后两个结构性分支（`if kind == Const` / `else if arity == 2`）：

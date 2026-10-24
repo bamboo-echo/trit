@@ -1,6 +1,7 @@
 //! 结构化 Verilog 子集：组合逻辑（原语 + `assign`，支持多比特端口）。
 //!
-//! 子模块：`expr`（右值）、`parse`（模块/端口/语句）、`export`（导出与向量重组）。
+//! 子模块：`expr`（右值）、`parse`（模块/语句编排）、`decl`（端口/线网声明）、
+//! `build`（表达式到门）、`instance`（模块实例语句）、`export`（导出与向量重组）。
 
 /// 单个向量声明或常量字面量的位宽上限。
 const MAX_VECTOR_WIDTH: usize = 4096;
@@ -120,9 +121,12 @@ fn is_signal_ref(token: &str) -> bool {
     is_identifier(base) && !inner.is_empty() && inner.chars().all(|ch| ch.is_ascii_digit())
 }
 
+mod build;
+mod decl;
 mod export;
 mod expr;
 mod hierarchy;
+mod instance;
 mod params;
 mod parse;
 pub use export::to_verilog;
