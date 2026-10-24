@@ -138,7 +138,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 向量声明记成 1 位",
-        "file": "crates/trit-circuit/src/verilog/parse.rs",
+        "file": "crates/trit-circuit/src/verilog/decl.rs",
         "old": "                let bus = if range.ascending {\n                    Bus::new_ascending(name.clone(), range.width)\n                } else {\n                    Bus::new(name.clone(), range.width)\n                };\n",
         "new": "                let bus = Bus::new(name.clone(), 1);\n",
         "pkg": "trit-circuit",
@@ -274,7 +274,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: assign 的 ^ 退化成强加三值 Xor",
-        "file": "crates//trit-circuit//src//verilog//parse.rs",
+        "file": "crates/trit-circuit/src/verilog/build.rs",
         "old": "                    VExpr::Or(..) => GateKind::Or,\n                    _ => GateKind::XorClassic,",
         "new": "                    VExpr::Or(..) => GateKind::Or,\n                    _ => GateKind::Xor,",
         "pkg": "trit-circuit",
@@ -490,7 +490,7 @@ MUTANTS = [
     },
     {
         "name": "verilog: 向量端口只展开 bit 0",
-        "file": "crates//trit-circuit//src//verilog//parse.rs",
+        "file": "crates/trit-circuit/src/verilog/decl.rs",
         "old": "                for index in order {",
         "new": "                for index in [0] {",
         "pkg": "trit-circuit",
