@@ -29,21 +29,21 @@ pub enum Kernel {
 
 /// 跨内核切换阈值：行数达到这个量级时，tryte 查表才可靠地快过双导轨掩码。
 ///
-/// 实测（`bench --pair 掩码 tryte --rounds 7`，cols=576，tryte/mask 中位比值与胜场）：
+/// **2026-10-26 重标定**：掩码内核改成行阻塞 2 之后快了 4–10%，旧阈值 40960 已失效。
+/// 实测（`bench --pair 掩码 tryte`，cols=576，tryte/mask 中位比值与胜场）：
 ///
-/// | rows | 比值 | tryte 更快 |
-/// |---:|---:|---:|
-/// | 1024 | 0.477 | 0/7 |
-/// | 2048 | 0.613 | 1/7 |
-/// | 4096 | 0.373 | 0/7 |
-/// | 8192 | 0.955 | 3/7 |
-/// | 16384 | 0.822 | 0/7 |
-/// | 32768 | 0.966 | 2/7 |
-/// | 49152 | **1.085** | **7/7** |
+/// | rows | 比值 | tryte 更快 | 轮数 |
+/// |---:|---:|---:|---:|
+/// | 32768 | 0.855 | 2/9 | 9 |
+/// | 49152 | 0.945 | 4/15 | 15 |
+/// | 65536 | 1.004 | 5/9 | 9 |
+/// | 81920 | **1.164** | **9/9** | 9 |
+/// | 98304 | **1.190** | **9/9** | 9 |
 ///
-/// 交叉点夹在 32768 与 49152 之间，取 40960。
-/// **旧的 2048 是错的**——那个值会让 2k–40k 行都走更慢的查表。
-pub const AUTO_LUT_ROWS: usize = 40960;
+/// 交叉点夹在 49152 与 81920 之间，取 65536（该点两种内核打平，往上 tryte 稳定胜）。
+/// **旧的 40960 已不成立**：49152 行实际是掩码更快（旧值会让输出层走更慢的查表）；
+/// 更早的 2048 更是错的。
+pub const AUTO_LUT_ROWS: usize = 65536;
 
 /// 拆表方案：每个 5-trit 字节拆成「低 2 位」和「高 3 位」两张小表。
 ///
@@ -243,7 +243,60 @@ impl TernaryMatrix {
         }
     }
 
-    fn gemv_mask(&self, x: &[f32], out: &mut [f32]) {
+    /// 掩码内核：行阻塞 2 —— 两行共享一次 `x` 装载。
+    ///
+    /// 每 8 trit 的装入从 3 次（1 x + 2 掩码表）降到 2.5 次（两行均摊 1 x + 4 掩码表）。
+    /// 单行仍用 4 路累加器，累加顺序与 [`gemv_mask_single`](Self::gemv_mask_single)
+    /// 逐位一致，所以两者输出可以直接 `assert_eq!`。
+    pub(crate) fn gemv_mask(&self, x: &[f32], out: &mut [f32]) {
+        // 激活补齐到 64 的倍数，掩码内核按整字读
+        let padded = self.bpr * TRITS_PER_WORD;
+        let mut xp = vec![0.0f32; padded];
+        xp[..self.cols].copy_from_slice(x);
+
+        if !crate::simd::avx2() {
+            return self.gemv_scalar(x, out);
+        }
+
+        let bpr = self.bpr;
+        let rows = self.rows;
+        let pos = Ptr::new(self.pos.as_ptr() as *mut u64);
+        let neg = Ptr::new(self.neg.as_ptr() as *mut u64);
+        let xptr = Ptr::new(xp.as_ptr() as *mut f32);
+        let pairs = rows / 2;
+
+        // SAFETY: 第 i 个工作单元写 out[2i] / out[2i+1]，工作单元互不相交；
+        // 行内切片不越界；xp 长度 >= bpr*64。
+        unsafe {
+            par_rows_mut(out.as_mut_ptr(), pairs, move |o, i| {
+                let r = i * 2;
+                let pa = std::slice::from_raw_parts(pos.get().add(r * bpr), bpr);
+                let na = std::slice::from_raw_parts(neg.get().add(r * bpr), bpr);
+                let pb = std::slice::from_raw_parts(pos.get().add((r + 1) * bpr), bpr);
+                let nb = std::slice::from_raw_parts(neg.get().add((r + 1) * bpr), bpr);
+                let xv = std::slice::from_raw_parts(xptr.get(), padded);
+                let (a, b) = crate::simd::row_dot_mask2(pa, na, pb, nb, xv);
+                // o 指向 out[i]，所以 o.add(i) 正好是 out[2i]。
+                *o.add(i) = a;
+                *o.add(i + 1) = b;
+            });
+        }
+        // 奇数行：最后一个工作单元之外的尾巴单独算一行。
+        if rows % 2 == 1 {
+            let r = rows - 1;
+            // SAFETY: r 在范围内；行内切片不越界。
+            let v = unsafe {
+                let p = std::slice::from_raw_parts(pos.get().add(r * bpr), bpr);
+                let n = std::slice::from_raw_parts(neg.get().add(r * bpr), bpr);
+                let xv = std::slice::from_raw_parts(xptr.get(), padded);
+                crate::simd::row_dot_mask(p, n, xv)
+            };
+            out[r] = v;
+        }
+    }
+
+    /// 单行掩码内核（行阻塞 2 的 A/B 基线）。
+    pub(crate) fn gemv_mask_single(&self, x: &[f32], out: &mut [f32]) {
         // 激活补齐到 64 的倍数，掩码内核按整字读
         let padded = self.bpr * TRITS_PER_WORD;
         let mut xp = vec![0.0f32; padded];
@@ -583,6 +636,21 @@ mod tests {
         let mut out = vec![0.0f32; rows];
         m.gemv(&x, &mut out, Kernel::Scalar);
         assert!(close(&out, &reference(&make(rows, cols), &x)));
+    }
+
+    #[test]
+    fn mask_pair_matches_single_bitwise() {
+        // 奇数行：覆盖「成对 + 尾行」两条路径。
+        for rows in [1usize, 2, 7, 37] {
+            let cols = 130usize;
+            let m = TernaryMatrix::from_rows(&make(rows, cols), cols);
+            let x: Vec<f32> = (0..cols).map(|i| (i % 17) as f32 * 0.07 - 0.4).collect();
+            let mut single = vec![0.0f32; rows];
+            let mut pair = vec![0.0f32; rows];
+            m.gemv_mask_single(&x, &mut single);
+            m.gemv_mask(&x, &mut pair);
+            assert_eq!(pair, single, "rows={rows}：两行版与单行版必须逐位一致");
+        }
     }
 
     #[test]
