@@ -2129,6 +2129,31 @@ MUTANTS = [
         "filter": "every_operator_matches_scalar"
     },
     {
+
+        "name": 'procscan: 不识别 shell 进程',
+        "file": 'crates/trit-procscan/src/analyze.rs',
+        "old": '                if SHELLS.contains(&lower.as_str()) {',
+        "new": '                if false {',
+        "pkg": 'trit-procscan',
+        "filter": 'flags_shell_network_and_encoded_commands'
+    },
+    {
+        "name": 'procscan: 不统计 schema 体积',
+        "file": 'crates/trit-procscan/src/mcp.rs',
+        "old": '    let schema_bytes = serde_json::to_string(&tools_value)',
+        "new": '    let schema_bytes = 0 * serde_json::to_string(&tools_value)',
+        "pkg": 'trit-procscan',
+        "filter": 'handshake_reads_tools_and_measures_schema'
+    },
+    {
+        "name": 'procscan: 目录快照看不出改动',
+        "file": 'crates/trit-procscan/src/collector.rs',
+        "old": '                out.insert(path, (mtime, meta.len()));',
+        "new": '                out.insert(path, (mtime, 0u64));',
+        "pkg": 'trit-procscan',
+        "filter": 'snapshot_detects_new_and_changed_files'
+    },
+    {
         "name": 'redteam: 非规范编码永远判规范',
         "file": 'crates/trit-redteam/src/blob.rs',
         "old": '    Ok(last == last % 3u32.pow(filled))',
@@ -2247,6 +2272,7 @@ MUTANTS = [
         "new": '    if false {',
         "pkg": 'trit-redteam',
         "filter": 'strict_decoders_accept_only_the_canonical_encoding'
+
     }
 ]
 
