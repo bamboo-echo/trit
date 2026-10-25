@@ -2130,6 +2130,31 @@ MUTANTS = [
     },
     {
 
+
+        "name": 'unsafe: 高危形态不再判 Risky',
+        "file": 'crates/trit-unsafe/src/scan.rs',
+        "old": '    if !documented && !guarded {',
+        "new": '    if false {',
+        "pkg": 'trit-unsafe',
+        "filter": 'undocumented_transmute_is_risky'
+    },
+    {
+        "name": 'unsafe: 不认 SAFETY/# Safety 文档',
+        "file": 'crates/trit-unsafe/src/scan.rs',
+        "old": '            .any(|line| line.contains("SAFETY") || line.contains("Safety"));',
+        "new": '            .any(|_line| false);',
+        "pkg": 'trit-unsafe',
+        "filter": 'documented_unsafe_fn_is_unknown_not_risky'
+    },
+    {
+        "name": 'unsafe: 注释里的 unsafe 也算站点',
+        "file": 'crates/trit-unsafe/src/lexer.rs',
+        "old": '                if ch == \'/\' && bytes.get(index + 1) == Some(&\'/\') {',
+        "new": '                if false {',
+        "pkg": 'trit-unsafe',
+        "filter": 'strips_line_and_block_comments'
+    },
+    {
         "name": 'procscan: 不识别 shell 进程',
         "file": 'crates/trit-procscan/src/analyze.rs',
         "old": '                if SHELLS.contains(&lower.as_str()) {',
@@ -2152,6 +2177,7 @@ MUTANTS = [
         "new": '                out.insert(path, (mtime, 0u64));',
         "pkg": 'trit-procscan',
         "filter": 'snapshot_detects_new_and_changed_files'
+
     },
     {
         "name": 'redteam: 非规范编码永远判规范',
