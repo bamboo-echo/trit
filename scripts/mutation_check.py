@@ -1513,6 +1513,38 @@ MUTANTS = [
         "filter": "quantize_clamps_to_ternary"
     },
     {
+        "name": "learn: STE 饱和门失效",
+        "file": "crates/trit-learn/src/quant.rs",
+        "old": "                if ratio.abs() <= limit {",
+        "new": "                if true {",
+        "pkg": "trit-learn",
+        "filter": "clipped_ste_zeroes_saturated_gradients"
+    },
+    {
+        "name": "learn: softmax 不归一化",
+        "file": "crates/trit-learn/src/loss.rs",
+        "old": "    let sum: f64 = exps.iter().sum();",
+        "new": "    let sum: f64 = 1.0;",
+        "pkg": "trit-learn",
+        "filter": "softmax_sums_to_one_and_is_stable"
+    },
+    {
+        "name": "attn: 注意力丢 1/sqrt(d) 缩放",
+        "file": "crates/trit-attn/src/block.rs",
+        "old": "                        / scale",
+        "new": "                        / 1.0",
+        "pkg": "trit-attn",
+        "filter": "forward_matches_independent_attention_reference"
+    },
+    {
+        "name": "attn: 残差一丢输入 X",
+        "file": "crates/trit-attn/src/block.rs",
+        "old": "        let mut h = seq.to_vec();",
+        "new": "        let mut h = vec![0.0; seq.len()];",
+        "pkg": "trit-attn",
+        "filter": "input_gradients_match_finite_differences"
+    },
+    {
         "name": "float: 平局取更小指数（背离约定）",
         "file": "crates/trit-float/src/lib.rs",
         "old": "                            RoundMode::HalfAway => dropped > best_dropped,",
@@ -2539,6 +2571,54 @@ MUTANTS = [
         "new": "                let sign = -polarity[source].signum() * polarity[listener].signum();",
         "pkg": "trit-machines",
         "filter": "reinforcement_only_fills_empty_links"
+    },
+    {
+        "name": "lsp: 律 lint 不比较否定差异",
+        "file": "crates/trit-lsp/src/semantics.rs",
+        "old": "        if left.name != right.name || left.negated == right.negated {",
+        "new": "        if true {",
+        "pkg": "trit-lsp",
+        "filter": "contradiction_is_flagged_in_all_spellings"
+    },
+    {
+        "name": "lsp: 语义分歧对拍恒不触发",
+        "file": "crates/trit-lsp/src/semantics.rs",
+        "old": "        if kleene != lukasiewicz {",
+        "new": "        if false {",
+        "pkg": "trit-lsp",
+        "filter": "lukasiewicz_implies_self_diverges"
+    },
+    {
+        "name": "lsp: 重命名不校验新名",
+        "file": "crates/trit-lsp/src/nav.rs",
+        "old": "    if !is_identifier(new_name) || analysis::constant(new_name).is_some() {",
+        "new": "    if false {",
+        "pkg": "trit-lsp",
+        "filter": "rename_rejects_invalid_and_constant_names"
+    },
+    {
+        "name": "unsafe: extern 声明块不是站点",
+        "file": "crates/trit-unsafe/src/scan.rs",
+        "old": '    } else if trimmed.starts_with("extern") {',
+        "new": '    } else if false {',
+        "pkg": "trit-unsafe",
+        "filter": "extern_block_is_a_site_and_stays_unknown"
+    },
+    {
+        "name": "procscan: 后代追踪漏掉间接子树",
+        "file": "crates/trit-procscan/src/trace.rs",
+        "old": "            worklist.extend(children.get(&current).cloned().unwrap_or_default());",
+        "new": "            worklist.clear();",
+        "pkg": "trit-procscan",
+        "filter": "descendants_follow_multi_level_tree"
+    },
+    {
+        "name": "procscan: 画像末次时间不更新",
+        "file": "crates/trit-procscan/src/trace.rs",
+        "old": "            entry.last_seen_ms = entry.last_seen_ms.max(*ts_ms);",
+        "new": "            entry.last_seen_ms = entry.last_seen_ms.min(*ts_ms);",
+        "pkg": "trit-procscan",
+        "filter": "repeated_samples_merge_into_one_step"
     }
 ]
 

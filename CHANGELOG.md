@@ -2,6 +2,89 @@
 
 ## [Unreleased]
 
+### Added（`trit-procscan` 动态追溯/追踪：事件流离线重放）
+
+- 新模块 `trace` + 新子命令 `trit-procscan trace <events.jsonl> --pid N`：
+  对 `run --events` 采集到的 JSONL 做**离线、确定性**的动态追溯：
+  - **追溯**：沿 ppid 链回溯到采样里能看到的根（root → target 方向），
+    每环带首末出现时间/采样次数/命令行；父进程不在采样里**显式说明（不猜）**；
+    ppid 环（采样伪影或伪装）检测并停止，不死循环；
+  - **追踪**：正向收齐目标 pid 的多级后代子树，按首次出现排序；
+  - **证据绑定**：模块 / TCP 连接按 pid 绑到链上成员；目录写入没有 pid，
+    单列全程时间线；采集器 Note 原样带出。
+- 同一份 JSONL 重放结果位相同一（JSONL 往返对拍有测试），可当复算门。
+- CLI：`Analyze` 与 `Trace` 共用事件读取；`trace` 不参与 `--strict` 判定
+  （它没有发现语义，只有证据链）。
+- 测试：`trit-procscan` 3 → 16（追溯/追踪/缺口说明/环/证据绑定/JSONL 往返/JSON 形状）。
+- 变异新增 2 条（后代漏间接子树、末次时间不更新），全部被抓住。
+
+### Added（`trit-lsp` 深层三值诊断 + 导航；`trit-unsafe` 扫描面加深；Mimosa 深度扫描复核）
+
+- `trit-lsp`（编辑期「更深层次的三进制扫描」）：
+  - **深层三值诊断**（新模块 `semantics`）：
+    - 矛盾律 / 排中律陷阱 lint：`a & !a`、`!a | a`（含 `&&`/`∧`/`∨`/括号变体）——
+      CONTRIBUTING 红线的「矛盾律在三套语义下都不成立」在写代码时就报警
+      （a = X 时结果为 X，不是 False/True）；不同变量、双侧同否定、常量词不误报；
+    - **语义分歧对拍**：穷举赋值（≤4 变量）对 K3 与 Ł3 各求值一次，
+      结果不同就给出带具体反例的 Information 诊断（如 `a => a`：K3=X、Ł3=1）。
+      边界：B3 的毒值吸收使含 X 的求值几乎必然与它们不同，不参与对拍（否则是噪音），
+      B3 规则差异靠悬停真值表呈现。
+  - **变量导航**（新模块 `nav`）：`definition`（首次出现）/ `references` /
+    `documentHighlight` / `rename`（WorkspaceEdit；新名必须是合法标识符且非常量词）。
+    `.tri` 是单表达式文件，「定义」= 变量首次出现。
+  - 诊断新增 severity 字段（lint=Warning、分歧=Information，原错误仍为 Error）。
+  - 测试：lib 21 → 44、wire 1 → 2（definition/references/rename 走真 stdio 会话）。
+  - 修复过程记录：律 lint 的词法匹配曾有三处 bug（`(x)` 形态 token 数、
+    `!a & !a` 被从 `!` 内部重扫成 `a & !a`、一元算子夹在操作数间死循环），
+    各有回归测试；变异门新增 3 条锚点全部被抓住。
+- `trit-unsafe`（扫描面加深）：
+  - RISKY_APIS 补 `MaybeUninit` / `mem::forget` / `write_bytes`（14 → 17）；
+  - `unsafe extern`（edition 2024）声明块纳入扫描面（新 kind `extern`，
+    与 fn/impl/trait 同为「承诺面」，不判 Risky 只记账）；
+  - 修复存量死模式：`extern "C"` 因 scrub 抹掉字符串内容**从未匹配过**，
+    改为 scrub 后仍可命中的 `extern`；
+  - GUARDS 补 `is_aligned` / `NonNull` / `size_of`（16 → 19）。测试 12 → 15。
+- 安全扫描复核：docs/review/mimosa-deep-scan-2026-10-28.md——Mimosa deep 扫描
+  （inconclusive）6 条发现逐条人工复核全部为误报/构建产物（含 `eval` HIGH 是
+  变异锚点字符串、`ternary_corpus.rs` 不存在、MongoDB 在 rustdoc 产物里）；
+  不宣称项目安全。变异锚点新增 4 条。
+
+### Added（`trit-learn` 神经组件基座 + `trit-attn` 注意力/残差/FFN 训练集成 M0）
+
+- `trit-learn`（可发布）从「量化 + STE」扩成神经组件基座，四个新模块：
+  - `dense`：**批量三值 QAT 全连接层**（per-row scale、STE 反向、梯度层内累积、
+    外部优化器接口；与 `trit-train` 的单样本探针层互补，面向多层堆叠 + 批训练）；
+  - `loss`：MSE / hinge / softmax 交叉熵的解析梯度、数值稳定的 `softmax`
+    与注意力反向要用的 `softmax_backward`（Jacobian-向量积，有独立数值对拍）；
+  - `opt`：平面向量优化器（带动量 SGD / Adam，含偏差修正）与全局范数裁剪；
+  - `activation`：tanh / ReLU / sigmoid 及其「由输出求导」的实现。
+  `trit-learn` 测试 6 → 29（新增 23，含 **STE 代理前向梯度检查**：对 latent 的解析
+  梯度与光滑代理的有限差分对拍——真前向对 latent 分片常量，直接对拍恒为 0，是伪检查）。
+- `trit-attn` 训练集成（ROADMAP §3 项）：新模块 `block` + `train`。
+  - `AttentionBlock`：三值 QKV 投影 → `softmax(QKᵀ/√d)` → 残差 → 三值 FFN（tanh/ReLU）
+    → 残差；前向始终用三值权重（QAT，无「导出再量化」落差）；反向是全链 STE
+    （softmax 用 `softmax_backward`，残差分双路，激活用 `Activation::backward`）。
+    权重/尺度梯度由 `BlockOptimizers`（每参数张量一个 SGD/Adam 实例）统一应用。
+  - 验证：`dX` 端到端有限差分对拍（接线检查）；块内 `A·V` 与 `scores::attention`
+    独立实现逐元素对拍；ReLU 变体同拍；批累积翻倍检查。
+  - `train` 模块：关联回忆任务（`[k1, v1, k2, v2, q]`，`q` 可指任一键，值位置 1 或 3，
+    24 样本；bipolar one-hot token，置换由种子固定）。**实测（1200 轮、lr=0.3、
+    动量 0.9）：loss 0.964 → 0.008，末位 top-1 召回 1.000**，全程三值前向。
+    读数 `attention_on_value_position ≈ 0.06`（均匀 0.2）——本配置下 FFN 支路
+    主导记忆（配对固定 ⇒ 可背答案），注意力未被逼成内容寻址；要证注意力必要性
+    需要「置换随样本变化」的数据集，M0 不做。
+  - 死区教训（记入初始化注释）：latent 零均值小扰动 + scale 0.25 ⇒ `q` 全 0，
+    前向分片常量，训练空转；改为随机符号、幅值 `U(0.1, 0.3)`（`|w/s| ∈ [0.4, 1.2]`）
+    混合三值起步。
+- CLI：`trit-attn train [--epochs N] [--lr F] [--hidden N] [--seed N]`（JSON 报告）。
+- 跨平台约定（CI 教训）：`softmax` / `tanh` / `sigmoid` / `ln` 改为 **f64 内部求值再落回
+  f32**——各平台 libm 的 f32 超越函数差 1 ulp，1200 轮训练把它放大成不同盆地
+  （Windows 召回 1.0、Linux/MSRV 0.75）；f64 内部化 + 断言留余量（召回阈值 0.7）
+  后三平台一致。
+- 测试：`trit-attn` lib 8 → 21、CLI 3 → 7。
+- 变异新增 4 条（STE 饱和门失效、softmax 不归一化、注意力丢 1/√d、残差一丢 X），
+  见 `scripts/mutation_check.py`。
+
 ### Added（`trit-machines` 分级回路 M0：Issue #166）
 
 - 新模块 `graded`：把 `snn` 当场地，四档流水线 `Find → Wait → Exchange → Conclude`。
