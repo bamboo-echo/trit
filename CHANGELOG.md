@@ -2,6 +2,91 @@
 
 ## [Unreleased]
 
+### Fixed（`trit-re` N1：真实 ARM64 语料校准，修 3 个缺陷）
+
+- **台账 JSON 合法性**：`xref` 的 `slot` 与 `function` 的 `addr` 曾写成十六进制裸值
+  （`0x2a0378`），不是合法 JSON。改为数字，并在台账测试里逐行用 `serde_json` 解析。
+- **`.pdata` 截断**：条目上限 65,536 会让 Node/Deno 这类大二进制的函数表被截断。
+  上限提到 1,048,576：Node 函数 65,536 → 93,643，归属调用点未归属 1,039 → 148。
+- **ARM64 交叉引用窗口**：真实代码在 `adrp` 与 `ldr` 之间、`ldr` 与 `blr` 之间常夹参数准备。
+  放宽为 12/8 条，并加入**保守写寄存器判定**（不认识就断链；`BL`/`BLR` 破坏 x0–x18 与 x30）。
+  5 个真实 ARM64 PE 的覆盖率从 52%–80% 升到 **91%–98%**（同源 x64 为 95%–100%）。
+- 新增 [docs/N1-ARM64-CALIBRATION.md](docs/N1-ARM64-CALIBRATION.md)：语料来源与 `sha256`、
+  读数、独立 Python 复算（8 个样本偏差 ≤4%）、残余未证面。样本不入库。
+- 测试 61 条（46 lib + 3 ARM64 集成 + 5 ELF + 4 PE + 2 CLI + 1 doctest）。
+
+### Added（`trit-re` M3：ARM64 交叉引用与函数边界）
+
+- **PE ARM64**：`.pdata` 条目是 8 字节（`begin + unwind`），结束地址由下一条的 `begin` 推出、
+  最后一条用可执行节末尾兜底；x86-64 仍是 12 字节（`begin/end/unwind`），按 machine 分派。
+- **ARM64 交叉引用**：识别 `adrp + [add] + ldr + blr`（直接调用）与 `adrp + ldr + br`
+  （导入跳板），槽位必须精确命中 IAT；跳板再用 `bl`/`b` 的目标展开到真正的调用方。
+  PE 的扫描全程在 RVA 空间（ADRP 的页运算与 image base 无关）。
+- **ELF ARM64**：`JUMP_SLOT` 编号 1026、PLT 桩 `adrp + ldr + br`、调用方 `bl`/`b`，
+  以及非 PLT 的直接 `blr` 经 GOT；x86-64 的 7 与 ARM64 的 1026 共用同一套报告构造。
+- **启发式函数边界**同步支持 ARM64（`bl`/`b` 目标），仍只用于展示。
+- `xref` 拆成目录模块（`xref/mod.rs` + `xref/aarch64.rs`），单文件行数保持预算内。
+- 测试 **59** 条（44 lib + 3 ARM64 集成 + 5 ELF + 4 PE + 2 CLI + 1 doctest）：
+  合成 PE ARM64 的直接 `blr`、跳板展开、`.pdata` 8 字节边界；合成 ELF ARM64 的 PLT→`bl` 链路。
+- **局限**：本机是 x64，**没有真实 ARM64 样本校准**；`adrp` 窗口最多 3 条指令，
+  寄存器经 `mov` 搬运的间接调用会漏（该导入可能保持 `False`），仍未做完整解码。
+
+### Added（`trit-re` M2：函数级归属与同函数能力共现）
+
+- 函数边界：PE x86-64 读 `.pdata` 的 `RUNTIME_FUNCTION`（精确）；ELF 读 `STT_FUNC`
+  （要求 `st_size > 0`，精确）；都没有时用「入口 + 直接调用目标」启发式，**只用于展示**。
+- 调用点归属：把 xref 的调用点按区间二分归到函数，并补一层 **PE 导入跳板展开**
+  （`jmp [IAT]` 找 `E8`/`E9` 调用方）——实测本仓 `trit-re.exe` 归属调用点 14 → 2782。
+- 三条共现判定，全部三值：`fn_injection`（申请+写+执行同一函数）、`fn_stager`
+  （装载+网络同一函数）、`fn_credential_exfil`（凭据+网络同一函数）。
+  规则：找到 → `True`；边界不精确 / 交叉引用不完整 / 未归属调用点**涉及本组能力** → `Unknown`；
+  证据完整且没找到 → `False`。正证据优先，不会被别处的不确定性抹掉。
+- 台账 `schema=3`：新增 `kind:"function"` 行（地址 / 大小 / 名字 / 边界来源 / 导入 / 能力桶）；
+  新事实 `fn.exact_boundaries`、`fn.*_cooccur`；CLI 新增 `--functions`。
+- 真实读数：`notepad.exe` 388 函数、1719 个调用点归属、8 个未归属；`trit-re.exe`（26 MB）
+  13,218 函数、2782 归属、22 未归属；`curl.exe` / `certutil.exe` / `rundll32.exe` /
+  `powershell.exe` 的 `fn_*` 为 `False`（powershell 的 `fn_stager` 因相关未归属点为 `Unknown`）。
+  合成 PE 夹具（`.pdata` + 两个同函数调用）稳定给出 `fn_stager = True`。
+- **真实正例**：用 mingw gcc 16.2.0 `-O1` 编译 `tests/fixtures/inject_sample.c`（`OpenProcess` +
+  `VirtualAllocEx` + `WriteProcessMemory` + `CreateRemoteThread`），`trit-re triage inject.exe`
+  读出 `injection = True`，且 `fn_injection = True`——命中函数 `0x14d0+0xe5` 同时带
+  `imports.inj.alloc / inj.write / inj.exec` 三个桶。
+- 测试 51 条（39 lib + 5 ELF + 4 PE + 2 CLI + 1 doctest）。
+
+### Added（`trit-re` M1：导入函数交叉引用）
+
+- 新模块 `xref`：给每个导入函数判定「有没有静态调用点」，三值而不是布尔——
+  找到 `True`、完整扫过且没有 `False`、架构不支持/节数据越界/重定位缺失 `Unknown`。
+- PE x86-64：`FF /2`(call)、`FF /4`(jmp) 的 RIP 相对编码，目标必须精确等于 IAT 槽位；
+  PE x86：同操作码的 32 位绝对寻址。导入表现在带 `FirstThunk` 槽位 RVA。
+- ELF x86-64：解析 `JUMP_SLOT` 重定位 → GOT 槽位，PLT 桩 `FF /4`，调用方 `E8`/`E9`
+  到桩、`FF /2` 经 GOT；无节表的样本不会假装「没有调用点」。
+- 台账 `schema=2`：`file` 行新增 `xref_complete/xref_referenced/xref_unreferenced/xref_unknown`，
+  新行 `kind:"xref"`（导入 / 槽位 / 状态 / 前 32 个调用点 / 说明）。CLI 新增 `--xref` 明细。
+- 新判定 `xref_gaps`（存在无静态调用点的导入），事实 `xref.scan_complete`、`xref.has_unreferenced`。
+- 真实样本：`notepad.exe` 314/315 个导入有调用点（唯一未引用的 `DelayLoadFailureHook`
+  由延迟加载桩间接引用）；本仓 `trit-re.exe`（26 MB）181/185，扫描 2.8 MB，耗时 0.9 s。
+- 修复 `trit-re ... | head` 因 EPIPE panic 的问题：写 stdout 失败时对 `BrokenPipe` 静默退出 0。
+- 测试 47 条（35 lib + 5 ELF + 4 PE + 2 CLI + 1 doctest）：PE 命中/落空/不支持架构三种状态、
+  ELF PLT→调用方链路、删节表保持 `Unknown`、JSONL 行数与 `kind:"xref"`。
+
+### Added（`trit-re` 二进制逆向台账 M0）
+
+- 新 crate `trit-re`（实验层，`publish = false`）：手写 PE32/PE32+ 与小端 ELF32/ELF64
+  解析（节表、导入/导出、调试 PDB、安全目录、Rich 头、`.comment`、GNU build-id、
+  叠加段、入口可执行性），库本体零第三方依赖。
+- 判定不是布尔：每条观测是 `Ternary` 事实，假设写成 `Expr` 交给 `trit-eval`
+  在 Kleene 语义下求值；解析不出的证据保持 `Unknown` 并显式说明原因。
+- 四值冲突：假设与良性解释同时成立时给 Belnap `B`（实测形态：结构像加壳但存在
+  Authenticode signedData），子判定回注赋值表，冲突可沿 `needs_review` 向上传播。
+- 输出：`trit-re triage <PATH>` 人读摘要；`--jsonl` 输出 append-only 台账
+  （`file` / `fact` / `judgment` 三类行，`sha256` 作主键，`schema=1`）。
+- SHA-256 自实现（FIPS 180-4，含标准向量测试）。
+- 测试 41 条：合成 PE/ELF 夹具走真实解析分支、逐级截断不 panic、删节表把导入
+  证据降级为 `Unknown`、四值冲突、CLI 端到端（JSONL 与人读一致、缺文件非零退出）。
+- 真实样本校准：`notepad.exe` 的 315 个导入解析正确、判定全 `False`；据此收紧
+  `staged_loader`（去掉 `IsDebuggerPresent`，该 API 在正常 Windows 程序里普遍存在）。
+
 ### Added（`trit-procscan` 动态追溯/追踪：事件流离线重放）
 
 - 新模块 `trace` + 新子命令 `trit-procscan trace <events.jsonl> --pid N`：
