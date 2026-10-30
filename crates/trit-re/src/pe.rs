@@ -8,6 +8,10 @@ use std::fmt;
 
 use crate::entropy;
 
+mod overlay;
+
+use overlay::parse_overlay;
+
 /// PE 解析失败原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseError(pub &'static str);
@@ -241,7 +245,7 @@ pub fn parse(bytes: &[u8]) -> Result<PeInfo, ParseError> {
         .get(0x40..pe_off)
         .map(|stub| stub.windows(4).any(|w| w == b"Rich"))
         .unwrap_or(false);
-    let overlay = parse_overlay(bytes, &sections, headers_size);
+    let overlay = parse_overlay(bytes, &sections, headers_size, dirs[4]);
 
     Ok(PeInfo {
         plus,
@@ -690,30 +694,6 @@ fn parse_security(bytes: &[u8], dir: (u32, u32)) -> (bool, bool) {
         .windows(CERT_OID_SIGNED_DATA.len())
         .any(|window| window == CERT_OID_SIGNED_DATA);
     (true, has_signed_data)
-}
-
-fn parse_overlay(bytes: &[u8], sections: &[Section], headers_size: u32) -> Option<Overlay> {
-    let mut end = if headers_size > 0 {
-        headers_size as usize
-    } else {
-        0
-    };
-    for section in sections {
-        if section.raw_ptr == 0 {
-            continue;
-        }
-        let section_end = (section.raw_ptr as usize).saturating_add(section.raw_size as usize);
-        end = end.max(section_end);
-    }
-    if bytes.len() <= end || end < 0x40 {
-        return None;
-    }
-    let overlay = &bytes[end..];
-    Some(Overlay {
-        offset: end,
-        size: overlay.len(),
-        entropy: entropy::shannon(overlay),
-    })
 }
 
 fn u16_at(bytes: &[u8], off: usize) -> Option<u16> {
