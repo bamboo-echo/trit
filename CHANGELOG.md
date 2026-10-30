@@ -2,6 +2,782 @@
 
 ## [Unreleased]
 
+### Added（`trit-re`：PE CLR / TLS 回调事实）
+
+- 解析 CLR 目录（data dir 14）：`cb`、元数据 RVA、`Flags`、入口 token；从元数据根
+  （`BSJB`）读运行时版本串（如 `v4.0.30319`）。
+- 解析 TLS 目录（data dir 9）：`AddressOfCallBacks`（VA→RVA），最多 64 个回调，
+  每个都校验能映射回映像内。
+- 新事实 `pe.managed` / `pe.tls_callbacks`，保持三值：目录缺失 `False`、
+  目录存在但解析失败 `Unknown`、解析成功按有无给 `True`/`False`。
+- 真实读数：`System.Management.Automation.dll` → managed `v4.0.30319`、flags `0xc`；
+  `powershell.exe` → TLS 目录存在但 0 回调；`notepad.exe` → 两者都无。
+- 测试 **75**；变异 **14/14**。
+
+### Added（`trit-re`：ELF `.eh_frame` 函数边界 + NUL 清理）
+
+- 新增 `crates/trit-re/src/elf/eh.rs`：解析 `.eh_frame` 的 CIE/FDE（支持 `pcrel|sdata4`、
+  `udata4`、`absptr`），得到**精确函数区间**；ELF 的 `STT_FUNC` 覆盖不足时优先使用，
+  边界来源标 `eh_frame`。
+- 实测：ripgrep ELF ARM64 从 19,709 个启发式函数变为 **3,480 个 FDE 函数**（覆盖 80% `.text`），
+  调用点归属 5,856 / 7,352；glibc arm64/x64 各 3,500 / 3,858 个函数，13 导入的 40 个调用点全部归属。
+- 缺 FDE 的函数（`panic=abort` 构建常见）会落在未归属里，说明行按 call/jmp 分类；
+  相关能力组因此保持 `Unknown`，不臆断。
+- `elf.rs` 拆为 `elf/{mod,eh}.rs`（789 / 296 行，回到 800 预算内）。
+- 顺带修掉 `elf.rs` 源码里误写入的 **8 个裸 NUL 字节**（grep 曾把文件当二进制）。
+- 测试 **74**；变异 **12/12**。
+
+### Added（`trit-re`：ARM64 `mov` 搬运链 + 未归属调用点分类）
+
+- **ARM64 寄存器搬运**：引用识别支持 `mov Xd, Xm`（ORR 别名）。地址（`adrp→mov→ldr`）与
+  已加载指针（`ldr→mov→blr`）都能跨 `mov` 继续追踪；真实 Node ARM64 的归属调用点 6,611 → 6,613。
+- **未归属调用点分类**：`FunctionReport` 新增 `unattributed_calls` / `unattributed_jumps`，
+  说明行直接给出 `call X / jmp Y`。真实读数：Node x64 148 = call 25 / jmp 123；
+  Deno x64 156 = call 24 / jmp 132——绝大多数是无 `.pdata` 的导入跳板，而非漏归属的调用。
+- 变异新增 2 条（mov 搬运链断开、call 记成 jmp），本地 **10/10 全抓**；测试 **71**。
+
+### Fixed（`trit-re` N1 续：真实 ARM64 / x64 共享库校准）
+
+- **共享库的"导入"口径**：本文件已定义的符号（glibc 自己的 `malloc`/`free`）虽然带 `JUMP_SLOT`，
+  但那是内部 PLT 调用，不是导入。只保留「未定义 + FUNC/NOTYPE/IFUNC」：
+  glibc ARM64 的 xref 行数 18→13、x64 15→13，与导入数一致。
+- **真实 `libc.so.6` 读数**（glibc 2.44-3，arm64 与 amd64 各一份）：13 导入全部有调用点、
+  40 个调用点、0 未归属；两架构读数对称。函数边界因 `STT_FUNC` 覆盖率 38%/31% 退化为启发式，
+  `fn_*` 保持 `Unknown`。
+- 变异新增第 8 条（"已定义符号当导入"），本地 **8/8 全抓**；测试 **68** 条。
+- `docs/N1-ARM64-CALIBRATION.md` 增补共享库语料、哈希与读数。
+
+### Fixed（`trit-re` P0：x64 取地址语义 + 变异门接入）
+
+- **x64 只取地址**：新增 `lea/mov reg,[rip+slot]`（x64）与绝对寻址（PE32）识别，
+  地址被计算但无直接调用时状态从 `False` 降为 `Unknown`。真实 x64 样本的"无调用点"
+  2/11/6 → **0**，对应未知 2/11/6（Node/Deno/ripgrep）。
+- **变异门空转修复**：`scripts/mutation_check.py` 新增 **7 条 trit-re 变异**（JSON 转义、熵符号、
+  覆盖率阈值、单调用点终态、ARM64 地址窗口、取地址降级、x64 取地址记录）。
+  此前 `mutation (changed crates)` 对 trit-re 输出"没有登记变异"并 rc=0；现在本地 **7/7 全抓**。
+- 测试 **67** 条（52 lib + 3 ARM64 + 5 ELF + 4 PE + 2 CLI + 1 doctest）。
+
+### Fixed（`trit-re` N1 复核：取地址语义、ELF 边界与符号面）
+
+- **只取地址的导入不再判"无引用"**：`adrp+ldr` 算出了槽位地址但窗口内没有 `blr`/`br` 时，
+  状态从 `False` 降为 `Unknown`（note：地址被取用但未见直接调用）。PE ARM64 未引用数：
+  Node 23→2、ripgrep 12→2、coreclr 11→1；对应未知 21/10/10。
+- **ELF 精确边界按覆盖率判定**：`STT_FUNC` 覆盖可执行字节 < 90% 时退回启发式边界。
+  真实 ARM64 ELF（ripgrep）只有 3 个带大小符号，此前被标 `exact` 且有 7,325 个调用点
+  未归属；现在 19,709 个启发式函数、7,352 个调用点全部归属，`fn_*` 回到 `Unknown`。
+- **ELF 符号面收紧**：只把 `FUNC/NOTYPE/IFUNC` 当导入（`environ`、`__stack_chk_guard`
+  等 OBJECT 不再出现）；没有 `JUMP_SLOT` 槽位的弱符号一律 `Unknown` 而不是 `False`。
+- 真实 ARM64 ELF 读数：138 导入 / 133 有调用点 / 0 无 / 5 未知；测试 **65** 条。
+- `docs/N1-ARM64-CALIBRATION.md` 增补 ELF 语料、符号哈希与新读数。
+
+### Fixed（`trit-re` N1：真实 ARM64 语料校准，修 3 个缺陷）
+
+- **台账 JSON 合法性**：`xref` 的 `slot` 与 `function` 的 `addr` 曾写成十六进制裸值
+  （`0x2a0378`），不是合法 JSON。改为数字，并在台账测试里逐行用 `serde_json` 解析。
+- **`.pdata` 截断**：条目上限 65,536 会让 Node/Deno 这类大二进制的函数表被截断。
+  上限提到 1,048,576：Node 函数 65,536 → 93,643，归属调用点未归属 1,039 → 148。
+- **ARM64 交叉引用窗口**：真实代码在 `adrp` 与 `ldr` 之间、`ldr` 与 `blr` 之间常夹参数准备。
+  放宽为 12/8 条，并加入**保守写寄存器判定**（不认识就断链；`BL`/`BLR` 破坏 x0–x18 与 x30）。
+  5 个真实 ARM64 PE 的覆盖率从 52%–80% 升到 **91%–98%**（同源 x64 为 95%–100%）。
+- 新增 [docs/N1-ARM64-CALIBRATION.md](docs/N1-ARM64-CALIBRATION.md)：语料来源与 `sha256`、
+  读数、独立 Python 复算（8 个样本偏差 ≤4%）、残余未证面。样本不入库。
+- 测试 61 条（46 lib + 3 ARM64 集成 + 5 ELF + 4 PE + 2 CLI + 1 doctest）。
+
+### Added（`trit-re` M3：ARM64 交叉引用与函数边界）
+
+- **PE ARM64**：`.pdata` 条目是 8 字节（`begin + unwind`），结束地址由下一条的 `begin` 推出、
+  最后一条用可执行节末尾兜底；x86-64 仍是 12 字节（`begin/end/unwind`），按 machine 分派。
+- **ARM64 交叉引用**：识别 `adrp + [add] + ldr + blr`（直接调用）与 `adrp + ldr + br`
+  （导入跳板），槽位必须精确命中 IAT；跳板再用 `bl`/`b` 的目标展开到真正的调用方。
+  PE 的扫描全程在 RVA 空间（ADRP 的页运算与 image base 无关）。
+- **ELF ARM64**：`JUMP_SLOT` 编号 1026、PLT 桩 `adrp + ldr + br`、调用方 `bl`/`b`，
+  以及非 PLT 的直接 `blr` 经 GOT；x86-64 的 7 与 ARM64 的 1026 共用同一套报告构造。
+- **启发式函数边界**同步支持 ARM64（`bl`/`b` 目标），仍只用于展示。
+- `xref` 拆成目录模块（`xref/mod.rs` + `xref/aarch64.rs`），单文件行数保持预算内。
+- 测试 **59** 条（44 lib + 3 ARM64 集成 + 5 ELF + 4 PE + 2 CLI + 1 doctest）：
+  合成 PE ARM64 的直接 `blr`、跳板展开、`.pdata` 8 字节边界；合成 ELF ARM64 的 PLT→`bl` 链路。
+- **局限**：本机是 x64，**没有真实 ARM64 样本校准**；`adrp` 窗口最多 3 条指令，
+  寄存器经 `mov` 搬运的间接调用会漏（该导入可能保持 `False`），仍未做完整解码。
+
+### Added（`trit-re` M2：函数级归属与同函数能力共现）
+
+- 函数边界：PE x86-64 读 `.pdata` 的 `RUNTIME_FUNCTION`（精确）；ELF 读 `STT_FUNC`
+  （要求 `st_size > 0`，精确）；都没有时用「入口 + 直接调用目标」启发式，**只用于展示**。
+- 调用点归属：把 xref 的调用点按区间二分归到函数，并补一层 **PE 导入跳板展开**
+  （`jmp [IAT]` 找 `E8`/`E9` 调用方）——实测本仓 `trit-re.exe` 归属调用点 14 → 2782。
+- 三条共现判定，全部三值：`fn_injection`（申请+写+执行同一函数）、`fn_stager`
+  （装载+网络同一函数）、`fn_credential_exfil`（凭据+网络同一函数）。
+  规则：找到 → `True`；边界不精确 / 交叉引用不完整 / 未归属调用点**涉及本组能力** → `Unknown`；
+  证据完整且没找到 → `False`。正证据优先，不会被别处的不确定性抹掉。
+- 台账 `schema=3`：新增 `kind:"function"` 行（地址 / 大小 / 名字 / 边界来源 / 导入 / 能力桶）；
+  新事实 `fn.exact_boundaries`、`fn.*_cooccur`；CLI 新增 `--functions`。
+- 真实读数：`notepad.exe` 388 函数、1719 个调用点归属、8 个未归属；`trit-re.exe`（26 MB）
+  13,218 函数、2782 归属、22 未归属；`curl.exe` / `certutil.exe` / `rundll32.exe` /
+  `powershell.exe` 的 `fn_*` 为 `False`（powershell 的 `fn_stager` 因相关未归属点为 `Unknown`）。
+  合成 PE 夹具（`.pdata` + 两个同函数调用）稳定给出 `fn_stager = True`。
+- **真实正例**：用 mingw gcc 16.2.0 `-O1` 编译 `tests/fixtures/inject_sample.c`（`OpenProcess` +
+  `VirtualAllocEx` + `WriteProcessMemory` + `CreateRemoteThread`），`trit-re triage inject.exe`
+  读出 `injection = True`，且 `fn_injection = True`——命中函数 `0x14d0+0xe5` 同时带
+  `imports.inj.alloc / inj.write / inj.exec` 三个桶。
+- 测试 51 条（39 lib + 5 ELF + 4 PE + 2 CLI + 1 doctest）。
+
+### Added（`trit-re` M1：导入函数交叉引用）
+
+- 新模块 `xref`：给每个导入函数判定「有没有静态调用点」，三值而不是布尔——
+  找到 `True`、完整扫过且没有 `False`、架构不支持/节数据越界/重定位缺失 `Unknown`。
+- PE x86-64：`FF /2`(call)、`FF /4`(jmp) 的 RIP 相对编码，目标必须精确等于 IAT 槽位；
+  PE x86：同操作码的 32 位绝对寻址。导入表现在带 `FirstThunk` 槽位 RVA。
+- ELF x86-64：解析 `JUMP_SLOT` 重定位 → GOT 槽位，PLT 桩 `FF /4`，调用方 `E8`/`E9`
+  到桩、`FF /2` 经 GOT；无节表的样本不会假装「没有调用点」。
+- 台账 `schema=2`：`file` 行新增 `xref_complete/xref_referenced/xref_unreferenced/xref_unknown`，
+  新行 `kind:"xref"`（导入 / 槽位 / 状态 / 前 32 个调用点 / 说明）。CLI 新增 `--xref` 明细。
+- 新判定 `xref_gaps`（存在无静态调用点的导入），事实 `xref.scan_complete`、`xref.has_unreferenced`。
+- 真实样本：`notepad.exe` 314/315 个导入有调用点（唯一未引用的 `DelayLoadFailureHook`
+  由延迟加载桩间接引用）；本仓 `trit-re.exe`（26 MB）181/185，扫描 2.8 MB，耗时 0.9 s。
+- 修复 `trit-re ... | head` 因 EPIPE panic 的问题：写 stdout 失败时对 `BrokenPipe` 静默退出 0。
+- 测试 47 条（35 lib + 5 ELF + 4 PE + 2 CLI + 1 doctest）：PE 命中/落空/不支持架构三种状态、
+  ELF PLT→调用方链路、删节表保持 `Unknown`、JSONL 行数与 `kind:"xref"`。
+
+### Added（`trit-re` 二进制逆向台账 M0）
+
+- 新 crate `trit-re`（实验层，`publish = false`）：手写 PE32/PE32+ 与小端 ELF32/ELF64
+  解析（节表、导入/导出、调试 PDB、安全目录、Rich 头、`.comment`、GNU build-id、
+  叠加段、入口可执行性），库本体零第三方依赖。
+- 判定不是布尔：每条观测是 `Ternary` 事实，假设写成 `Expr` 交给 `trit-eval`
+  在 Kleene 语义下求值；解析不出的证据保持 `Unknown` 并显式说明原因。
+- 四值冲突：假设与良性解释同时成立时给 Belnap `B`（实测形态：结构像加壳但存在
+  Authenticode signedData），子判定回注赋值表，冲突可沿 `needs_review` 向上传播。
+- 输出：`trit-re triage <PATH>` 人读摘要；`--jsonl` 输出 append-only 台账
+  （`file` / `fact` / `judgment` 三类行，`sha256` 作主键，`schema=1`）。
+- SHA-256 自实现（FIPS 180-4，含标准向量测试）。
+- 测试 41 条：合成 PE/ELF 夹具走真实解析分支、逐级截断不 panic、删节表把导入
+  证据降级为 `Unknown`、四值冲突、CLI 端到端（JSONL 与人读一致、缺文件非零退出）。
+- 真实样本校准：`notepad.exe` 的 315 个导入解析正确、判定全 `False`；据此收紧
+  `staged_loader`（去掉 `IsDebuggerPresent`，该 API 在正常 Windows 程序里普遍存在）。
+
+### Added（`trit-procscan` 动态追溯/追踪：事件流离线重放）
+
+- 新模块 `trace` + 新子命令 `trit-procscan trace <events.jsonl> --pid N`：
+  对 `run --events` 采集到的 JSONL 做**离线、确定性**的动态追溯：
+  - **追溯**：沿 ppid 链回溯到采样里能看到的根（root → target 方向），
+    每环带首末出现时间/采样次数/命令行；父进程不在采样里**显式说明（不猜）**；
+    ppid 环（采样伪影或伪装）检测并停止，不死循环；
+  - **追踪**：正向收齐目标 pid 的多级后代子树，按首次出现排序；
+  - **证据绑定**：模块 / TCP 连接按 pid 绑到链上成员；目录写入没有 pid，
+    单列全程时间线；采集器 Note 原样带出。
+- 同一份 JSONL 重放结果位相同一（JSONL 往返对拍有测试），可当复算门。
+- CLI：`Analyze` 与 `Trace` 共用事件读取；`trace` 不参与 `--strict` 判定
+  （它没有发现语义，只有证据链）。
+- 测试：`trit-procscan` 3 → 16（追溯/追踪/缺口说明/环/证据绑定/JSONL 往返/JSON 形状）。
+- 变异新增 2 条（后代漏间接子树、末次时间不更新），全部被抓住。
+
+### Added（`trit-lsp` 深层三值诊断 + 导航；`trit-unsafe` 扫描面加深；Mimosa 深度扫描复核）
+
+- `trit-lsp`（编辑期「更深层次的三进制扫描」）：
+  - **深层三值诊断**（新模块 `semantics`）：
+    - 矛盾律 / 排中律陷阱 lint：`a & !a`、`!a | a`（含 `&&`/`∧`/`∨`/括号变体）——
+      CONTRIBUTING 红线的「矛盾律在三套语义下都不成立」在写代码时就报警
+      （a = X 时结果为 X，不是 False/True）；不同变量、双侧同否定、常量词不误报；
+    - **语义分歧对拍**：穷举赋值（≤4 变量）对 K3 与 Ł3 各求值一次，
+      结果不同就给出带具体反例的 Information 诊断（如 `a => a`：K3=X、Ł3=1）。
+      边界：B3 的毒值吸收使含 X 的求值几乎必然与它们不同，不参与对拍（否则是噪音），
+      B3 规则差异靠悬停真值表呈现。
+  - **变量导航**（新模块 `nav`）：`definition`（首次出现）/ `references` /
+    `documentHighlight` / `rename`（WorkspaceEdit；新名必须是合法标识符且非常量词）。
+    `.tri` 是单表达式文件，「定义」= 变量首次出现。
+  - 诊断新增 severity 字段（lint=Warning、分歧=Information，原错误仍为 Error）。
+  - 测试：lib 21 → 44、wire 1 → 2（definition/references/rename 走真 stdio 会话）。
+  - 修复过程记录：律 lint 的词法匹配曾有三处 bug（`(x)` 形态 token 数、
+    `!a & !a` 被从 `!` 内部重扫成 `a & !a`、一元算子夹在操作数间死循环），
+    各有回归测试；变异门新增 3 条锚点全部被抓住。
+- `trit-unsafe`（扫描面加深）：
+  - RISKY_APIS 补 `MaybeUninit` / `mem::forget` / `write_bytes`（14 → 17）；
+  - `unsafe extern`（edition 2024）声明块纳入扫描面（新 kind `extern`，
+    与 fn/impl/trait 同为「承诺面」，不判 Risky 只记账）；
+  - 修复存量死模式：`extern "C"` 因 scrub 抹掉字符串内容**从未匹配过**，
+    改为 scrub 后仍可命中的 `extern`；
+  - GUARDS 补 `is_aligned` / `NonNull` / `size_of`（16 → 19）。测试 12 → 15。
+- 安全扫描复核：docs/review/mimosa-deep-scan-2026-10-28.md——Mimosa deep 扫描
+  （inconclusive）6 条发现逐条人工复核全部为误报/构建产物（含 `eval` HIGH 是
+  变异锚点字符串、`ternary_corpus.rs` 不存在、MongoDB 在 rustdoc 产物里）；
+  不宣称项目安全。变异锚点新增 4 条。
+
+### Added（`trit-learn` 神经组件基座 + `trit-attn` 注意力/残差/FFN 训练集成 M0）
+
+- `trit-learn`（可发布）从「量化 + STE」扩成神经组件基座，四个新模块：
+  - `dense`：**批量三值 QAT 全连接层**（per-row scale、STE 反向、梯度层内累积、
+    外部优化器接口；与 `trit-train` 的单样本探针层互补，面向多层堆叠 + 批训练）；
+  - `loss`：MSE / hinge / softmax 交叉熵的解析梯度、数值稳定的 `softmax`
+    与注意力反向要用的 `softmax_backward`（Jacobian-向量积，有独立数值对拍）；
+  - `opt`：平面向量优化器（带动量 SGD / Adam，含偏差修正）与全局范数裁剪；
+  - `activation`：tanh / ReLU / sigmoid 及其「由输出求导」的实现。
+  `trit-learn` 测试 6 → 29（新增 23，含 **STE 代理前向梯度检查**：对 latent 的解析
+  梯度与光滑代理的有限差分对拍——真前向对 latent 分片常量，直接对拍恒为 0，是伪检查）。
+- `trit-attn` 训练集成（ROADMAP §3 项）：新模块 `block` + `train`。
+  - `AttentionBlock`：三值 QKV 投影 → `softmax(QKᵀ/√d)` → 残差 → 三值 FFN（tanh/ReLU）
+    → 残差；前向始终用三值权重（QAT，无「导出再量化」落差）；反向是全链 STE
+    （softmax 用 `softmax_backward`，残差分双路，激活用 `Activation::backward`）。
+    权重/尺度梯度由 `BlockOptimizers`（每参数张量一个 SGD/Adam 实例）统一应用。
+  - 验证：`dX` 端到端有限差分对拍（接线检查）；块内 `A·V` 与 `scores::attention`
+    独立实现逐元素对拍；ReLU 变体同拍；批累积翻倍检查。
+  - `train` 模块：关联回忆任务（`[k1, v1, k2, v2, q]`，`q` 可指任一键，值位置 1 或 3，
+    24 样本；bipolar one-hot token，置换由种子固定）。**实测（1200 轮、lr=0.3、
+    动量 0.9）：loss 0.964 → 0.008，末位 top-1 召回 1.000**，全程三值前向。
+    读数 `attention_on_value_position ≈ 0.06`（均匀 0.2）——本配置下 FFN 支路
+    主导记忆（配对固定 ⇒ 可背答案），注意力未被逼成内容寻址；要证注意力必要性
+    需要「置换随样本变化」的数据集，M0 不做。
+  - 死区教训（记入初始化注释）：latent 零均值小扰动 + scale 0.25 ⇒ `q` 全 0，
+    前向分片常量，训练空转；改为随机符号、幅值 `U(0.1, 0.3)`（`|w/s| ∈ [0.4, 1.2]`）
+    混合三值起步。
+- CLI：`trit-attn train [--epochs N] [--lr F] [--hidden N] [--seed N]`（JSON 报告）。
+- 跨平台约定（CI 教训）：`softmax` / `tanh` / `sigmoid` / `ln` 改为 **f64 内部求值再落回
+  f32**——各平台 libm 的 f32 超越函数差 1 ulp，1200 轮训练把它放大成不同盆地
+  （Windows 召回 1.0、Linux/MSRV 0.75）；f64 内部化 + 断言留余量（召回阈值 0.7）
+  后三平台一致。
+- 测试：`trit-attn` lib 8 → 21、CLI 3 → 7。
+- 变异新增 4 条（STE 饱和门失效、softmax 不归一化、注意力丢 1/√d、残差一丢 X），
+  见 `scripts/mutation_check.py`。
+
+### Added（`trit-machines` 分级回路 M0：Issue #166）
+
+- 新模块 `graded`：把 `snn` 当场地，四档流水线 `Find → Wait → Exchange → Conclude`。
+  - **自主搜寻**：按 `seeds` 切块逐块探针，用**块外被带动的脉冲数**打分，取最高 `groups` 块——
+    不需要指定目标；得分全 0 就停在 `Find`，结论 `Unknown`（不猜）。
+  - **等待**：命中后静默 `wait_ticks`，末态跨阶段续跑（不是每段从零开始）。
+  - **双向 / 散布**：`groups = 2` 轮转对答，`> 2` 散布轮转；可选三值 Hebbian 强化
+    （只把空连接 `0` 补成 `±1`，不翻已有符号、不改阈值/泄漏/不应期）。
+  - **收敛**：每组按脉冲极性投票，合成三态判决；连续 `quorum` 轮不变才判 `Conclude`，
+    否则轮数耗尽判 `Unknown`。
+- `snn` 新增 `simulate_with_input` / `simulate_with_input_from`（逐神经元驱动 + 末态续跑）
+  与 `Run`（`fired` / `polarity`）；`simulate_with_drive` 改为其薄包装，旧行为逐字不变。
+- 测试：`trit-machines` 23 个（新增 6：找不到停在 Find、搜寻选中驱动块、双向收敛、
+  散布四组、强化只补空边、非法参数全拒）。
+- CLI：`trit-machines graded [--size N] [--seed N] [--groups N] [--rounds N]`。
+
+### Added（`trit-graph` M6：端到端三态节点分类 M0）
+
+- `TernaryClassifier`：一层消息传递 + 三叉头；训练用软松弛（`tanh(latent)` + one-hot/均匀邻居状态），
+  推理用硬三票 + 议会；解析梯度（`tanh → mean → 线性头 → softmax → CE`）。
+- `ClassifierSample` + `synthetic_samples`：一跳到目标节点的合成任务，标签由恒等规则生成。
+- 实测（300 样本、300 轮、lr=0.5）：**loss 0.368、准确率 1.000**；忽略边符号的基线 **0.357**；
+  学到的转移表接近恒等（支持 `[+2.1,-0.2,-2.2]`、中立 ≈0、反对 `[-2.1,0.1,2.2]`）。
+- 梯度有有限差分对拍；测试共 59 个（新增 4：硬推理、梯度对拍、训练超基线、孤立节点）。
+- 变异新增 3 条（标签梯度符号反、头梯度漏特征、聚合梯度少除入度），**25/25 全部被抓住**；
+  其中"少除入度"第一次因为梯度恰为 0 而存活，换成有非零梯度的样本才锁住。
+- 质量数据 312 条。
+
+### Added（`trit-learn` 可发布 + `trit-graph` TriMPNN M0）
+
+- 新 crate `trit-learn`（**可发布**）：把三值量化、STE 三变体、scale 梯度从 `trit-train`
+  下沉；`trit-train` 与 `trit-graph` 共用，避免实验层互相依赖（发布图约束）。
+  `trit-train` 保留旧路径 `trit_train::quant` 的 re-export。
+- `trit-graph` **TriMPNN M0**：
+  - `TransitionTable`：3×3 转移表（边状态 × 邻居状态 → 投票），前向硬三票、死区 ±0.5；
+  - `fit_step`：`(边状态, 邻居状态, 目标票)` 监督拟合，反向用 STE 直通到 9 个 latent；
+  - `TriMpnn`：收集入边消息 → 议会合成；无入边节点保持原状态；支持多轮。
+- 测试：`trit-graph` 55 个（新增 7）、`trit-learn` 6 个（迁移）；`trit-train` 仍 8 个。
+- 变异新增 4 条（反对边不取反、死区边界含等号、拟合梯度反向、消息取错端点），
+  **22/22 全部被抓住**；质量数据 309 条。
+
+### Added（`trit-graph` M4：三态图核）
+
+- `wl_subtree_kernel(a, b, rounds)`：两图**联合** WL 细化（共用签名→颜色表），
+  逐轮累加颜色直方图点积；节点三态与边状态都进签名。
+- `path_kernel(a, b, max_len)`：带标签有向路径核（节点码 + 每步边码/终点码），
+  长度 `0..=4`；组合爆炸在 M0 之外。
+- `normalized(k, kaa, kbb)`：核归一化到 `[0,1]`。
+- 测试共 48 个（新增 6）：同构 = 1；边符号/节点状态/结构不同 < 1；空图为 0；
+  两个正则环（C3/C6）两种核都为 1（WL 类核的已知上限，写进文档）。
+- 变异新增 3 条（WL 核忽略边符号、路径核忽略边符号、归一化分母错误），
+  **18/18 全部被抓住**；质量数据 305 条。
+
+### Added（`trit-graph` M3：三通道随机游走 / PageRank）
+
+- `tri_pagerank(view, seeds, damping, iters, tolerance)`：支持/反对/冻结三通道一起传播；
+  反对边交换 plus/minus，中立边把质量冻结为 unknown；阻尼向种子先验回流。
+- `TriScore { plus, minus, unknown }` + `state()`：未知占优或并列 → 悬置，否则多数通道。
+- 测试共 42 个（新增 7）：支持链传播、反对边翻转、中立边冻结、种子质量累加、
+  平票悬置、无种子为空、死端保质量与质量守恒（种子总质量不变）。
+- 变异新增 4 条（中立边不冻结、反对边不翻转、忽略阻尼、平票判真），**15/15 全部被抓住**。
+- 质量数据 302 条。
+
+### Added（`trit-graph` M2：三态超图 + 树分解容器）
+
+- `TritHypergraph`：三态超边（成员位集 + 自身三态 + 关键位）；`incident` 关联查询；
+  `verdict(id)` 对成员开议会（关键节点反对票强否决）。
+- `TreeDecomposition`：袋（节点位集）+ 袋树；`validate(graph)` 校验节点覆盖、边覆盖、
+  运行交（同一节点的袋在袋树上连通）；`bag_verdict` 袋内议会。**不做分解算法**。
+- 议会规则抽成公共 `tally(votes)`，图邻居/超边/袋共用一份计票。
+- 测试共 35 个（新增 11：超边构造/去重/多数/否决/空超边，分解覆盖/运行交/袋议会/多根 panic）。
+- 变异新增 3 条（超边判决忽略成员状态、不校验边覆盖、不校验运行交），**11/11 全部被抓住**。
+- 质量数据 298 条。
+
+### Added（`trit-graph` M1：稀疏 CSR、共享视图、三态 1-WL）
+
+- `TriGraphView` 视图 trait：稠密 `TritGraph` 与稀疏 `TritCsr` 只实现四个基本方法，
+  出度/三态计数/拓扑序/DFS 树/议会/WL 全部从 trait 派生，避免两套逻辑分叉。
+- `TritCsr`：`n + nnz` 稀疏邻接；`from_dense` 保留节点三态与关键位；`neighbors` / `edge`。
+- `wl_refine`：三态 1-WL 颜色细化（有向、边符号参与签名）；`color_count` 便于比较划分。
+- 实测/测试：路径 vs 星形 5 色 vs 2 色；菱形把一片边改成反对 → 3 色变 4 色；
+  C3/C6 同为单色（1-WL 已知上限）；稠密与 CSR 的邻域/拓扑/议会/WL 结果一致。
+- 变异：新增 4 条（CSR 偏移、CSR 丢状态、WL 忽略边符号、WL 一轮就停），**8/8 全部被抓住**。
+- 限制：仍无超图/树分解容器、无权重/特征/反向索引；议会规则固定不可学习。
+
+### Added（`trit-graph`：三态结构基础层 M0）
+
+- 新 crate `crates/trit-graph`（`publish = false`），给后续 TriMPNN / Tri-TreeOracle /
+  Tri-TD-GNN 准备地基：
+  - `TritGraph`：三态节点（`+1/0/-1`）+ 四态边（支持/反对/中立/不存在）+ 关键节点掩码，
+    位集稠密邻接；`for_each_out` / `out_counts` / `topological_order` / `is_dag` / `dfs_tree`；
+  - `Tree`：DFS 生成树的父指针、先序、后序（逆先序）、子节点；
+  - `council`：三态议会——支持边投邻居状态、反对边投其反、中立弃权；
+    关键节点的反对票触发强否决，否则多数票、平票悬置。
+- 限制写明：稠密邻接（n² 内存）、无权重/特征/稀疏/超图、议会规则固定不可学习。
+- `docs/ROADMAP.md` 增加"三态结构模型"后期清单（TriMPNN/Tri-TD-GNN/Tri-HyperGNN/BiTri 栈等）。
+- 测试 15 个：跨字边界邻居、拓扑序与环、DFS 树父子/后序、议会的多数/否决/平票/弃权。
+
+### Added（`trit-float` M1：舍入模式、同比特范围/精度、锥形精度）
+
+- **舍入模式**：`RoundMode::HalfAway`（默认）/ `HalfEven`；`new_with` / `from_f64_with`。
+- **`Format { precision, exponent_digits, taper }`**：指数范围 `3^±((3^E−1)/2)`；
+  `quantize` 溢出返回 `None`、下溢为 0；`log10_range` / `log10_error` 用于避免溢出。
+- CLI 新增 `range`（16/32/64 比特，匹配尾数位 / 匹配指数位 / 范围优先）与
+  `rounding`（平局偏差，HalfAway vs HalfEven）。
+- 实测结论：
+  - 32 比特匹配指数位：log10 范围 **353.2 vs IEEE single 83.4**，但有效位 6.92 → **5.73**（≈15× 误差）；
+  - 16 比特匹配尾数位：范围 10^15 vs half 10^12（1000×），有效位 3.01 → 2.39；
+  - 平局偏差：p=4 时 HalfAway **+0.60%**、HalfEven **−0.52%**；p=12 均趋 0。
+    **"对称舍入 ⇒ 期望误差为零"在本仓取样口径下未复现**，记为未验证。
+- 锥形精度只是旋钮（精度随 `|e|` 递减，单测覆盖）；真正的 Takum 需要锥形指数编码，未做。
+- 新增 `crates/trit-float/README.md` 与两张对比图（`docs/assets/float-range.svg`、`float-precision.svg`）。
+- 变异名单同步：`trit-float` 11 条（新增锥形精度/格式下溢两条，修正两处因重构失效的锚点）；
+  README 的质量数据从 178 修正为脚本实测的 **287** 条。
+
+### Docs（README 重写：定位、可视化对比、代价清单）
+
+- 顶部改为"是什么 + 搜索关键词 + 一眼看强弱"：三张 SVG 对比图（CPU 流式、每参数字节、GPU），
+  数据全部来自仓库内实测；`scripts/gen_docs_charts.py` 可重跑生成。
+- 新增 [`docs/LESSONS.md`](docs/LESSONS.md)：三进制代价清单、已证负结果、测量经验、工程经验。
+- 面向使用者的 README 不再叙述内部检查流程（完整检查矩阵移到 `CONTRIBUTING.md`）。
+- 工作区表补齐 `trit-ops` / `trit-texture` / `trit-unsafe` / `trit-procscan` / `trit-lsp` / `trit-train`。
+- 更正 `trit-train` 的 STE 来源表述：`trit-net` 已有最小 STE，本层是 per-row scale + 三变体 + 位平面 ALU。
+- `docs/DESIGN.md` 去掉本机绝对路径。
+
+### Added（`trit-train`：三进制训练 M0——STE + 位平面 ALU）
+
+- 新 crate `crates/trit-train`（`publish = false`），在 `trit-net` 已有的最小 STE 之外扩成可比较的一层：
+  - **STE 三变体**：Identity / Clipped（饱和区归零）/ Soft（`1-(w/scale)^2` 衰减）；
+    每行 `scale` 可学习（LSQ 风格），scale 梯度 `∂L/∂scale = dy·Σqᵢxᵢ`；
+  - **位平面 ALU**：双导轨按字并行的 `not`/`and`/`or`/`xor`，支持 Kleene / Łukasiewicz /
+    Bochvar；9 种操作数组合 × 3 语义 × 长度边界逐元素对拍；
+  - **`TernaryLinear`**：前向 `q+scale`、反向 STE，单样本 SGD；2×3 学习任务 14 个测试。
+- 实测（24 核，16 M trit，7 轮取最快）：位平面 ALU **4 线程 ~90–100 Gop/s**（峰值），
+  8 线程回落到 65–81（带宽/超线程争用）；**软件预取对顺序访问无收益**（±5% 噪声内）；
+  1 M trit 规模会把结论测反（线程创建开销压过计算），bench 默认 16 M。
+- 边界：不做三进制算术加法（进位串行，已证负结果）；点积是标量参考（2.4 GMAC/s），
+  快速掩码内核在 `trit-ops`，受发布图约束暂不能复用。
+
+### Added（`trit-lsp`：`.tri` 的三进制语言服务器 M0）
+
+- 新 crate `crates/trit-lsp`（`publish = false`，独立二进制），stdio + JSON-RPC，
+  把 `.tri` 关联到 `target/debug/trit-lsp` 即可用：
+  - **诊断**：与 `trit build` 前端同规则（单表达式文件、解析错误行列 → LSP range）；
+  - **悬停**：运算符名称/优先级/结合性 + 当前三值语义下**现算**的 3×3 真值表；变量/常量解释；
+  - **补全**：运算符（含 `∧∨⊕→≡` 等 Unicode 拼写）、常量词、本文件变量；
+  - **文档符号**：文件内变量。
+- 语义不复制：解析走 `trit_core::Parser`、真值表走 `trit_eval::eval`；
+  运算符表每个拼写都有 `operators_round_trip` 测试保证解析器接受。
+- 三值语义由 `initialize.initializationOptions.algebra` 选择（`kleene`/`k3`、
+  `lukasiewicz`/`l3`/`luk`、`bochvar`/`b3`），默认 Kleene。
+- 位置按 UTF-16 码元换算（中文注释不会错列）；同步方式 Full。
+- 验证：26 个单测 + `tests/wire.rs` 起真实子进程走完整会话（initialize → didOpen → hover
+  逐格断言 Bochvar 真值表 → completion → documentSymbol → didChange 诊断 → shutdown/exit）；
+  clippy/rustdoc `-D warnings`、fmt、模块预算全绿。
+
+### Changed（`trit-ops`：掩码内核行阻塞 2，大行数 −4～10%）
+
+- 掩码内核两行共享一次 `x` 装载（`row_dot_mask2`）：每 8 trit 的装入从 3 次降到 2.5 次，
+  两行仍各用 4 路累加器；输出与单行版**逐位一致**，奇数行的「成对 + 尾行」路径有单测。
+- 配对实测（`bench --mask-pair`，21 轮交替）：1536×576 → 0.985（15/21）、
+  8192×576 → **0.956**（14/21）、49152×576 → **0.896**（16/21）。
+  收益随行数增长；小行数无可测变化。绝对值表未重测（测量期有并发负载，只报配对值）。
+- **`AUTO_LUT_ROWS` 40960 → 65536**：掩码变快后 tryte 的反超点后移。重测
+  （`--pair 掩码 tryte`）：49152 行 tryte 只有 0.945（4/15，已落后）、65536 打平（1.004）、
+  81920 起 1.164（9/9）。旧阈值会让输出层走更慢的查表。
+- 非 x86_64 的标量回退直接调两次单行版；`gemv_mask_single` 保留为 A/B 基线。
+
+### Changed（`trit-ops`：拆表查表改用映射表，快 13.6–19.1%）
+
+- 拆表的两次查表原用 `code % 9` / `code / 9` 定位，换成 243 项 `u16` 映射
+  （`SPLIT_MAP`，486 B）后压成一次装入；两种写法累加顺序相同，结果逐位一致
+  （`split_map_matches_divmod_bitwise` 单测锁住）。
+- 实测（`bench --split-map`，cols=576，4 个行数档 × 7 轮配对，每档 7/7 胜）：
+  中位比 576→0.864、1024→0.809、1536→0.824、2048→0.830。
+- **交叉点没动**：`1792 → 0.349×`、`2048 → 1.067×`，`LUT_SPLIT_ROWS = 2048` 不变。
+  `gemv_auto` 改走映射；`gemv_with_split_tables`（`%9`/`/9`）保留为 A/B 基线。
+- 工具：`bench --split` 增加「拆表 + 映射查表」一行；新增 `bench --split-map` 配对模式。
+
+### Changed（`trit-gpu`：拆掉 655 行的 matmul 驱动函数）
+
+- `crates/trit-gpu/src/matmul.rs`（单函数 `run_async` 约 630 行）拆成
+  `matmul/{mod,gpu,inputs,ternary,baseline}.rs`：开设备 / 确定性数据 / 三值内核族 / f32 基线族。
+  最大文件 249 行，最长函数 <100 行（`clippy::too_many_lines` 对该目录 0 告警）。
+- `bench.rs::bench_variant` 泛化为统一变体执行器：3D grid（split-K 用 z=4）、可选清输出、
+  `Check::{Exact,F32}` 两种比对，去掉十份重复的「建管线 → 预热 → 计时 → 读回」。
+- 测量顺序刻意保留在 `mod.rs`：同内核换位置读数能差 25%，历史读数都是按这个顺序取的。
+- 读数回归（RTX 4060 Ti，512×4096×512）：o3 0.1044、split-K 0.1009、f32 最优 0.2992 ps/MAC，
+  与拆前同量级；全部 `matches=true`；GPU 测试 3 passed。
+
+### Fixed（`trit-gpu`：缺 f16 的 adapter 上 f32 基线也起不来）
+
+- #145 把 fp16 内核写进共享的 `matmul_f32.wgsl`，文件头的 `enable f16;` 是**模块级**开关：
+  不支持 `SHADER_F16` 的 adapter（CI 的 Windows 软件后端就是）连 f32 基线着色器都建不出来，
+  报 `Shader 'matmul-f32' parsing error: the f16 extension is not supported`。
+- 把 fp16 内核拆到独立文件 `matmul_f16.wgsl`（只在 `SHADER_F16` 可用时才创建）；
+  `matmul_f32.wgsl` 不再带 `enable f16;`。f16 变体的入口/绑定布局不变。
+- 由新增的 `trit-gpu --features gpu` CI 门抓到（此前该 feature 从未在 CI 编译/运行）。
+
+### CI（PR 矩阵补 macOS + gpu feature 门）
+
+- PR 矩阵由 ubuntu+windows 扩为 **ubuntu+windows+macOS**：与 main 同矩阵。
+  #147 的教训是「PR 门看不见 aarch64 ⇒ 合入后 main 才红」，macOS 的 10× 计费
+  低于一次 main 变红的代价。
+- 新增 `trit-gpu --features gpu` 的 test + clippy arm（与 `trit-texture --features png` 同形）：
+  该 feature 默认关，此前 CI 从未编译 `matmul.rs`/`gpu.rs` 等内核代码。
+
+### Fixed（`trit-ops`：非 x86_64 编译失败）
+
+- #147 合入后 main 的 macOS（arm64）CI 红了：`simd.rs` 只在 `x86_64` 下导出
+  `row_dot_{f32,f16,q4,mask}`，ARM 上没有定义。PR 矩阵只跑 ubuntu+windows（x86），
+  所以 PR 全绿、main 才炸。
+- 补 `scalar` 回退模块（语义与 AVX2 版逐项一致），非 x86_64 导出同一组函数；
+  `MASK_LUT` 只在 x86_64 编译，避免死代码告警。
+- 新增 3 条对拍测试（x86_64 上 scalar vs AVX2：mask / f32+f16 / q4），
+  `cargo test -p trit-ops` 31 passed；`cargo check/clippy --target aarch64-unknown-linux-gnu -D warnings` 干净。
+
+### Changed（`trit-gpu`：2-popcount 点积，实测负结果）
+
+- 新增 `dot_word_2popc` 与入口 `main_tiled2o3` 的对照实现 `main_tiled2o2`
+  （tile / 共享内存 / 输出映射与 o3 版完全一致，只换点积算法）。
+- **恒等式成立**：`2·popc(a∧b) + popc(a) + popc(b) = n`，对任意位模式无条件成立；
+  `tests/dot_identity.rs` 5 条纯 CPU 测试覆盖穷举与反例。
+  （反观现有的 3-popc 版本依赖「正负导轨不交叠」，交叠时有 14,911 处不等。）
+- **实测更慢**：RTX 4060 Ti，`1×1×1` 74,852.85 → 75,909.91 ps/MAC（−1.4%）、
+  `33×100×17` 2,008.20 → 2,046.43 ps/MAC（**−1.9%**）。
+- 结论：该内核不是 popcount-bound，少一次 popcount 抵不过额外移位。
+  **保留 o3 为默认，o2 只作为 A/B 基线**，不追求上线。
+- 验证：`cargo test -p trit-gpu` 5 passed；`--features gpu --test matmul` 3 passed
+  （WGSL 合法 + 与 CPU 镜像一致）；fmt 干净；clippy 0 告警。
+
+### Added（`trit-codec::pack` 线格式固化 + canonical 解码）
+
+- **线格式写成稳定契约**（`pack.rs` 模块文档）：数字映射 `F=0/X=1/T=2`、字节内低位 trit 优先、
+  `243..=255` 非法、尾部填充必须是 `False`、canonical 字节数 `len.div_ceil(5)`。
+- `unpack_canonical(bytes, len)`：字节数必须精确，尾部 padding 必须规范；否则返回
+  `NonCanonicalPadding` / `WrongByteCount`。这是唯一能保证「同一逻辑值只有一种字节串」的入口
+  （宽松的 `unpack` 会接受非规范输入，破坏哈希/签名稳定性）。
+- `Packed5`（单字节，构造期拒绝 `243..=255`）与 `Packed5Vec`（构造期一次校验字节数、非法码、padding，
+  之后 `get` 不再重复检查）。
+- `CodecError` 新增 `NonCanonicalPadding(u8)` 与 `WrongByteCount { expected, actual }`。
+- 测试 +7：243 个合法字节全穷举、非规范 padding 拒绝、字节数拒绝、200 组随机差分（严格 vs 宽松）、
+  越界 `get`、canonical 各长度往返。
+- **行为不变**：`pack` / `unpack` 语义与字节输出未改，宽松路径保留给既有调用方。
+- 验证：`cargo test -p trit-codec` 61 单测 + 9 CLI + 5 stress 全过；`cargo check --workspace --all-targets`
+  通过；`cargo fmt --check` 干净；`clippy --all-targets` 0 告警；`module_budget.py` 213 文件全在 800 行内。
+
+### Added（三进制构建工具 M0：`trit build`）
+
+- `trit-build <src.tri> [--out DIR] [--algebra k3] [--force] [--check]`（独立实验 crate）：解析 → `simplify` → **穷举复核**
+  （不等价即构建失败、不写产物）→ 产物 `expr.txt` / `truth.csv` / `truth.tritbin` / `lookup.c`
+  + `build.json`；内容哈希增量缓存，`--check` 校验产物完整性。
+- `TRB1` 容器：魔数 + 版本 + 语义 + 变量数 + 长度 + **双导轨位平面**（2 bit/trit）+ FNV-64 尾；
+  基 3 打包/GF(3) CRC-3 因发布图门禁（实验 crate 不许互依）留到 M2。
+- `lookup.c` 是刻意边界：三值语义固化为查表，执行交给 cc/rustc（不重写二进制后端）。
+- 测试 +4（产物/缓存命中/篡改检测/重建不命中缓存）；变异门 251 → **253**（trit-build 3/3）。
+- **双轨并行**（`--manifest jobs.json [--jobs N] [--prefer ternary|binary|balanced] [--dry-run]`）：
+  三进制轨优先、二进制轨（外部 `cargo`/`rustc`）只吃剩余槽位，**不抢占**；分配策略是纯函数
+  `schedule::pick`（4 条单测），`--dry-run` 先出方案。实测 7 任务/4 槽：wall 171 ms、busy 205 ms，
+  6 个 `.tri` 在 cargo 的 163 ms 内全部完成。
+- **M1：Verilog 子集读入**（`d.v / --output / --expect`）：复用 `trit-circuit::parse_verilog` +
+  `propagate`，与 `.tri` 链路真值表**逐行对拍**，不一致即失败、不写 `build.json`；清单新增
+  `{"kind":"verilog"}`（归三进制轨）。测试 +4；变异锚点 +1。
+- **TRB2 规范形（加固）**：末字节里没用到的 trit 槽必须为 0；Rust 解码器、C 运行时
+  （新增 `TRIT_ERR_CANON`）与 red-team 解析器同一契约。此前同一张表有 27 种写法
+  （red-team 实测），内容哈希不等于语义身份；现在严格解码器只接受一种。
+- **M2：TRB2 基 3 打包 + 运行时 + 双导轨导出**：`truth.tritbin` 改为 `TRB2`（5 trit/字节 +
+  GF(3) CRC-3，27 trit 由 35 B 降到 **17 B**；12 变量 132,883 → **106,300 B**，−20.00%）；
+  `--decode` 校验魔数/长度/CRC 并重出 CSV/`lookup.c`；`runtime/trit_runtime.{c,h}` 是
+  **独立的 C 解码实现**，逐 trit 与 Rust 端对拍；`--emit-verilog` 导出双导轨 `design.v`
+  （仅 kleene，非 kleene 显式报错），由测试内位级解释器与真值表逐行比对。
+  测试 +12（含解码-重编码逐字节回环、非法字节、缓存键区分 `--emit-verilog`）；变异锚点 +4。
+- **M3：位并行真值表 + e-graph 重写**：12 变量（531,441 行）算表由标量 299 ms 降到
+  **23.8 ms**（每轮 64 组赋值；门语义从 `Algebra` 取 3×3 结果表按最小项铺开，K3/Ł3/B3 共用）；
+  e-graph 规则**先自证后加载**（≤3 变量穷举，不过就不进图），按节点数最小提取，整链再穷举复核；
+  `build.json`/`expr.txt` 记录用到的规则。产物与 M2 **逐字节相同**。
+  顺带修正双导轨导出的 `^`：本仓 `Expr::Xor` 是强加法 ⊕（U 传染），按布尔异或导出会与真值表对不上。
+  测试 +9；变异锚点 +4（规则自证、重写接入、强加法导出、位并行算子）。
+- 文档 `docs/TERNARY-TOOLCHAIN.md`：论文依据（LLVM/MLIR/egg/BitNet/平衡三进制，DOI 已核）、
+  分层设计、M0–M3 验收判据、继续靠 LLVM/Rust 的职责表、未验证清单。
+
+### Added（trit-unsafe：三值逻辑审 unsafe）
+
+- `trit-unsafe scan --root . [--deps] [--exclude …]`：识别 `unsafe { }` / `unsafe fn|impl|trait`
+  与 transmute、from_raw_parts、get_unchecked、set_len、assume_init、static mut 等高危形态；
+  用 `// SAFETY:` / `# Safety` 与断言/边界检查当证据，按 K3（复用 `trit_core::Algebra::Kleene`）
+  判 Safe/Unknown/Risky 并按 crate 合成；`--strict` 有 Risky 即退出 1。
+- 实测：本仓 209 文件 4 站点 **0 Risky**；含 193 个依赖 crate 时 224,696 站点 / 43,376 Risky，
+  其中 87% 来自机器生成绑定（`windows` 38,042、`linux-raw-sys` 3,730、`spirv` 414）；
+  排除绑定后 23,969 站点 / 1,138 Risky（`ash` 856 居首）。配合 `cargo audit`：已知漏洞 0。
+- 局限：`Safe` 只表示证据齐全，不是 UB 证明；词法级扫描，不展开宏、不做跨函数推理。
+
+### Added（trit-procscan：进程行为扫描 + MCP 体检）
+
+- `trit-procscan run -- <cmd>`：采样进程树/命令行/模块/TCP/目录写入/输出，落 JSONL；
+  `analyze <jsonl>` 离线重放（shell、网络工具、`-EncodedCommand`、Temp 模块、写可执行文件、外联等）；
+  `mcp <config.json>` 逐个 server 握手，量启动耗时、工具数与 `tools/list` schema 体积（≈ tokens）。
+  实测 `rea`：**207 工具 / 3.16 MB schema / ~79 万 tokens / 1682 ms**。
+  证据边界：非管理员拿不到内核 ETW，文件读取/注册表/DNS 未采集（报告里明写）。
+
+
+### Changed（trit-gpu：共享内存 bank 冲突，f32 最优再降 3×）
+
+- **第二个根因**：行距 8 个 `vec4<f32>` = 128 B，正好等于全部 32 个 bank 的宽度
+  ⇒ 同一 warp 的 16 行全落在同一组 bank 上。先试「+1 vec4 行填充」
+  （reg4-K32 0.908 → 0.508 ps/MAC），再换 `part ^ (row >> k)` 的 XOR swizzle（→ **0.298**，再 1.7×）。
+- 三个 f32 内核同法处理（各自按 warp 内行距选 key）：tiled 1.77 → **0.84**、
+  reg2-K8 1.16 → **0.76**、reg4-K8 1.00 → **0.40**、reg4-K32 → **0.298**（ps/MAC）。
+- 三值侧共享行距 8 word = 32 B 同样让 8 行落同一 bank 组，改成 **9 word**：
+  o3 0.110 → **0.102**、split-K 0.112 → **0.101**、tiled 0.178 → 0.15、reg2 0.126 → 0.124。
+- split-K 内核同时换成 **3-popc**（与 o3 同一恒等式），0.120 → 0.101，与 o3 并列三值最快。
+- 对 cuda-oxide 的四对同结构差距扩大到 2.0× / 2.6× / 1.8× / 3.9×（最优对最优 4.5×）。
+  三值最优 0.101 对 f32 最优 0.298 ≈ 3×（此前 8×，因 f32 侧这两步降得多），不同表示不作同尺结论。
+
+### Changed（trit-gpu：128 位向量化装载，四对同结构全部反超 cuda-oxide）
+
+- **根因定位**：此前 naive/tiled/reg2 落后的原因不是线程映射，也不是 FMA 收缩，而是
+  **内存访问宽度**——cuda-oxide 的参考内核全用标量 32 位装载，照抄结构后在「每指令带宽」上吃亏。
+- f32 改动：全局装载走 `array<vec4<f32>>` 只读视图（同一 buffer，新增绑定 4/5）；共享内存
+  直接按 `vec4<f32>` 组织，内层一次 128 位读喂 4 个乘加。`k % 4 != 0` 保留标量回退。
+  tiled 还把 A/B 子块都按 `[行][k]` 连续存放（B 的行就是输出列），内层 32 次标量共享读 → 8 次 vec4 读；
+  顺手删掉 f32 侧两个已不接线的内核（1D naive、标量 K16 版）。
+- 配对复跑（同一时间窗，ps/MAC）：naive 6.205 → **3.118**、tiled 2.225 → **1.774**、
+  reg2-K8 1.348 → **1.148**、reg4-K8 1.557 → **1.001**、reg4-K32（共享 8 KB）**0.908**。
+  四对全部领先（2.0× / 25% / 17% / 56%），最优对最优 **49%**。
+  口径：仍是同算法同分块结构，但向量化装载属于实现级差异，NVIDIA 参考内核未做；
+  若同样向量化，差距会缩小（幅度未知）。
+- **补上 f32 tiled 与 reg4-K8 的逐元素校验**（此前只计时、不校验）。新校验当场抓出 vec4 版
+  tiled 的错位：B 子块按 `[列][k]` 落位，而累加按 `[k][列]` 读。已修，并加 `k=37` 用例覆盖
+  标量回退路径（`k=1` 的 tiny 用例只走 `full==0`，碰不到装载循环）。
+- 三值侧同样试了 vec4 共享读：reg2 0.126 → 0.128、o3 0.110 → 0.126，均无收益（三值每 MAC
+  已由 popc 主导，砍共享读没有回报），已回退；三值继续用 3-popc + split-K。
+
+### Added（trit-gpu：4×4 寄存器阻塞内核）
+
+- `main_tiled4`（三值）与同名 f32 内核：32×32 输出 tile、8×8 线程、每线程 4×4 累加器，
+  每个 K-chunk 只搬 32+32 行/列 × 8 word 进共享内存；`matmul` 报告与 `bench` 增加 reg4×4 读数。
+- 实测（RTX 4060 Ti，512×4096×512，ps/MAC）：三值 naive 1.52 / tiled 0.18 / reg2×2 **0.119–0.126** /
+  reg4×4 0.131–0.134；f32 23.28 / 2.41 / 2.41 / **1.36**。
+  **结论**：f32 侧 4×4 快 1.77×；三值侧反而慢约 8% —— 三值每 MAC 已经是 popc 主导，
+  再加寄存器阻塞只增压力，最快仍是 reg2×2。最优对最优 ≈ 10.8×。
+- 另做四个对照实验：**`vec2<u32>` 打包共享读** 三值慢 ~20%（0.125→0.153），不采用；
+  **K 段 16 word（屏障减半）** 慢 ~35%（0.168–0.173）⇒ 屏障不是瓶颈；
+  **split-K×4 + atomicAdd** 连测 5 轮稳定 **快 3–5%**（0.120–0.122 vs 0.125–0.126）⇒ 目前最快；
+  **纯 `countOneBits` 微基准** 1.33–1.44e12 popc/s，矩阵乘达到 **71–75%**。
+  结论：剩余差距在指令混合（共享读/索引/累加），并行度/共享内存宽度/屏障都已排除。
+- **3-popc 内核**（`main_tiled2o3`）：利用双导轨不交叠不变量把 `popc(aₚ&bₙ)+popc(aₙ&bₚ)`
+  合并成 `popc((aₚ&bₙ)|(aₙ&bₚ))`，每 word-pair 少 1/4 popc。实测 **0.110–0.114 ps/MAC**
+  （比 reg2×2 快 ~12%，比 split-K 快 ~5%），popcount 利用率 79–82%。
+- **NVIDIA cuda-oxide 同尺对照**（`benchmarks/cuda-oxide-compare/`，cuda-oxide + CUDA 13 + LLVM 21 + Rust 1.99.1，
+  WSL2）：同卡 4060 Ti、512×4096×512、B 转置、5×20 中位数。四对同结构内核——naive 6.233 vs 我们 23.80、
+  tiled 2.243 vs 2.378、reg2×2 1.328 vs 2.389、reg4×4 1.567 vs **1.349**。
+  **如实结论：只赢 reg4×4**；唯一大幅领先是「三值 0.110 对 cuda-oxide 最优 f32 1.328 ≈ 12×」，但属不同表示。
+- **f32 基线对齐 cuda-oxide 结构**：新增 `main2d`（2D 16×16 线程块 naive）与 `main_tiled2k8`
+  （2×2 + K 段 8）。naive 23.4 → **6.238 ps/MAC**（与 cuda-oxide 6.233 打平，差距全部来自线程映射）；
+  reg2 2.36 → **1.431**（K 段 16→8）；tiled 2.372（落后 5.8%）、reg4×4 1.329（**领先 15%**）。
+  修了 f32 校验容差未取绝对值的 bug（负期望值时容差变负、判定恒假）。
+- **f32 再压一档**：新增 `main_tiled4k16`（4×4 + K 段 16）。读数（ps/MAC）：2D-naive 6.257（cuda-oxide 6.233，
+  差 0.4%）、tiled 2.369（落后 5.3%）、reg2-K8 1.452（落后 8.5%）、reg4-K8 1.340（领先 17%）、
+  **reg4-K16 1.277（最优对最优领先 cuda-oxide 4%）**。（此档随后被 K 段 32 的 vec4 版取代。）
+- 顺手修 `forward.rs` 里 gpu feature 下才可见的 clippy（`chunks_exact` → `as_chunks`）。
+
+
+### Added（GGUF → MOD 入向导入）
+
+- `trit-texture::gguf::import_gguf`：读 **GGUF v2/v3**，把未量化张量（`F32`/`F16`/`BF16`）
+  按 `v > ε → +1 / v < -ε → -1 / 其余 0` 三值化，组装成 `TritModel`（MOD 语义）；
+  `*.weight`（2D）+ 同名 `*.bias`（可选，缺省 0）按名排序成层，层间衔接复用 `TritModel::new`。
+- CLI：`trit-texture` 新增 bin `gguf-to-mod`（`--threshold` / `--tensor` / `--max-bytes`），
+  输出 TTX2 模型容器。
+- 硬边界：只支持未量化类型；`TQ1_0`/`TQ2_0`/`Q*_K` 等**显式拒绝**（位布局未在本仓验证，
+  猜错会静默产出错误权重）；预算：文件 256 MiB / 权重 5000 万 / KV 10 万 / 张量 10 万。
+- 测试 +8（GGUF 头/元数据/张量校验、F16/BF16 解码、阈值稀疏、NaN/截断/超预算、
+  层链不匹配、MOD 往返）；实测 232 字节 GGUF → 41 字节 MOD（2 层 8 权重）。
+  变异门 244 → **248**。
+
+### Fixed（复审 P3：双导轨封装 / BLIF 导出校验 / 解析方向结构门）
+
+- **L01 `trit-dot::TernaryBits` 封装**：字段改私有，新增 `TernaryBits::new(pos, neg, len)`
+  校验「平面长度 = ⌈len/64⌉、正负导轨不重叠、尾部填充位为 0」；`dot`/`dot_portable`/`dot_naive`/
+  `dot_sparse` 与 `dot_words*` 统一返回 `Result<i64, DotError>`，长度不一致不再 panic 或静默截断。
+  旧路径 `dot` 会索引越界 panic、`dot_portable` 按最短平面静默少算。
+- **L03 BLIF 导出校验**：`to_blif` 先跑 `circuit::validate`（元数/重复驱动/悬空/环），再检查
+  标识符（空、含空白、`.` 开头逐项拒绝）；新增 `BlifError::Structure` / `BlifError::Name`。
+- **同批修正（导出/解析对称）**：`parse_blif` / `parse_netlist` 返回前同样过 `validate`，
+  不再返回"能解析但导不回去"的电路；新增 `NetlistError::Structure`；fuzz 往返测试改为
+  「基线可解析 + 变异样本只要求不 panic、接受即可往返」。
+- 测试 +4（workspace **734/0**）；`cargo check -p trit-gpu --features gpu` 通过（编译门，
+  无硬件执行）。变异门 240 → **247**（本批 7 条：双导轨三处、BLIF 导出两处、双向解析各一）。
+
+### Fixed（复审 P2 批次：AIGER 头 / 逻辑运算 / 平衡三进制精度 / 编码校验 / 训练与 SNN / 解析预算）
+
+- **M01 AIGER ASCII 头**：解析只接受 `aag`（标准 ASCII），`aig`（二进制）返回
+  `AigerError::BinaryFormat`；导出改为写 `aag`，CLI fixture 更名 `and2.aag`。
+  之前标准 ASCII 文件会被拒、二进制头被当文本硬读。
+- **M02 逻辑 vs 逐位**：`&&` / `||` 不再被静默当成逐位 `&` / `|`，返回
+  `VerilogErrorKind::Unsupported`（逐位运算保留）；向量逻辑表达式不再产出错误位宽。
+- **M06 平衡三进制 `range`**：`checked_pow` + 饱和（#113 已修），本批补回归记录。
+- **M07 浮点精度**：`digit_count` 改按**平衡三进制位数**（`(3^n-1)/2` 上界），
+  舍入改为「相邻指数两个候选、各自 clamp 到合法尾数、取误差小者」——
+  `5` 在 `p=1` 时得到 `3`（旧实现给 `9`）；补 `±2/±5/±8` 边界与穷举最近性测试。
+- **M08 模型编码**：`format::encode` 改为 `Result`，先 `Model::validate`，再查
+  `u16` 范围与乘积；非法模型/权重/空模型都拒绝，不再 `as u16` 截断或把 `2` 静默写成 `+1`。
+- **M09 训练输入**：`learning_rate` 必须有限且 > 0、`epochs ≥ 1`，逐轮 `loss` 非有限立即报错，
+  不再返回 NaN 报告或改写损坏模型。
+- **M10 SNN**：新增 `Network::validate`（方阵/权重 `{-1,0,1}`/阈值/decay/规模），
+  `simulate`/`simulate_with_drive` 改为 `Result`，膜电位用 `i64` 中间量并限制 tick 预算。
+- **M11 解析预算**：`parse_netlist` / `parse_blif` 增加字节/网络/门数（BLIF 另有 cover 行）
+  预算与 `*_with_limits` 入口，默认 1 MiB / 10 万 / 10 万 / 20 万，分配前拒绝。
+- 测试 +9（workspace **730/0**）；变异门 228 → **240**（本批 12 条新锚点 + 3 条随迁）。
+  兼容性：`aiger` 文本必须是 `aag`；`trit-net`/`trit-machines` 的 encode/simulate 变 fallible
+  （两者都是 `publish = false` 实验层，不进稳定 API）。
+
+### Fixed（复审 P0/P1 批次 4：sparse 视图越界 H08 + P1 五项）
+
+- **H08 sparse `View::new` 越界/语义分叉**（`trit-codec/src/plan.rs`）：构造期完整验证
+  下标严格递增、域内、符号区未用填充位为 0。修复前 `len=1,index=1` 让 `copy_into`
+  在 `out[index]` 越界 panic；`[2,0]` 让 `get`（二分）与 `copy_into`（顺序写）给出
+  不同向量。三条读取路径现在同语义。
+- **H09 trit-net API 边界**（`infer.rs`/`train.rs`）：`forward`/`analyze`/`train` 入口
+  先 `Model::validate()`；训练**逐条**校验样本维数与非有限值（此前只查第一条，第二条
+  短样本在 `Shadow::forward` 索引时 panic）。手搓非法模型返回 `ModelError` /
+  `TrainError::Model`，不再靠索引 panic。
+- **H11 SDF 经典 XOR 映射**：`XOR2`/`XOR3` 此前映射成三值强加 `Xor`，与 Verilog `xor`
+  展开的 `XorClassic` 不相等 ⇒ 按实例覆盖静默落空、延迟回退默认 1。改为经典映射后
+  复审复现探针（SDF `XOR2` 延迟 100）关键路径 1 → **100**。
+- **M03 ATPG 最优性误报**：预算在子调用里耗尽、且还有未试的兄弟分支时置 `exhausted`
+  （旧实现只 `break` 不置位）。复审复现集合（full=63、budget=4）不再把 3 个向量冒充
+  最优；穷举仍给出 2 且 `proven=true`。
+- **M04 检查点索引把锁目录当任务目录**：`index()`/`len()` 只认「偶数长度全十六进制」目录，
+  锁目录（`.lock`、隔离目录）与噪声目录自然排除；持锁期间读索引不再 `InvalidState`。
+- **M05 锁在进程崩溃后永久残留**：锁目录写 `owner.json`（pid/主机/获取时间，`create_new`
+  抢记录，绝不覆盖别人的）；`break_stale_lock` 用 `ps`（unix）/`tasklist`（Windows）探测
+  持有进程，只清**确定已死**的锁（探测不可用、pid 无法判定、跨主机记录一律视为占有）；
+  清理走「先改名隔离 → 复核 owner」，回滚不覆盖已存在目录；`Drop` 也只删 owner 仍是自己
+  的那把。无新依赖、保持 `forbid(unsafe_code)`；已知局限（pid 复用只朝保守方向、命令
+  缺失时不恢复、跨主机不自动清理）写进模块文档。
+- **顺带封堵三处公开 API 隐患**：空 task id 的十六进制是空串（`task_dir("")` = 版本目录），
+  `save/load/remove/prune` 现在一律拒绝，`remove("")` 不再能一次删掉全部任务；`len()` 与
+  `index()` 用同一判据（十六进制且可解 UTF-8），不再对「有几个任务」给出不同答案；
+  sparse `View::new` 的 `8 + count*4 + …` 改 checked 运算（32 位目标上 count≈2^30 会溢出）。
+- 测试 +10；变异门 216 → **228**（新增 12 条：越界下标、填充位、forward/train 校验、
+  XOR 映射、最优性、索引判据、陈旧锁回收、无主锁不误杀、Drop 所有权、空 task id）；
+  workspace **721/0**；fmt/clippy/模块预算绿。
+
+### Added（TTX 格式转换落地 + GPU 端到端接线——真机测试抓到双轨跨行真 bug）
+
+- **纯转换层 `trit_texture::convert`**（默认构建，零新依赖）：RGBA ↔ TTX1/TTX2、
+  TTX1 ↔ TTX2 升降级（降级仅单级 TEX，mip 链显式拒绝）、**盒式 mip 链构造**
+  （2×2 滤波、尺寸向下取到块对齐、不能严格递减即停）。
+- **PNG 文件 I/O（`png` feature，默认关）+ `ttx-convert` CLI**：png-to-ttx
+  （`--v1`/`--mip`）、ttx-to-png、ttx-upgrade、ttx-downgrade；CI 的 check 门补
+  `--features png` 的 test+clippy（feature 代码默认构建碰不到，不加门就是死角）。
+  **架构如实记**：原计划独立 trit-convert crate 被**发布图门**拦下——实验层之间
+  禁止常规路径依赖（政策带自测）；改为可选 feature 收进格式 crate，默认构建
+  依旧零图像解码依赖。CLI 真机冒烟：PNG→TTX(mip,96B)→PNG 往返、mip 链降级正确拒绝。
+- **GPU 端到端（trit-gpu `forward`，gpu feature）**：`matmul_packed` 预打包入口
+  （naive 内核，绑定与 matmul 同一套）——真机测试把 MOD 权重 `to_dual_rail()`
+  缓冲直上 GPU，与标量逐元素对拍（inputs=33 跨字边界 + 容器往返重跑一致性）。
+  **该测试抓到真 bug**：`to_dual_rail` 曾用平面 `index/32` 定字，`inputs % 32 != 0`
+  时第 2 行起点不在字边界（pack_rows 布局是每行整字）——单输出单元测试测不出，
+  真机多行立即失配。已按行×字布局修复，多行常量（第 1 行首字 = 字 2）钉死。
+- **trit-net 兼容测试**（dev-dep）：`Model`/`Layer` ↔ `TritModelLayer` 经
+  `rows()` 无损往返；断链（上层输出 ≠ 下层输入）两边同语义拒绝。
+- 测试 +11（trit-texture 26→31、trit-net 16→18、trit-gpu 真机 +1）；
+  变异门 216 → **220**（新增 4 条：双轨行界错位〔真 bug 形态〕、降级放行 mip、
+  v2 解码取末级、盒式滤波只取首像素），trit-texture 14/14 全灭；
+  workspace **710/0**；发布图/预算/docs 门绿。GGUF → MOD 入向转换未做
+  （需读 GGUF 元数据层，体量另计）。
+
+### Changed（MOD 载荷按「兼容/强度/三进制原生」重构 + 溢出加固 + 扩展名规范）
+
+- **MOD 重构**（用户三优先级：兼容、强度、适合三进制本身；双轨 2 bit/权重
+  的 B 类税方案废弃）：
+  - **权重改基 3 打包**（5 trit/字节 = **1.6 bit/权重**，比 Q2_K ≈2.56 省
+    37.5%，距理论下限 1.585 仅 +0.9%）——权重/偏置/纹理索引/校验流全套同一
+    套打包，格式内没有第二进制制；GPU 改经 `TritModelLayer::to_dual_rail()`
+    一次显式转换（位布局手算常量钉死），不再把双轨当存储格式。
+  - **容器校验升级 GF(3) CRC-16**（g = **x¹⁶+x⁷+2** 本原，x 模 g 阶 =
+    3¹⁶−1，素因子逐一排除，独立 Python 验算）：≤16 连续 trit 突发错**全检**
+    （40 权重全部 16-trit 窗口穷举测试），随机错漏检 ≈ 3⁻¹⁶；CRC-3 尾 1 字节
+    → CRC-16 尾 4 字节，TEX/MOD 两类同享。TTX1 的 CRC-3 行为冻结（实际除数
+    是 x³+2x+1 的互反 x³+2x²+1，注释如实更正）。
+  - **层间衔接进容器校验**（上层输出 = 下层输入，读写同一来源，与 trit-net
+    `Model::validate` 同语义）；`rows()` 无损取回 `Vec<Vec<i8>>`。
+- **溢出加固**（自查发现，32 位目标路径）：TTX1 `from_ttx` 的 `blocks × 12`
+  与 TTX2 `level_blocks` 的字节预算改 checked 乘法，解析游标全部 checked——
+  恶意超大声明在 64 位上被长度对账挡住、在 32 位上不再回绕放行；两条超大
+  声明回归测试（v1/v2 各一，拒绝且不按声明分配）。
+- **`docs/TTX.md` §4 文件扩展名规范**：唯一 `.ttx`（小写）、魔数是唯一事实源、
+  禁止 .ttx1/.ttx2/.ttm 变体、MIME `application/x-ttx`；**新后缀准入政策**：
+  仅当格式主体数据有三进制原生红利（A 类）才注册新后缀，其余复用现有后缀。
+  §2/§6 随重构重写（模型侧 1.6 bit/权重、CRC-16 布局、GPU 转换一次如实记）。
+- 测试 +5（trit-texture 21 → 26：基 3 打包常量、双轨转换布局、层间衔接、
+  16-trit 突发穷举、超大声明×2）；金样字节重铸（CRC-16 尾 [144,81,14,1]
+  独立 Python 长除法验算后冻结）；变异门 215 → **216**（ttx2 锚点随迁：
+  双轨/字数/轨重叠 5 条退役，基 3 打包/digit 映射/层间衔接/CRC 常数 4 条
+  新增 + 等价变异体「空层照收」退役并注明原因）；workspace **704/0**。
+- 同轮仓库面：bfxh 名下 17 仓全部转公开（strata 直接翻；归档仓 uiscan 走
+  解除归档→翻公开→重新归档；翻前扫过凭据类文件名，strata 的 baseline.env
+  为性能基线数字非密钥）。
+
+### Added（TTX v2：多载荷容器——GPU 纹理 mip 链 + 三值模型双轨权重，先写定位文档）
+
+- **`docs/TTX.md`**（先于实现）：TTX 对业界格式的竞争力定位——纹理侧对比
+  PNG/QOI/BC1/BC7/ETC2/ASTC/BasisU（TTX 2.40 bpp < BC1 4.0，3 色调色板天花板、
+  无硬件采样器如实记），模型侧对比 safetensors/GGUF Q2_K/BitNet b1.58
+  （双轨 2 bit/权重 < Q2_K ≈2.56，比理论下限 1.585 多付的 26% 是 B 类税），
+  特点清单 + TTX1/TTX2 字节级规范 + 转换路线。
+- **TTX2 容器**（trit-texture::ttx2，拆 `mod.rs` 容器 / `model.rs` 模型域）：
+  魔数 `TTX2` + kind（TEX/MOD）/flags（非零显式拒绝，前向兼容不猜）/段长头 +
+  kind 段 + GF(3) CRC-3 尾（对 kind 的**规范 trit 流**算，与 TTX1 同哲学）。
+- **kind=TEX**：纹理 + mip 链——每级自带宽高与块载荷，宽高不增且至少一维
+  严格递减（同级/未对齐/空链都是结构化错误）；4×10 块高的 mip 只能降 2–3 级
+  是方块格式没有的诚实约束，写进文档。读写共用 `validate_levels` 单一来源。
+- **kind=MOD**：三值模型（`TritModel`/`TritModelLayer`）——权重 {-1,0,+1} 存
+  **双轨位平面**（行整字、bit = `1<<(i%32)`），与 trit-gpu matmul 内核的
+  storage buffer 布局逐位一致（手算常量钉死），**上传零重排**；偏置基 3 打包
+  （5 trit/字节）。pos/neg 同字同位重叠 = 结构化拒绝（PR #116 的教训：非法轨
+  不许 panic 也不许静默）。层头 words_per_row 与 ceil(inputs/32) 对账。
+- 校验流覆盖**权重 + 零填充尾 + 偏置**：偏置字节打翻必被抓（测试钉住）；
+  金样字节测试（CRC 尾字节经独立 Python GF(3) 实现交叉验算）杀死任何序列化
+  漂移。v1 文件喂给 v2 读器得到显式 `TtxMagic(['T','T','X','1'])`。
+- 测试 +9（trit-texture 12 → 21）；workspace **699/0**；变异门 207 → **215**
+  （新增 8 条：mip 同级放行、打包/解轨位序错 31、字数对账用 floor、空层照收、
+  写/读侧轨重叠失明、偏置打包换基 2）。ttx2.rs 拆 mod/model 后 532/301 行，
+  模块预算零债务保持。
+
+### Changed（CI：计费分钟削峰——macOS 门移至 main，不降覆盖）
+
+- GitHub Actions 月度配额 10 月告警 90%（1801/2000 分钟）。按 runner 计费倍率
+  （Linux 1× / Windows 2× / macOS 10×）抽样 40 次近期运行：**macOS 一个 job 占
+  计费分钟 74%**（UBUNTU=46 / WINDOWS=102 / MACOS=426），另有冷缓存单次 153 分钟离群。
+- `check` 矩阵改为按事件分流：**PR 门跑 ubuntu+windows，macOS（aarch64 信号）在
+  每次合并后的 main push 上全量跑**——每个合入 main 的提交仍被三平台验证，覆盖不减，
+  单次 PR 计费预期从 ~11-14 分钟降到 ~4-6 分钟。
+- `mutation.yml` 补并发取消组：同一 PR 的新 push 立即取消被顶掉的变异门运行
+  （此前无 concurrency 组，多 push 的 PR 每次都全额跑完）；定时/手动运行用唯一
+  run_id 分组不受影响。其余 9 个 Linux 门（module-budget/stress/publish-graph/
+  docs/action/msrv/package/wasm/release）与 PR 变异门全部保持原样。
 ### Added（trit-codec：游程/差分/格雷/QM 化简/#SAT 五个小编解码组件）
 
 又一批独立小编解码器（每个一个文件、只依赖 trit-core、`forbid(unsafe_code)`）：
@@ -40,6 +816,49 @@
   量化 scale 折向、阈值边界、稀疏重复下标、交织行列、verify 截断放行）。
 - **同 PR 的 `layout` 模块被设计否决剔除**（另设第二套双导轨类型 + panic 策略），
   记录见 `docs/DESIGN.md`「不批的设计提案」。外部贡献（bamboo-echo），ZCode 复审合入。
+
+### Added（三态结构体收尾 + 自有纹理容器格式 TTX）
+
+- **`TriStateDriver`**（trit-core）：三态驱动器——`enable` 时把 `drive` 推上总线、
+  未使能呈高阻。这是 TriState 故事缺的最后一块拼图（值/冲突解析/总线有了，
+  **使用方**没有）。
+- **`resolve_drivers`**（trit-core）：多驱动总线解析——`drivers[lane]` 为挂在该车道上的
+  全部驱动器，一次**收集全部冲突车道**（每条列出完整肇事方清单），与
+  `TriStateBus::resolve` 的「两个既定总线、首错即断」互补（诊断/复位场景）。
+- **自有格式 TTX**（trit-texture::ttx，TritText eXchange）：TT3 块纹理容器——
+  魔数 `TTX1` + 尺寸/块数头 + 12 字节块载荷 + **GF(3) CRC-3 校验尾**（对全部索引
+  trit 按三进制多项式 `x³+2x+1` 计算，单符号错全检——二进制容器用比特 CRC，
+  TTX 按内容自己的基数算校验，这是 A 类设计选择）。加载逐段验证：魔数/尺寸
+  对齐/块数/载荷长度/校验和，任何不一致都是结构化错误。
+- 测试 +8（trit-core 84、trit-texture 12）；workspace **690/0**；fmt/clippy/
+  模块预算/发布图绿。trit-core 新 API：`TriStateDriver`、`resolve_drivers`、`LaneConflict`。
+
+### Changed（trit-gpu：矩阵乘加寄存器阻塞——三值再 1.6×，f32 无收益，最优对最优 21.1×）
+
+- tiled 之上新增**寄存器阻塞入口** `main_tiled2`（两侧同构）：workgroup 8×8、每线程
+  2×2 四个累加器——共享内存的 A/B 行段每次读取喂 4 个输出，算术强度再翻倍。
+- **真机读数（RTX 4060 Ti，512×4096×512）**：三值 tiled 0.208 → **0.129 ps/MAC**（再 1.6×，
+  popcount 内循环的指令级并行吃到了）；f32 tiled 2.641 → 2.712（**无收益**，FMA 已饱和、
+  occupancy 下降抵消——如实记负结果）。**最优对最优：14.5× → 21.1×**。
+- 修一个真 bug：`row_base` 曾用 `global_invocation_id × 16`（线程号！）——相邻 workgroup
+  互相覆盖输出（首差 out[0]/out[1]，真机 `reg_matches=false` 暴露）；改用 `workgroup_id`。
+- 正确性：三侧（naive/tiled/reg）各自与 CPU 镜像 `matmul_words` 逐元素一致（真机断言）。
+  reg 内核同样在 `gpu` feature 后，默认构建变异门测不到——真机对拍钉住（如实记）。
+
+### Changed（trit-gpu：矩阵乘内核升级到共享内存分块，「最优对最优」同尺）
+
+- naive 之外新增 **tiled 内核**（同 bind group、新入口点 `main_tiled`，2D dispatch）：
+  三值侧 16×16 输出 tile、每段协作装载 8-word（256 trit）A 行段 / B 列段进
+  workgroup storage——A 段被 16 个列线程复用、B 段被 16 个行线程复用；
+  f32 侧经典 16×16 SM tiling。
+- **真机读数（RTX 4060 Ti，512×4096×512）**：三值 naive 1.60 → tiled **0.183 ps/MAC**（8.8×）；
+  f32 naive 25.89 → tiled **2.641 ps/MAC**（9.8×）。**最优对最优：14.5×**
+  （naive 对 naive 是 16.2×）——分块把两边流量各砍一个量级后，比值从 16 收窄到 14.5：
+  f32 的 FMA 算力在带宽瓶颈缓解后占比上升，与「三值的红利是流量密度」自洽。
+- 正确性：tiled 与 naive 各自与 CPU 位并行镜像 `matmul_words` 逐元素一致（真机断言）。
+  开发中修掉一个真 bug：三值 tile 的装载曾写 16 宽、累加读 8 宽——相邻 chunk 的字
+  被混入（f32 的 TILE=线程数恰好无此问题；构造测试 + 随机纹理双重对拍暴露）。
+  tiled 内核在 `gpu` feature 后，默认构建变异门测不到——正确性由真机对拍钉住（如实记）。
 
 ### Added（三进制 GPU 内核研究：三值矩阵乘 + TT3 纹理解码，真机实测）
 

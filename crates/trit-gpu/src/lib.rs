@@ -14,10 +14,13 @@
 //! **83.9 ps/元素**（12.6×），CPU 位并行 54.4 ps/trit。1M 规模下反而 CPU 更快——
 //! dispatch 延迟占主导，GPU 要到「数据大到装不进缓存」才拉开差距。
 //!
-//! 矩阵乘内核（`matmul.rs`，naive 一线程一输出，512×4096×512）：三值双导轨
-//! **1.66 ps/MAC** vs 同结构 f32 **25.89 ps/MAC**——同设备 **15.6×**。机理：naive
-//! 内核受显存带宽支配，每 MAC 三值搬 2 bit、f32 搬 32 bit，16× 流量差兑现成 15.6×；
-//! 逐元素与 CPU 位并行镜像 [`matmul_words`] 完全一致。
+//! 矩阵乘内核（`matmul.rs`，512×4096×512）六读数同尺：**naive 对 naive**
+//! 三值 1.60 vs f32 25.89 ps/MAC（16.2×）；**共享内存分块**三值 0.208 vs f32
+//! 2.641 ps/MAC（12.8×）；**分块 + 寄存器阻塞**（每线程 2×2 四累加器）三值
+//! **0.129** vs f32 **2.712 ps/MAC**（**21.1×**）——三值从寄存器阻塞再赚 1.6×
+//! （popcount 内循环吃到了指令级并行），f32 无收益（FMA 已饱和，负结果如实记）。
+//! 三侧各自与 CPU 位并行镜像 [`matmul_words`] 逐元素一致（真机）。注意：tiled/reg
+//! 内核在 `gpu` feature 后，默认构建的变异门测不到——正确性由真机对拍测试钉住。
 //!
 //! TT3 块纹理解码内核（`texture.rs`）与 trit-texture 的 CPU 解码逐字节对拍——
 //! WGSL 里的基 3 取位与块网格行主序映射均已真机验证。
@@ -162,9 +165,17 @@ pub struct Report {
 }
 
 #[cfg(feature = "gpu")]
+mod bench;
+#[cfg(feature = "gpu")]
+pub mod forward;
+#[cfg(feature = "gpu")]
 pub mod gpu;
 #[cfg(feature = "gpu")]
 pub mod matmul;
+#[cfg(feature = "gpu")]
+mod matmul_f32;
+#[cfg(feature = "gpu")]
+mod popc;
 #[cfg(feature = "gpu")]
 pub mod texture;
 

@@ -34,6 +34,38 @@ pub enum BlifError {
     /// 该门无法写成二值 BLIF。
     #[error("门 {0:?} 不能写成二值 BLIF")]
     Unsupported(GateKind),
+    /// 超出解析预算（文本字节 / 网络数 / 门数 / cover 项数）。
+    #[error("BLIF 超出预算：{0}")]
+    Limit(String),
+    /// 电路结构不合法（元数/常量/重名等），导出前由 `circuit::validate` 拦下。
+    #[error("电路结构不合法：{0}")]
+    Structure(String),
+    /// 标识符写不进 BLIF（空、含空白或以 `.` 开头会与指令混淆）。
+    #[error("标识符不能写进 BLIF：{0:?}（不能为空、含空白或以 `.` 开头）")]
+    Name(String),
+}
+
+/// BLIF 文本解析预算。
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    /// 文本字节上限。
+    pub bytes: usize,
+    /// 网络数上限。
+    pub nets: usize,
+    /// 门数上限。
+    pub gates: usize,
+    /// cover 行总数上限。
+    pub cover_terms: usize,
+}
+
+impl Limits {
+    /// 默认预算：1 MiB / 10 万网络 / 10 万门 / 20 万 cover 行。
+    pub const DEFAULT: Self = Self {
+        bytes: 1 << 20,
+        nets: 100_000,
+        gates: 100_000,
+        cover_terms: 200_000,
+    };
 }
 
 fn line_error(line: usize, message: impl Into<String>) -> BlifError {
@@ -168,6 +200,19 @@ fn build_cover(
 
 /// 解析 BLIF 组合子集。`.latch` 等时序语句明确拒绝。
 pub fn parse_blif(text: &str) -> Result<Circuit, BlifError> {
+    parse_blif_with_limits(text, Limits::DEFAULT)
+}
+
+/// 解析 BLIF；分配前先过预算（复审 M11）。
+pub fn parse_blif_with_limits(text: &str, limits: Limits) -> Result<Circuit, BlifError> {
+    if text.len() > limits.bytes {
+        return Err(BlifError::Limit(format!(
+            "文本 {} 字节，超过上限 {}",
+            text.len(),
+            limits.bytes
+        )));
+    }
+    let mut cover_terms = 0usize;
     let mut circuit = Circuit::new("blif");
     let mut have_model = false;
     let mut declared: BTreeSet<String> = BTreeSet::new();
@@ -180,6 +225,12 @@ pub fn parse_blif(text: &str) -> Result<Circuit, BlifError> {
         index += 1;
         if line.is_empty() {
             continue;
+        }
+        if circuit.gates.len() > limits.gates {
+            return Err(BlifError::Limit(format!("门数超过上限 {}", limits.gates)));
+        }
+        if declared.len() > limits.nets {
+            return Err(BlifError::Limit(format!("网络数超过上限 {}", limits.nets)));
         }
         if let Some(rest) = line.strip_prefix(".model") {
             let name = rest.trim();
@@ -274,6 +325,13 @@ pub fn parse_blif(text: &str) -> Result<Circuit, BlifError> {
                         }
                     });
                 }
+                cover_terms += 1;
+                if cover_terms > limits.cover_terms {
+                    return Err(BlifError::Limit(format!(
+                        "cover 行超过上限 {}",
+                        limits.cover_terms
+                    )));
+                }
                 rows.push((literals, row_value));
             }
             if rows.is_empty() {
@@ -301,6 +359,12 @@ pub fn parse_blif(text: &str) -> Result<Circuit, BlifError> {
         }
         return Err(line_error(line_no, "cover 行必须跟在 .names 之后"));
     }
+    if circuit.gates.len() > limits.gates {
+        return Err(BlifError::Limit(format!("门数超过上限 {}", limits.gates)));
+    }
+    if declared.len() > limits.nets {
+        return Err(BlifError::Limit(format!("网络数超过上限 {}", limits.nets)));
+    }
     if !have_model {
         return Err(BlifError::NoModel);
     }
@@ -310,11 +374,30 @@ pub fn parse_blif(text: &str) -> Result<Circuit, BlifError> {
     if circuit.outputs.is_empty() {
         return Err(BlifError::NoOutputs);
     }
+    // 解析方向同样要过结构校验：否则会返回"能解析但导不回去"的电路（忠实输入非法）。
+    crate::circuit::validate(&circuit).map_err(|error| BlifError::Structure(error.to_string()))?;
     Ok(circuit)
 }
 
 /// 把组合网表写成 BLIF。三值强加 `Xor` 与 `X` 常量明确拒绝。
 pub fn to_blif(circuit: &Circuit) -> Result<String, BlifError> {
+    // 复审 L03：导出前先跑与 Verilog 导出同一套结构校验，再检查标识符——
+    // 否则手工构造的非法电路会"成功"导出一个读不回来的文件。
+    crate::circuit::validate(circuit).map_err(|error| BlifError::Structure(error.to_string()))?;
+    let gate_names = || {
+        circuit.gates.iter().flat_map(|gate| {
+            std::iter::once(gate.output.name()).chain(gate.inputs.iter().map(Signal::name))
+        })
+    };
+    for name in std::iter::once(circuit.name.as_str())
+        .chain(circuit.inputs.iter().map(Signal::name))
+        .chain(circuit.outputs.iter().map(Signal::name))
+        .chain(gate_names())
+    {
+        if name.is_empty() || name.chars().any(char::is_whitespace) || name.starts_with('.') {
+            return Err(BlifError::Name(name.to_string()));
+        }
+    }
     let mut out = format!(".model {}\n", circuit.name);
     let inputs: Vec<&str> = circuit.inputs.iter().map(Signal::name).collect();
     let outputs: Vec<&str> = circuit.outputs.iter().map(Signal::name).collect();
@@ -353,6 +436,94 @@ pub fn to_blif(circuit: &Circuit) -> Result<String, BlifError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_validates_structure_and_identifiers() {
+        // 复审 L03：含空白的信号名曾直接拼进文本，导出不可解析。
+        let mut bad_name = Circuit::new("m");
+        bad_name.add_input(Signal::new("a b"));
+        bad_name.add_output(Signal::new("y"));
+        bad_name.add_gate(Gate::new(
+            GateKind::Buf,
+            vec![Signal::new("a b")],
+            Signal::new("y"),
+        ));
+        let actual = to_blif(&bad_name);
+        assert!(
+            matches!(&actual, Err(BlifError::Name(name)) if name == "a b"),
+            "空白名必须拒绝，实际 {actual:?}"
+        );
+
+        let mut dot_name = Circuit::new("m");
+        dot_name.add_input(Signal::new(".names"));
+        dot_name.add_output(Signal::new("y"));
+        dot_name.add_gate(Gate::new(
+            GateKind::Buf,
+            vec![Signal::new(".names")],
+            Signal::new("y"),
+        ));
+        assert!(matches!(to_blif(&dot_name), Err(BlifError::Name(_))));
+
+        // 元数错误：AND 只给一个输入。
+        let mut wrong_arity = Circuit::new("m");
+        wrong_arity.add_input(Signal::new("a"));
+        wrong_arity.add_output(Signal::new("y"));
+        wrong_arity.add_gate(Gate::new(
+            GateKind::And,
+            vec![Signal::new("a")],
+            Signal::new("y"),
+        ));
+        assert!(
+            matches!(to_blif(&wrong_arity), Err(BlifError::Structure(_))),
+            "非法元数必须拒绝"
+        );
+    }
+
+    #[test]
+    fn parser_rejects_structurally_invalid_blif() {
+        assert!(matches!(
+            parse_blif(
+                ".model m
+.inputs a
+.outputs y
+.end
+"
+            ),
+            Err(BlifError::Structure(_))
+        ));
+    }
+
+    #[test]
+    fn budgets_reject_oversized_blif() {
+        // 复审 M11：cover 行与网络/门数原先无预算。
+        let text = ".model m\n.inputs a b\n.outputs y\n.names a b y\n11 1\n.end\n";
+        assert!(parse_blif(text).is_ok(), "默认预算内必须能解析");
+        let tiny_bytes = Limits {
+            bytes: 8,
+            ..Limits::DEFAULT
+        };
+        assert!(matches!(
+            parse_blif_with_limits(text, tiny_bytes),
+            Err(BlifError::Limit(_))
+        ));
+        let no_covers = Limits {
+            cover_terms: 0,
+            ..Limits::DEFAULT
+        };
+        assert!(matches!(
+            parse_blif_with_limits(text, no_covers),
+            Err(BlifError::Limit(_))
+        ));
+        let one_net = Limits {
+            nets: 1,
+            ..Limits::DEFAULT
+        };
+        assert!(matches!(
+            parse_blif_with_limits(text, one_net),
+            Err(BlifError::Limit(_))
+        ));
+    }
+
     use crate::circuit::propagate;
     use trit_core::algebra::Algebra;
     use trit_core::value::Ternary;

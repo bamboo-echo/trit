@@ -201,6 +201,78 @@ MUTANTS = [
                 "filter": "decode_into_matches_allocating_and_rejects_short_buffers"
     },
     {
+        "name": "ttx2: mip 允许同级",
+        "file": "crates/trit-texture/src/ttx2/mod.rs",
+        "old": "            if !(w <= prev_w && h <= prev_h && (w < prev_w || h < prev_h)) {",
+        "new": "            if !(w <= prev_w && h <= prev_h && (w <= prev_w || h <= prev_h)) {",
+        "pkg": "trit-texture",
+        "filter": "mip_chain_rejects_equal_misaligned_and_empty"
+    },
+    {
+        "name": "ttx2: 基 3 打包换基 2",
+        "file": "crates/trit-texture/src/ttx2/model.rs",
+        "old": "            (value_digit(*value) * 3u32.pow((index % TRITS_PER_PACKED_BYTE) as u32)) as u8;",
+        "new": "            (value_digit(*value) * 2u32.pow((index % TRITS_PER_PACKED_BYTE) as u32)) as u8;",
+        "pkg": "trit-texture",
+        "filter": "model_container_bytes_are_pinned"
+    },
+    {
+        "name": "ttx2: digit 映射偏移",
+        "file": "crates/trit-texture/src/ttx2/model.rs",
+        "old": "    (value + 1) as u32",
+        "new": "    (value + 2) as u32",
+        "pkg": "trit-texture",
+        "filter": "model_container_bytes_are_pinned"
+    },
+    {
+        "name": "ttx2: 层间衔接放行",
+        "file": "crates/trit-texture/src/ttx2/model.rs",
+        "old": "            if index > 0 && layer.inputs != layers[index - 1].outputs {",
+        "new": "            if false && index > 0 && layer.inputs != layers[index - 1].outputs {",
+        "pkg": "trit-texture",
+        "filter": "chain_dimensions_are_enforced_like_trit_net"
+    },
+    {
+        "name": "ttx2: CRC 生成常数换轨",
+        "file": "crates/trit-texture/src/ttx.rs",
+        "old": "pub(crate) const GEN16: [i32; 17] = [2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1];",
+        "new": "pub(crate) const GEN16: [i32; 17] = [2, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1];",
+        "pkg": "trit-texture",
+        "filter": "model_container_bytes_are_pinned"
+    },
+    {
+        "name": "ttx2: 双轨行界错位（平面下标）",
+        "file": "crates/trit-texture/src/ttx2/model.rs",
+        "old": "                    1 => pos[row * words + col / TRITS_PER_WORD] |= bit,",
+        "new": "                    1 => pos[(row * self.inputs + col) / TRITS_PER_WORD] |= bit,",
+        "pkg": "trit-texture",
+        "filter": "dual_rail_conversion_matches_the_gpu_layout"
+    },
+    {
+        "name": "convert: 降级放行 mip 链",
+        "file": "crates/trit-texture/src/convert.rs",
+        "old": "    if levels.len() != 1 {",
+        "new": "    if levels.len() > 2 {",
+        "pkg": "trit-texture",
+        "filter": "downgrade_rejects_mip_chains_and_model_kind"
+    },
+    {
+        "name": "convert: v2 解码取末级",
+        "file": "crates/trit-texture/src/convert.rs",
+        "old": "    let texture = levels.first().ok_or(TextureError::TtxEmpty)?;",
+        "new": "    let texture = levels.last().ok_or(TextureError::TtxEmpty)?;",
+        "pkg": "trit-texture",
+        "filter": "downgrade_rejects_mip_chains_and_model_kind"
+    },
+    {
+        "name": "convert: 盒式滤波只取首像素",
+        "file": "crates/trit-texture/src/convert.rs",
+        "old": "            for (dy, dx) in [(0usize, 0usize), (0, 1), (1, 0), (1, 1)] {",
+        "new": "            for (dy, dx) in [(0usize, 0usize)] {",
+        "pkg": "trit-texture",
+        "filter": "mip_chain_dimensions_and_box_filter_are_exact"
+    },
+    {
         "name": "circuit: 引脚故障不注入",
         "file": "crates//trit-circuit//src//circuit//sim.rs",
         "old": "                ins[pin] = value;",
@@ -1099,8 +1171,8 @@ MUTANTS = [
     {
         "name": "index: 不解码 task id",
         "file": "crates/trit-schedule/src/checkpoint/file.rs",
-        "old": "                let task_id = hex_decode(name)?;\n",
-        "new": "                let task_id = name.to_string();\n",
+        "old": "                let Ok(task_id) = hex_decode(name) else {\n                    continue;\n                };",
+        "new": "                let task_id = name.to_string();",
         "pkg": "trit-schedule",
         "filter": "index_lists_latest_generations_sorted"
     },
@@ -1131,10 +1203,26 @@ MUTANTS = [
     {
         "name": "lock: Drop 不释放",
         "file": "crates/trit-schedule/src/checkpoint/lock.rs",
-        "old": "impl Drop for CheckpointLock {\n    fn drop(&mut self) {\n        let _ = fs::remove_dir_all(&self.path);\n    }\n}\n",
+        "old": "impl Drop for CheckpointLock {\n    fn drop(&mut self) {\n        // 只删仍是自己的那把：陈旧回收/人工删锁之后，同路径可能已是别人的锁目录。\n        if read_owner(&self.path).as_ref() == Some(&self.owner) {\n            let _ = fs::remove_dir_all(&self.path);\n        }\n    }\n}\n",
         "new": "impl Drop for CheckpointLock {\n    fn drop(&mut self) {\n        let _ = &self.path;\n    }\n}\n",
         "pkg": "trit-schedule",
         "filter": "cross_process_lock_excludes_and_releases"
+    },
+    {
+        "name": "lock: Drop 删掉别人的锁",
+        "file": "crates/trit-schedule/src/checkpoint/lock.rs",
+        "old": "        if read_owner(&self.path).as_ref() == Some(&self.owner) {\n            let _ = fs::remove_dir_all(&self.path);\n        }",
+        "new": "        let _ = fs::remove_dir_all(&self.path);",
+        "pkg": "trit-schedule",
+        "filter": "drop_does_not_delete_a_taken_over_lock"
+    },
+    {
+        "name": "checkpoint: 放行空 task id",
+        "file": "crates/trit-schedule/src/checkpoint/file.rs",
+        "old": "    if task_id.is_empty() {",
+        "new": "    if false {",
+        "pkg": "trit-schedule",
+        "filter": "empty_task_id_is_rejected_by_every_entry"
     },
     {
         "name": "restore: 忽略检查点",
@@ -1323,8 +1411,8 @@ MUTANTS = [
     {
         "name": "snn: 抑制阈值写成严格小于",
         "file": "crates/trit-machines/src/snn.rs",
-        "old": "} else if potential <= -network.threshold {",
-        "new": "} else if potential < -network.threshold {",
+        "old": "} else if potential <= -i64::from(network.threshold) {",
+        "new": "} else if potential < -i64::from(network.threshold) {",
         "pkg": "trit-machines",
         "filter": "negative_drive_produces_inhibitory_spike"
     },
@@ -1411,8 +1499,8 @@ MUTANTS = [
     {
         "name": "attn: 记忆编码符号写反",
         "file": "crates/trit-attn/src/memory.rs",
-        "old": "                self.weights[row * self.dim + col] += value * key;",
-        "new": "                self.weights[row * self.dim + col] -= value * key;",
+        "old": "                    .checked_add(delta)",
+        "new": "                    .checked_sub(delta)",
         "pkg": "trit-attn",
         "filter": "orthogonal_keys_recall_exactly"
     },
@@ -1425,12 +1513,44 @@ MUTANTS = [
         "filter": "quantize_clamps_to_ternary"
     },
     {
-        "name": "float: 舍入改成截断",
+        "name": "learn: STE 饱和门失效",
+        "file": "crates/trit-learn/src/quant.rs",
+        "old": "                if ratio.abs() <= limit {",
+        "new": "                if true {",
+        "pkg": "trit-learn",
+        "filter": "clipped_ste_zeroes_saturated_gradients"
+    },
+    {
+        "name": "learn: softmax 不归一化",
+        "file": "crates/trit-learn/src/loss.rs",
+        "old": "    let sum: f64 = exps.iter().sum();",
+        "new": "    let sum: f64 = 1.0;",
+        "pkg": "trit-learn",
+        "filter": "softmax_sums_to_one_and_is_stable"
+    },
+    {
+        "name": "attn: 注意力丢 1/sqrt(d) 缩放",
+        "file": "crates/trit-attn/src/block.rs",
+        "old": "                        / scale",
+        "new": "                        / 1.0",
+        "pkg": "trit-attn",
+        "filter": "forward_matches_independent_attention_reference"
+    },
+    {
+        "name": "attn: 残差一丢输入 X",
+        "file": "crates/trit-attn/src/block.rs",
+        "old": "        let mut h = seq.to_vec();",
+        "new": "        let mut h = vec![0.0; seq.len()];",
+        "pkg": "trit-attn",
+        "filter": "input_gradients_match_finite_differences"
+    },
+    {
+        "name": "float: 平局取更小指数（背离约定）",
         "file": "crates/trit-float/src/lib.rs",
-        "old": "    if remainder <= 1 {",
-        "new": "    if remainder <= 2 {",
+        "old": "                            RoundMode::HalfAway => dropped > best_dropped,",
+        "new": "                            RoundMode::HalfAway => dropped < best_dropped,",
         "pkg": "trit-float",
-        "filter": "rounding_is_nearest_in_balanced_ternary"
+        "filter": "precision_bounds_follow_balanced_digits"
     },
     {
         "name": "float: 加法恒丢弃小项",
@@ -1449,20 +1569,20 @@ MUTANTS = [
         "filter": "adding_zero_returns_the_operand_unchanged"
     },
     {
-        "name": "float: digit_count 取回 abs",
+        "name": "float: digit_count 上界差一",
         "file": "crates/trit-float/src/lib.rs",
-        "old": "    let mut rest = value.unsigned_abs();",
-        "new": "    let mut rest = value.abs() as u128;",
+        "old": "        if magnitude <= limit {",
+        "new": "        if magnitude < limit {",
         "pkg": "trit-float",
-        "filter": "extreme_mantissa_and_exponent_do_not_panic"
+        "filter": "rounding_is_nearest_over_legal_mantissas"
     },
     {
-        "name": "float: 丢位除法回到先减后除",
+        "name": "float: 允许多一位有效位",
         "file": "crates/trit-float/src/lib.rs",
-        "old": "    let quotient = value.div_euclid(3);",
-        "new": "    let quotient = (value - remainder) / 3;",
+        "old": "    if digits > precision {",
+        "new": "    if digits > precision + 1 {",
         "pkg": "trit-float",
-        "filter": "extreme_mantissa_and_exponent_do_not_panic"
+        "filter": "precision_bounds_follow_balanced_digits"
     },
     {
         "name": "float: 相等把精度算进去",
@@ -1507,8 +1627,8 @@ MUTANTS = [
     {
         "name": "dot: 稀疏路径漏掉负负项",
         "file": "crates/trit-dot/src/lib.rs",
-        "old": "            total += i64::from(pp) - i64::from(pn) - i64::from(np) + i64::from(nn);\n        }\n        total\n    }\n\n    /// 非零块数",
-        "new": "            total += i64::from(pp) - i64::from(pn) - i64::from(np);\n        }\n        total\n    }\n\n    /// 非零块数",
+        "old": "            let nn = (self.neg[block] & other.neg[block]).count_ones();\n            total += i64::from(pp) - i64::from(pn) - i64::from(np) + i64::from(nn);\n        }\n        Ok(total)\n    }\n\n    fn check_length(",
+        "new": "            let nn = (self.neg[block] & other.neg[block]).count_ones();\n            total += i64::from(pp) - i64::from(pn) - i64::from(np);\n        }\n        Ok(total)\n    }\n\n    fn check_length(",
         "pkg": "trit-dot",
         "filter": "ternary_dot_matches_scalar_across_block_boundaries"
     },
@@ -1671,7 +1791,947 @@ MUTANTS = [
         "new": "                out.fill(Ternary::False);",
         "pkg": "trit-codec",
         "filter": "bulk_copy_matches_decode"
-    }
+    },
+    {
+        "name": "codec: sparse 视图放行越界下标",
+        "file": "crates/trit-codec/src/plan.rs",
+        "old": "                    if index as usize >= len {\n                        return Err(CodecError::SparseIndexOutOfRange { index, len });\n                    }",
+        "new": "                    if index as usize > len {\n                        return Err(CodecError::SparseIndexOutOfRange { index, len });\n                    }",
+        "pkg": "trit-codec",
+        "filter": "sparse_view_rejects_out_of_range_unsorted_and_dirty_padding"
+    },
+    {
+        "name": "codec: sparse 视图不查符号区填充位",
+        "file": "crates/trit-codec/src/plan.rs",
+        "old": "                if used_bits != 0 && bytes[needed - 1] >> used_bits != 0 {",
+        "new": "                if false && used_bits != 0 && bytes[needed - 1] >> used_bits != 0 {",
+        "pkg": "trit-codec",
+        "filter": "sparse_view_rejects_out_of_range_unsorted_and_dirty_padding"
+    },
+    {
+        "name": "net: forward 不校验手搓模型",
+        "file": "crates/trit-net/src/infer.rs",
+        "old": "pub fn forward(model: &Model, inputs: &[Ternary]) -> Result<Vec<Sign>, ModelError> {\n    model.validate()?;",
+        "new": "pub fn forward(model: &Model, inputs: &[Ternary]) -> Result<Vec<Sign>, ModelError> {",
+        "pkg": "trit-net",
+        "filter": "hand_built_invalid_model_is_rejected_instead_of_panicking"
+    },
+    {
+        "name": "net-train: 只校验第一条样本",
+        "file": "crates/trit-net/src/train.rs",
+        "old": "    for (index, sample) in inputs.iter().enumerate() {",
+        "new": "    for (index, sample) in inputs.iter().take(1).enumerate() {",
+        "pkg": "trit-net",
+        "filter": "rejects_inconsistent_model_and_late_short_samples"
+    },
+    {
+        "name": "net-train: 不校验模型就开训",
+        "file": "crates/trit-net/src/train.rs",
+        "old": "    model.validate()?;\n    for (index, sample) in inputs.iter().enumerate() {",
+        "new": "    for (index, sample) in inputs.iter().enumerate() {",
+        "pkg": "trit-net",
+        "filter": "rejects_inconsistent_model_and_late_short_samples"
+    },
+    {
+        "name": "sdf: XOR2 映射成三值强加门",
+        "file": "crates/trit-circuit/src/sdf.rs",
+        "old": "        (\"XOR\", GateKind::XorClassic),",
+        "new": "        (\"XOR\", GateKind::Xor),",
+        "pkg": "trit-circuit",
+        "filter": "xor_celltypes_map_to_the_classic_gate"
+    },
+    {
+        "name": "circuit: 预算耗尽仍宣称最优覆盖",
+        "file": "crates/trit-circuit/src/coverage.rs",
+        "old": "        if *budget == 0 && position + 1 < candidates.len() {\n            *exhausted = true;",
+        "new": "        if *budget == 0 && position + 1 < candidates.len() {",
+        "pkg": "trit-circuit",
+        "filter": "budget_exhaustion_with_unexplored_siblings_is_not_optimal"
+    },
+    {
+        "name": "schedule: 索引把锁目录当任务目录",
+        "file": "crates/trit-schedule/src/checkpoint/file.rs",
+        "old": "                let Ok(task_id) = hex_decode(name) else {\n                    continue;\n                };",
+        "new": "                let task_id = hex_decode(name)?;",
+        "pkg": "trit-schedule",
+        "filter": "index_ignores_the_lock_directory_while_held"
+    },
+    {
+        "name": "schedule: 死进程的陈旧锁不回收",
+        "file": "crates/trit-schedule/src/checkpoint/file.rs",
+        "old": "                owner.host == local_owner().host && matches!(process_alive(owner.pid), Some(false))",
+        "new": "                owner.host == local_owner().host && matches!(process_alive(owner.pid), Some(true))",
+        "pkg": "trit-schedule",
+        "filter": "stale_lock_from_a_dead_process_is_recovered"
+    },
+    {
+        "name": "schedule: 无主锁一律当残骸",
+        "file": "crates/trit-schedule/src/checkpoint/file.rs",
+        "old": "            None => dir_age(&path).is_some_and(|age| age >= OWNERLESS_STALE_AFTER),",
+        "new": "            None => true,",
+        "pkg": "trit-schedule",
+        "filter": "fresh_ownerless_lock_is_not_stolen"
+    },
+    {
+        "name": "aiger: aig 二进制头被当文本接受",
+        "file": "crates/trit-circuit/src/aiger.rs",
+        "old": "    if parts[0] == \"aig\" {\n        return Err(AigerError::BinaryFormat);\n    }",
+        "new": "    if false {\n        return Err(AigerError::BinaryFormat);\n    }",
+        "pkg": "trit-circuit",
+        "filter": "ascii_header_is_aag_and_binary_aig_is_rejected"
+    },
+    {
+        "name": "verilog: && 静默按逐位与",
+        "file": "crates/trit-circuit/src/verilog/expr.rs",
+        "old": "                if self.chars.get(self.pos + 1).copied() == Some('&') {",
+        "new": "                if false {",
+        "pkg": "trit-circuit",
+        "filter": "logical_and_or_are_rejected_instead_of_bitwise"
+    },
+    {
+        "name": "verilog: || 静默按逐位或",
+        "file": "crates/trit-circuit/src/verilog/expr.rs",
+        "old": "                if self.chars.get(self.pos + 1).copied() == Some('|') {",
+        "new": "                if false {",
+        "pkg": "trit-circuit",
+        "filter": "logical_and_or_are_rejected_instead_of_bitwise"
+    },
+    {
+        "name": "netlist: 文本字节预算失效",
+        "file": "crates/trit-circuit/src/netlist.rs",
+        "old": "    if text.len() > limits.bytes {",
+        "new": "    if false {",
+        "pkg": "trit-circuit",
+        "filter": "budgets_reject_oversized_input"
+    },
+    {
+        "name": "blif: 文本字节预算失效",
+        "file": "crates/trit-circuit/src/blif.rs",
+        "old": "    if text.len() > limits.bytes {",
+        "new": "    if false {",
+        "pkg": "trit-circuit",
+        "filter": "budgets_reject_oversized_blif"
+    },
+    {
+        "name": "classifier: 标签梯度符号反",
+        "file": "crates/trit-graph/src/classifier.rs",
+        "old": "        dlogits[index_of(sample.label)] -= 1.0;",
+        "new": "        dlogits[index_of(sample.label)] += 1.0;",
+        "pkg": "trit-graph",
+        "filter": "gradients_match_finite_differences"
+    },
+    {
+        "name": "classifier: 头梯度漏掉特征",
+        "file": "crates/trit-graph/src/classifier.rs",
+        "old": "            dhead[0][k] = dlogits[k] * feature;",
+        "new": "            dhead[0][k] = dlogits[k];",
+        "pkg": "trit-graph",
+        "filter": "gradients_match_finite_differences"
+    },
+    {
+        "name": "classifier: 聚合梯度少除入度",
+        "file": "crates/trit-graph/src/classifier.rs",
+        "old": "            let scale = dfeature / incoming.len() as f32;",
+        "new": "            let scale = dfeature;",
+        "pkg": "trit-graph",
+        "filter": "gradients_match_finite_differences"
+    },
+    {
+        "name": "mpnn: 反对边不取反",
+        "file": "crates/trit-graph/src/mpnn.rs",
+        "old": "                _ => -1.0,",
+        "new": "                _ => 1.0,",
+        "pkg": "trit-graph",
+        "filter": "identity_table_votes_all_nine_pairs"
+    },
+    {
+        "name": "mpnn: 死区边界含等号",
+        "file": "crates/trit-graph/src/mpnn.rs",
+        "old": "        if latent > DEAD_ZONE {",
+        "new": "        if latent >= DEAD_ZONE {",
+        "pkg": "trit-graph",
+        "filter": "dead_zone_is_unknown"
+    },
+    {
+        "name": "mpnn: 拟合梯度反向",
+        "file": "crates/trit-graph/src/mpnn.rs",
+        "old": "            let grad_q = value_of(target) - value_of(current);",
+        "new": "            let grad_q = value_of(current) - value_of(target);",
+        "pkg": "trit-graph",
+        "filter": "fit_recovers_identity_table"
+    },
+    {
+        "name": "mpnn: 消息取错端点状态",
+        "file": "crates/trit-graph/src/mpnn.rs",
+        "old": "                votes[target].push(self.table.vote(edge, state));",
+        "new": "                votes[target].push(self.table.vote(edge, states[target]));",
+        "pkg": "trit-graph",
+        "filter": "propagates_along_support_edges"
+    },
+    {
+        "name": "kernel: WL 核忽略边符号",
+        "file": "crates/trit-graph/src/kernel.rs",
+        "old": "        graph.for_each_out(u, |v, edge| neighbors.push((edge_code(edge), colors[v])));",
+        "new": "        graph.for_each_out(u, |v, _| neighbors.push((0, colors[v])));",
+        "pkg": "trit-graph",
+        "filter": "edge_signs_matter"
+    },
+    {
+        "name": "kernel: 路径核忽略边符号",
+        "file": "crates/trit-graph/src/kernel.rs",
+        "old": "        signature.push(edge_code(edge));",
+        "new": "        signature.push(0);",
+        "pkg": "trit-graph",
+        "filter": "edge_signs_matter"
+    },
+    {
+        "name": "kernel: 归一化分母错误",
+        "file": "crates/trit-graph/src/kernel.rs",
+        "old": "    k as f64 / ((self_a as f64).sqrt() * (self_b as f64).sqrt())",
+        "new": "    k as f64 / ((self_a * self_b) as f64)",
+        "pkg": "trit-graph",
+        "filter": "isomorphic_graphs_have_kernel_one"
+    },
+    {
+        "name": "walk: 中立边不冻结",
+        "file": "crates/trit-graph/src/walk.rs",
+        "old": "                    Ternary::Unknown => (0.0, 0.0, mass.total()),",
+        "new": "                    Ternary::Unknown => (mass.plus, mass.minus, mass.unknown),",
+        "pkg": "trit-graph",
+        "filter": "neutral_edge_freezes_to_unknown"
+    },
+    {
+        "name": "walk: 反对边不翻转",
+        "file": "crates/trit-graph/src/walk.rs",
+        "old": "                    Ternary::False => (mass.minus, mass.plus, mass.unknown),",
+        "new": "                    Ternary::False => (mass.plus, mass.minus, mass.unknown),",
+        "pkg": "trit-graph",
+        "filter": "oppose_edge_flips_state"
+    },
+    {
+        "name": "walk: 忽略阻尼",
+        "file": "crates/trit-graph/src/walk.rs",
+        "old": "            let share = damping / degree as f64;",
+        "new": "            let share = 1.0 / degree as f64;",
+        "pkg": "trit-graph",
+        "filter": "support_edges_carry_true"
+    },
+    {
+        "name": "walk: 平票判真",
+        "file": "crates/trit-graph/src/walk.rs",
+        "old": "        } else if self.plus > self.minus {",
+        "new": "        } else if self.plus >= self.minus {",
+        "pkg": "trit-graph",
+        "filter": "tie_is_unknown"
+    },
+    {
+        "name": "hyper: 超边判决忽略成员状态",
+        "file": "crates/trit-graph/src/hyper.rs",
+        "old": "            (self.nodes.get(node), self.nodes.is_critical(node))",
+        "new": "            (Ternary::True, self.nodes.is_critical(node))",
+        "pkg": "trit-graph",
+        "filter": "verdict_majority_and_veto"
+    },
+    {
+        "name": "decomp: 不校验边覆盖",
+        "file": "crates/trit-graph/src/decomp.rs",
+        "old": "            let covered = (0..self.bags.len())\n                .any(|bag| self.bag_contains(bag, u) && self.bag_contains(bag, v));",
+        "new": "            let covered = true;",
+        "pkg": "trit-graph",
+        "filter": "missing_edge_coverage_is_reported"
+    },
+    {
+        "name": "decomp: 不校验运行交",
+        "file": "crates/trit-graph/src/decomp.rs",
+        "old": "            if links + 1 != holders.len() {",
+        "new": "            if false {",
+        "pkg": "trit-graph",
+        "filter": "disconnected_running_intersection_is_reported"
+    },
+    {
+        "name": "graph: CSR 偏移不累加",
+        "file": "crates/trit-graph/src/csr.rs",
+        "old": "            offsets[u + 1] = offsets[u] + graph.out_degree(u);",
+        "new": "            offsets[u + 1] = offsets[u];",
+        "pkg": "trit-graph",
+        "filter": "conversion_preserves_edges_and_states"
+    },
+    {
+        "name": "graph: CSR 丢掉边状态",
+        "file": "crates/trit-graph/src/csr.rs",
+        "old": "                states[cursor] = state;",
+        "new": "                states[cursor] = Ternary::Unknown;",
+        "pkg": "trit-graph",
+        "filter": "conversion_preserves_edges_and_states"
+    },
+    {
+        "name": "graph: WL 忽略边符号",
+        "file": "crates/trit-graph/src/wl.rs",
+        "old": "            view.for_each_out(u, |v, edge| neighbors.push((edge_code(edge), colors[v])));",
+        "new": "            view.for_each_out(u, |v, _| neighbors.push((0, colors[v])));",
+        "pkg": "trit-graph",
+        "filter": "edge_signs_change_colors"
+    },
+    {
+        "name": "graph: WL 一轮就停",
+        "file": "crates/trit-graph/src/wl.rs",
+        "old": "        let stable = partition_stable(&colors, &next);",
+        "new": "        let stable = true;",
+        "pkg": "trit-graph",
+        "filter": "distinguishes_path_from_star"
+    },
+    {
+        "name": "graph: 拓扑序忽略环",
+        "file": "crates/trit-graph/src/view.rs",
+        "old": "        (order.len() == self.len()).then_some(order)",
+        "new": "        Some(order)",
+        "pkg": "trit-graph",
+        "filter": "cycle_is_detected"
+    },
+    {
+        "name": "graph: 邻居只看第一个字",
+        "file": "crates/trit-graph/src/graph.rs",
+        "old": "                bits &= bits - 1;",
+        "new": "                bits = 0;",
+        "pkg": "trit-graph",
+        "filter": "neighbor_iteration_crosses_words"
+    },
+    {
+        "name": "council: 关键否决失效",
+        "file": "crates/trit-graph/src/council.rs",
+        "old": "                vetoed |= critical;",
+        "new": "                vetoed |= false;",
+        "pkg": "trit-graph",
+        "filter": "critical_false_vetoes_even_with_majority"
+    },
+    {
+        "name": "council: 平票判真",
+        "file": "crates/trit-graph/src/council.rs",
+        "old": "    } else if plus > minus {",
+        "new": "    } else if plus >= minus {",
+        "pkg": "trit-graph",
+        "filter": "tie_falls_back_to_unknown"
+    },
+    {
+        "name": "float: 锥形精度不衰减",
+        "file": "crates/trit-float/src/format.rs",
+        "old": "        self.precision.saturating_sub(drop).max(MIN_PRECISION)",
+        "new": "        self.precision",
+        "pkg": "trit-float",
+        "filter": "taper_reduces_precision_away_from_one"
+    },
+    {
+        "name": "float: 格式下溢不归零",
+        "file": "crates/trit-float/src/format.rs",
+        "old": "            return Some(TritFloat::zero(self.precision));\n        }\n        let precision = self.precision_at(exponent);",
+        "new": "            return None;\n        }\n        let precision = self.precision_at(exponent);",
+        "pkg": "trit-float",
+        "filter": "quantize_clamps_to_format"
+    },
+    {
+        "name": "float: 舍入不 clamp 到合法尾数",
+        "file": "crates/trit-float/src/lib.rs",
+        "old": "            let rounded = round_quotient(mantissa, divisor).clamp(-limit, limit);",
+        "new": "            let rounded = round_quotient(mantissa, divisor);",
+        "pkg": "trit-float",
+        "filter": "precision_bounds_follow_balanced_digits"
+    },
+    {
+        "name": "net-format: encode 不校验模型",
+        "file": "crates/trit-net/src/format.rs",
+        "old": "    model\n        .validate()\n        .map_err(|error| FormatError::Model(error.to_string()))?;",
+        "new": "    let _ = &model;",
+        "pkg": "trit-net",
+        "filter": "encode_rejects_invalid_models_instead_of_truncating"
+    },
+    {
+        "name": "net-format: 维数按 u16 静默截断",
+        "file": "crates/trit-net/src/format.rs",
+        "old": "        let inputs = u16::try_from(layer.inputs).map_err(|_| {",
+        "new": "        let inputs = Ok::<u16, FormatError>((layer.inputs % 65536) as u16).map_err(|_| {",
+        "pkg": "trit-net",
+        "filter": "encode_rejects_invalid_models_instead_of_truncating"
+    },
+    {
+        "name": "net-train: 学习率不校验有限/正",
+        "file": "crates/trit-net/src/train.rs",
+        "old": "    if !options.learning_rate.is_finite() || options.learning_rate <= 0.0 {",
+        "new": "    if false {",
+        "pkg": "trit-net",
+        "filter": "rejects_non_finite_learning_rate_and_zero_epochs"
+    },
+    {
+        "name": "net-train: 放行 0 轮训练",
+        "file": "crates/trit-net/src/train.rs",
+        "old": "    if options.epochs == 0 {",
+        "new": "    if false {",
+        "pkg": "trit-net",
+        "filter": "rejects_non_finite_learning_rate_and_zero_epochs"
+    },
+    {
+        "name": "snn: 模拟前不校验网络",
+        "file": "crates/trit-machines/src/snn.rs",
+        "old": "    network.validate()?;",
+        "new": "    let _ = network;",
+        "pkg": "trit-machines",
+        "filter": "invalid_networks_are_rejected_instead_of_panicking"
+    },
+    {
+        "name": "snn: 不限制 tick 预算",
+        "file": "crates/trit-machines/src/snn.rs",
+        "old": "    if ticks > MAX_TICKS {",
+        "new": "    if false {",
+        "pkg": "trit-machines",
+        "filter": "invalid_networks_are_rejected_instead_of_panicking"
+    },
+    {
+        "name": "dot: 长度不一致不报错",
+        "file": "crates/trit-dot/src/lib.rs",
+        "old": "        if self.len != other.len {",
+        "new": "        if false {",
+        "pkg": "trit-dot",
+        "filter": "length_mismatch_is_rejected"
+    },
+    {
+        "name": "dot: 放行重叠的双导轨",
+        "file": "crates/trit-dot/src/lib.rs",
+        "old": "            .find(|(_, overlap)| *overlap != 0)",
+        "new": "            .find(|_| false)",
+        "pkg": "trit-dot",
+        "filter": "invalid_planes_are_rejected_at_construction"
+    },
+    {
+        "name": "dot: 不查尾部填充位",
+        "file": "crates/trit-dot/src/lib.rs",
+        "old": "            if dirty_pos != 0 || dirty_neg != 0 {",
+        "new": "            if false {",
+        "pkg": "trit-dot",
+        "filter": "invalid_planes_are_rejected_at_construction"
+    },
+    {
+        "name": "blif: 导出前不校验结构",
+        "file": "crates/trit-circuit/src/blif.rs",
+        "old": "    crate::circuit::validate(circuit).map_err(|error| BlifError::Structure(error.to_string()))?;",
+        "new": "    let _ = circuit;",
+        "pkg": "trit-circuit",
+        "filter": "export_validates_structure_and_identifiers"
+    },
+    {
+        "name": "blif: 导出不查标识符",
+        "file": "crates/trit-circuit/src/blif.rs",
+        "old": "        if name.is_empty() || name.chars().any(char::is_whitespace) || name.starts_with('.') {",
+        "new": "        if false {",
+        "pkg": "trit-circuit",
+        "filter": "export_validates_structure_and_identifiers"
+    },
+    {
+        "name": "blif: 解析不做结构校验",
+        "file": "crates/trit-circuit/src/blif.rs",
+        "old": "    crate::circuit::validate(&circuit).map_err(|error| BlifError::Structure(error.to_string()))?;",
+        "new": "    let _ = &circuit;",
+        "pkg": "trit-circuit",
+        "filter": "parser_rejects_structurally_invalid_blif"
+    },
+    {
+        "name": "netlist: 解析不做结构校验",
+        "file": "crates/trit-circuit/src/netlist.rs",
+        "old": "    crate::circuit::validate(&circuit)\n        .map_err(|error| NetlistError::Structure(error.to_string()))?;",
+        "new": "    let _ = &circuit;",
+        "pkg": "trit-circuit",
+        "filter": "parser_rejects_structurally_invalid_input"
+    },
+    {
+        "name": "gguf: 接受非 v2/v3 版本",
+        "file": "crates/trit-texture/src/gguf.rs",
+        "old": '    if !SUPPORTED_VERSIONS.contains(&version) {',
+        "new": '    if false {',
+        "pkg": "trit-texture",
+        "filter": "rejects_bad_magic_version_and_quantized_types"
+    },
+    {
+        "name": "gguf: 张量长度不校验",
+        "file": "crates/trit-texture/src/gguf.rs",
+        "old": '    if needed > data.len() {',
+        "new": '    if false {',
+        "pkg": "trit-texture",
+        "filter": "rejects_non_finite_and_truncated"
+    },
+    {
+        "name": "gguf: 放行 NaN/Inf",
+        "file": "crates/trit-texture/src/gguf.rs",
+        "old": '    if !value.is_finite() {',
+        "new": '    if false {',
+        "pkg": "trit-texture",
+        "filter": "rejects_non_finite_and_truncated"
+    },
+    {
+        "name": "gguf: 阈值不做有限性校验",
+        "file": "crates/trit-texture/src/gguf.rs",
+        "old": '    if !options.zero_threshold.is_finite() || options.zero_threshold < 0.0 {',
+        "new": '    if false {',
+        "pkg": "trit-texture",
+        "filter": "unsupported_nan_threshold_is_rejected"
+    },
+    {
+        "name": "build: 缓存不比对产物哈希",
+        "file": "crates/trit-build/src/main.rs",
+        "old": '        if hash64(&bytes) != u64::from_str_radix(info.get("hash")?.as_str()?, 16).ok()? {',
+        "new": '        if false {',
+        "pkg": "trit-build",
+        "filter": "cache_miss_when_artifact_was_tampered"
+    },
+    {
+        "name": "build: 校验忽略不一致",
+        "file": "crates/trit-build/src/main.rs",
+        "old": '    let ok = bad.is_empty();',
+        "new": '    let ok = true;',
+        "pkg": "trit-build",
+        "filter": "check_detects_tampered_artifact"
+    },
+    {
+        "name": "schedule: 二进制抢先于三进制",
+        "file": "crates/trit-build/src/schedule.rs",
+        "old": '    if primary_pending > 0 && primary_running < slots {',
+        "new": '    if false {',
+        "pkg": "trit-build",
+        "filter": "ternary_wins_while_slots_remain"
+    },
+    {
+        "name": "schedule: 允许超槽位",
+        "file": "crates/trit-build/src/schedule.rs",
+        "old": '    if slots == 0 || load.running() >= slots {',
+        "new": '    if slots == 0 {',
+        "pkg": "trit-build",
+        "filter": "never_exceeds_slots_or_returns_none_without_work"
+    },
+    {
+        "name": "verilog: 对拍不一致不报错",
+        "file": "crates/trit-build/src/verilog.rs",
+        "old": '        if actual != *expected {',
+        "new": '        if false {',
+        "pkg": "trit-build",
+        "filter": "cross_check_rejects_wrong_expression"
+    },
+    {
+        "name": "trb: 放行非法字节 243",
+        "file": "crates/trit-build/src/trb.rs",
+        "old": '        if *byte >= 243 {',
+        "new": '        if *byte > 243 {',
+        "pkg": "trit-build",
+        "filter": "pack_round_trips_every_byte"
+    },
+    {
+        "name": "trb: 解码丢掉语义字节（B3 当 K3）",
+        "file": "crates/trit-build/src/trb.rs",
+        "old": '        2 => Algebra::Bochvar,',
+        "new": '        2 => Algebra::Kleene,',
+        "pkg": "trit-build",
+        "filter": "decode_then_encode_is_byte_identical_for_any_length"
+    },
+    {
+        "name": "rail: K3 与门的负轨用 AND",
+        "file": "crates/trit-build/src/rail.rs",
+        "old": '                self.wire(format!("({lp} & {rp})"), format!("({ln} | {rn})"))',
+        "new": '                self.wire(format!("({lp} & {rp})"), format!("({ln} & {rn})"))',
+        "pkg": "trit-build",
+        "filter": "emitted_two_rail_matches_truth_table"
+    },
+    {
+        "name": "build: 缓存键漏掉 --emit-verilog",
+        "file": "crates/trit-build/src/main.rs",
+        "old": '            emit_verilog,\n            verilog,',
+        "new": '            false,\n            verilog,',
+        "pkg": "trit-build",
+        "filter": "emit_verilog_is_not_served_from_a_plain_cache"
+    },
+    {
+        "name": "egraph: 规则加载不做自证",
+        "file": "crates/trit-build/src/egraph.rs",
+        "old": '        if eval(&lhs, &empty, alg) != eval(&rhs, &empty, alg) {',
+        "new": '        if false {',
+        "pkg": "trit-build",
+        "filter": "loader_filters_rules_by_algebra"
+    },
+    {
+        "name": "egraph: 重写结果没接进构建",
+        "file": "crates/trit-build/src/main.rs",
+        "old": '        let (rewritten, rules) = egraph::rewrite(&simplified, algebra, EGRAPH_ROUNDS);',
+        "new": '        let (rewritten, rules) = (simplified.clone(), Vec::<&\'static str>::new());',
+        "pkg": "trit-build",
+        "filter": "rewrite_fires_and_preserves_truth_table"
+    },
+    {
+        "name": "rail: 强加法按布尔异或导出",
+        "file": "crates/trit-build/src/rail.rs",
+        "old": '                    format!("((~{truth}) & ({lp} | {ln}) & ({rp} | {rn}))"),',
+        "new": '                    format!("(({ln} & {rp}) | ({lp} & {rn}))"),',
+        "pkg": "trit-build",
+        "filter": "emitted_two_rail_matches_truth_table_for_strong_add"
+    },
+    {
+        "name": "bitplan: 与门用错算子",
+        "file": "crates/trit-build/src/bitplan.rs",
+        "old": '                Expr::And(..) => alg.and(*a, *b),',
+        "new": '                Expr::And(..) => alg.or(*a, *b),',
+        "pkg": "trit-build",
+        "filter": "every_operator_matches_scalar"
+    },
+    {
+
+
+        "name": 'unsafe: 高危形态不再判 Risky',
+        "file": 'crates/trit-unsafe/src/scan.rs',
+        "old": '    if !documented && !guarded {',
+        "new": '    if false {',
+        "pkg": 'trit-unsafe',
+        "filter": 'undocumented_transmute_is_risky'
+    },
+    {
+        "name": 'unsafe: 不认 SAFETY/# Safety 文档',
+        "file": 'crates/trit-unsafe/src/scan.rs',
+        "old": '            .any(|line| line.contains("SAFETY") || line.contains("Safety"));',
+        "new": '            .any(|_line| false);',
+        "pkg": 'trit-unsafe',
+        "filter": 'documented_unsafe_fn_is_unknown_not_risky'
+    },
+    {
+        "name": 'unsafe: 注释里的 unsafe 也算站点',
+        "file": 'crates/trit-unsafe/src/lexer.rs',
+        "old": '                if ch == \'/\' && bytes.get(index + 1) == Some(&\'/\') {',
+        "new": '                if false {',
+        "pkg": 'trit-unsafe',
+        "filter": 'strips_line_and_block_comments'
+    },
+    {
+        "name": 'procscan: 不识别 shell 进程',
+        "file": 'crates/trit-procscan/src/analyze.rs',
+        "old": '                if SHELLS.contains(&lower.as_str()) {',
+        "new": '                if false {',
+        "pkg": 'trit-procscan',
+        "filter": 'flags_shell_network_and_encoded_commands'
+    },
+    {
+        "name": 'procscan: 不统计 schema 体积',
+        "file": 'crates/trit-procscan/src/mcp.rs',
+        "old": '    let schema_bytes = serde_json::to_string(&tools_value)',
+        "new": '    let schema_bytes = 0 * serde_json::to_string(&tools_value)',
+        "pkg": 'trit-procscan',
+        "filter": 'handshake_reads_tools_and_measures_schema'
+    },
+    {
+        "name": 'procscan: 目录快照看不出改动',
+        "file": 'crates/trit-procscan/src/collector.rs',
+        "old": '                out.insert(path, (mtime, meta.len()));',
+        "new": '                out.insert(path, (mtime, 0u64));',
+        "pkg": 'trit-procscan',
+        "filter": 'snapshot_detects_new_and_changed_files'
+
+    },
+    {
+        "name": 'redteam: 非规范编码永远判规范',
+        "file": 'crates/trit-redteam/src/blob.rs',
+        "old": '    Ok(last == last % 3u32.pow(filled))',
+        "new": '    Ok(true)',
+        "pkg": 'trit-redteam',
+        "filter": 'strict_decoders_accept_only_the_canonical_encoding'
+    },
+    {
+        "name": 'redteam: CRC 漏检不计数',
+        "file": 'crates/trit-redteam/src/crc.rs',
+        "old": '                if crc3(&broken) == base {',
+        "new": '                if false {',
+        "pkg": 'trit-redteam',
+        "filter": 'minimum_undetected_weight_is_reachable_and_verified'
+    },
+    {
+        "name": 'redteam: 非法输入不算非法',
+        "file": 'crates/trit-redteam/src/rail.rs',
+        "old": '            illegal |= state == 3;',
+        "new": '            illegal |= false;',
+        "pkg": 'trit-redteam',
+        "filter": 'illegal_inputs_are_read_as_true_by_a_pos_only_consumer'
+    },
+    {
+        "name": 'redteam: 不校验 len 与 nvars',
+        "file": 'crates/trit-redteam/src/blob.rs',
+        "old": '    if 3usize.checked_pow(nvars as u32) != Some(len) {',
+        "new": '    if false {',
+        "pkg": 'trit-redteam',
+        "filter": 'rejects_nvars_length_mismatch'
+    },
+    {
+        "name": 'redteam: 差分分歧不记账',
+        "file": 'crates/trit-redteam/src/fuzz.rs',
+        "old": '                if left != right {',
+        "new": '                if false {',
+        "pkg": 'trit-redteam',
+        "filter": 'comparator_reports_both_kinds_of_disagreement'
+    },
+    {
+        "name": 'redteam: 不识别 shell 包装',
+        "file": 'crates/trit-redteam/src/chain.rs',
+        "old": '        if is_shell(&cmd[0]) {',
+        "new": '        if false {',
+        "pkg": 'trit-redteam',
+        "filter": 'flags_shell_wrappers_network_and_absolute_paths'
+    },
+    {
+        "name": 'redteam: 侧信道泄漏恒为 0',
+        "file": 'crates/trit-redteam/src/sidechannel.rs',
+        "old": '        leakage_bits: (h_output - h_conditional).max(0.0),',
+        "new": '        leakage_bits: 0.0,',
+        "pkg": 'trit-redteam',
+        "filter": 'weight_directly_reveals_unknowns'
+    },
+    {
+        "name": 'redteam: 不报执行栈可执行',
+        "file": 'crates/trit-redteam/src/binary.rs',
+        "old": '        if self.exec_stack == Some(true) {',
+        "new": '        if false {',
+        "pkg": 'trit-redteam',
+        "filter": 'elf_hardening_is_read_from_program_headers'
+    },
+    {
+        "name": 'redteam: 不扫密钥形态字符串',
+        "file": 'crates/trit-redteam/src/binary.rs',
+        "old": '        if count > 0 && plausible_secret(&text, needle) {',
+        "new": '        if false {',
+        "pkg": 'trit-redteam',
+        "filter": 'detects_secret_shaped_strings_and_attributes_them_to_us'
+    },
+    {
+        "name": 'redteam: 归属不认 Rust std 路径',
+        "file": 'crates/trit-redteam/src/attrib.rs',
+        "old": '    let lower = text.to_ascii_lowercase();',
+        "new": '    let lower = text.to_ascii_lowercase();\n    if !lower.is_empty() {\n        return false;\n    }',
+        "pkg": 'trit-redteam',
+        "filter": 'attributes_rust_std_paths_to_the_toolchain'
+    },
+    {
+        "name": 'redteam: CFG 归属固定按 MSVC 算',
+        "file": 'crates/trit-redteam/src/binary.rs',
+        "old": '            out.push(if msvc {',
+        "new": '            out.push(if true {',
+        "pkg": 'trit-redteam',
+        "filter": 'cfg_attribution_depends_on_the_pe_flavor'
+    },
+    {
+        "name": 'redteam: remap 后仍判成用户名泄漏',
+        "file": 'crates/trit-redteam/src/binary.rs',
+        "old": '    let user_prefix = |text: &str| text.contains("C:\\\\Users\\\\") || text.contains("/home/");',
+        "new": '    let user_prefix = |_text: &str| true;',
+        "pkg": 'trit-redteam',
+        "filter": 'remapped_toolchain_paths_are_not_findings'
+    },
+    {
+        "name": 'trb: 生产解码器放行非规范编码',
+        "file": 'crates/trit-build/src/trb.rs',
+        "old": '    if u32::from(*blob.last().expect("非空")) >= 3u32.pow(used_in_last as u32) {',
+        "new": '    if false {',
+        "pkg": 'trit-build',
+        "filter": 'rejects_non_canonical_padding'
+    },
+    {
+        "name": 'runtime: C 解码器放行非规范编码',
+        "file": 'crates/trit-build/runtime/trit_runtime.c',
+        "old": '    if ((uint32_t)blob[len - 1] >= limit) {',
+        "new": '    if (0) {',
+        "pkg": 'trit-build',
+        "filter": 'both_decoders_reject_non_canonical_padding'
+    },
+    {
+        "name": 'redteam: 解析器放行非规范编码',
+        "file": 'crates/trit-redteam/src/blob.rs',
+        "old": '    if !canonical_tail(bytes, payload, payload_bytes) {',
+        "new": '    if false {',
+        "pkg": 'trit-redteam',
+        "filter": 'strict_decoders_accept_only_the_canonical_encoding'
+
+    },
+    {
+        "name": "machines: 搜寻取最低分块而不是最高分",
+        "file": "crates/trit-machines/src/graded.rs",
+        "old": "    scored.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));",
+        "new": "    scored.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));",
+        "pkg": "trit-machines",
+        "filter": "search_picks_the_block_that_drives_the_rest"
+    },
+    {
+        "name": "machines: 收敛计数把相同判成不同",
+        "file": "crates/trit-machines/src/graded.rs",
+        "old": "        } else if outcome == last {",
+        "new": "        } else if outcome != last {",
+        "pkg": "trit-machines",
+        "filter": "two_groups_converge_to_positive"
+    },
+    {
+        "name": "machines: 强化把同号写成抑制",
+        "file": "crates/trit-machines/src/graded.rs",
+        "old": "                let sign = polarity[source].signum() * polarity[listener].signum();",
+        "new": "                let sign = -polarity[source].signum() * polarity[listener].signum();",
+        "pkg": "trit-machines",
+        "filter": "reinforcement_only_fills_empty_links"
+    },
+    {
+        "name": "lsp: 律 lint 不比较否定差异",
+        "file": "crates/trit-lsp/src/semantics.rs",
+        "old": "        if left.name != right.name || left.negated == right.negated {",
+        "new": "        if true {",
+        "pkg": "trit-lsp",
+        "filter": "contradiction_is_flagged_in_all_spellings"
+    },
+    {
+        "name": "lsp: 语义分歧对拍恒不触发",
+        "file": "crates/trit-lsp/src/semantics.rs",
+        "old": "        if kleene != lukasiewicz {",
+        "new": "        if false {",
+        "pkg": "trit-lsp",
+        "filter": "lukasiewicz_implies_self_diverges"
+    },
+    {
+        "name": "lsp: 重命名不校验新名",
+        "file": "crates/trit-lsp/src/nav.rs",
+        "old": "    if !is_identifier(new_name) || analysis::constant(new_name).is_some() {",
+        "new": "    if false {",
+        "pkg": "trit-lsp",
+        "filter": "rename_rejects_invalid_and_constant_names"
+    },
+    {
+        "name": "unsafe: extern 声明块不是站点",
+        "file": "crates/trit-unsafe/src/scan.rs",
+        "old": '    } else if trimmed.starts_with("extern") {',
+        "new": '    } else if false {',
+        "pkg": "trit-unsafe",
+        "filter": "extern_block_is_a_site_and_stays_unknown"
+    },
+    {
+        "name": "procscan: 后代追踪漏掉间接子树",
+        "file": "crates/trit-procscan/src/trace.rs",
+        "old": "            worklist.extend(children.get(&current).cloned().unwrap_or_default());",
+        "new": "            worklist.clear();",
+        "pkg": "trit-procscan",
+        "filter": "descendants_follow_multi_level_tree"
+    },
+    {
+        "name": "procscan: 画像末次时间不更新",
+        "file": "crates/trit-procscan/src/trace.rs",
+        "old": "            entry.last_seen_ms = entry.last_seen_ms.max(*ts_ms);",
+        "new": "            entry.last_seen_ms = entry.last_seen_ms.min(*ts_ms);",
+        "pkg": "trit-procscan",
+        "filter": "repeated_samples_merge_into_one_step"
+    },
+    {
+        "name": 'trit-re: JSON 引号不转义',
+        "file": 'crates/trit-re/src/json.rs',
+        "old": '            \'"\' => out.push_str("\\\\\\""),',
+        "new": '            \'"\' => out.push(\'"\'),',
+        "pkg": "trit-re",
+        "filter": 'escapes_controls_and_quotes',
+    },
+    {
+        "name": 'trit-re: 熵符号写反',
+        "file": 'crates/trit-re/src/entropy.rs',
+        "old": '            entropy -= p * p.log2();',
+        "new": '            entropy += p * p.log2();',
+        "pkg": "trit-re",
+        "filter": 'uniform_full_byte_range_is_eight_bits',
+    },
+    {
+        "name": 'trit-re: 覆盖率阈值由 >= 变 >',
+        "file": 'crates/trit-re/src/functions.rs',
+        "old": '    exec_bytes > 0 && covered.saturating_mul(10) >= exec_bytes.saturating_mul(9)',
+        "new": '    exec_bytes > 0 && covered.saturating_mul(10) > exec_bytes.saturating_mul(9)',
+        "pkg": "trit-re",
+        "filter": 'exact_coverage_needs_ninety_percent',
+    },
+    {
+        "name": 'trit-re: 单调用点不判 True',
+        "file": 'crates/trit-re/src/xref/mod.rs',
+        "old": '    row.status = if !row.sites.is_empty() {',
+        "new": '    row.status = if row.sites.len() > 1 {',
+        "pkg": "trit-re",
+        "filter": 'finds_call_through_iat',
+    },
+    {
+        "name": 'trit-re: ARM64 地址窗口缩到 2',
+        "file": 'crates/trit-re/src/xref/aarch64.rs',
+        "old": 'const MAX_ADDR_STEPS: usize = 12;',
+        "new": 'const MAX_ADDR_STEPS: usize = 2;',
+        "pkg": "trit-re",
+        "filter": 'interleaved_instructions_do_not_hide_the_reference',
+    },
+    {
+        "name": 'trit-re: 取地址不再降级',
+        "file": 'crates/trit-re/src/xref/mod.rs',
+        "old": '        if row.status == Ternary::False && taken.contains(&row.slot) {',
+        "new": '        if row.status == Ternary::True && taken.contains(&row.slot) {',
+        "pkg": "trit-re",
+        "filter": 'taken_slot_downgrades_false_to_unknown',
+    },
+    {
+        "name": 'trit-re: 已定义符号当导入',
+        "file": 'crates/trit-re/src/xref/mod.rs',
+        "old": '        if symbol_info.defined || !matches!(symbol_info.kind, 0 | 2 | 10) {',
+        "new": '        if false {',
+        "pkg": "trit-re",
+        "filter": 'defined_symbols_with_jump_slots_are_not_imports',
+    },
+    {
+        "name": 'trit-re: mov 搬运链断开',
+        "file": 'crates/trit-re/src/xref/aarch64.rs',
+        "old": '            if let Some((dst, src)) = mov_alias(insn)\n                && src == register\n            {',
+        "new": '            if let Some((dst, src)) = mov_alias(insn)\n                && src == register && false\n            {',
+        "pkg": "trit-re",
+        "filter": 'mov_alias_carries_the_address',
+    },
+    {
+        "name": 'trit-re: 未归属 call 记成 jmp',
+        "file": 'crates/trit-re/src/functions.rs',
+        "old": '                        crate::xref::SiteKind::Call => unattributed_calls += 1,',
+        "new": '                        crate::xref::SiteKind::Call => unattributed_jumps += 1,',
+        "pkg": "trit-re",
+        "filter": 'unattributed_sites_are_split_by_kind',
+    },
+    {
+        "name": 'trit-re: eh_frame pcrel 基准偏移 4',
+        "file": 'crates/trit-re/src/elf/eh.rs',
+        "old": '            field_addr.wrapping_add(relative as i64 as u64)',
+        "new": '            field_addr.wrapping_add(relative as i64 as u64).wrapping_add(4)',
+        "pkg": "trit-re",
+        "filter": 'eh_frame_fde_gives_exact_range',
+    },
+    {
+        "name": 'trit-re: 不用 eh_frame 边界',
+        "file": 'crates/trit-re/src/functions.rs',
+        "old": '    } else if !eh_frame.is_empty() {',
+        "new": '    } else if false {',
+        "pkg": "trit-re",
+        "filter": 'eh_frame_boundaries_enable_attribution',
+    },
+    {
+        "name": 'trit-re: TLS 只读一个回调',
+        "file": 'crates/trit-re/src/pe.rs',
+        "old": '    for _ in 0..64 {',
+        "new": '    for _ in 0..1 {',
+        "pkg": "trit-re",
+        "filter": 'parses_clr_and_tls_facts',
+    },
+    {
+        "name": 'trit-re: CLR 入口 token 读成 flags',
+        "file": 'crates/trit-re/src/pe.rs',
+        "old": '    let entry_token = u32_at(bytes, base + 20).unwrap_or(0);',
+        "new": '    let entry_token = u32_at(bytes, base + 16).unwrap_or(0);',
+        "pkg": "trit-re",
+        "filter": 'parses_clr_and_tls_facts',
+    },
+    {
+        "name": 'trit-re: x64 取地址不记录',
+        "file": 'crates/trit-re/src/xref/mod.rs',
+        "old": '                    taken.insert(target.wrapping_sub(image_base));',
+        "new": '                    let _ = target;',
+        "pkg": "trit-re",
+        "filter": 'x64_address_only_import_is_unknown',
+    },
 ]
 
 
