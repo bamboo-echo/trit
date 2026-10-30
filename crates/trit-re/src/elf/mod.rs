@@ -5,6 +5,10 @@
 
 use std::fmt;
 
+mod eh;
+
+pub use eh::read_eh_frame;
+
 use crate::entropy;
 
 /// ELF 解析失败原因。
@@ -594,6 +598,11 @@ impl ElfInfo {
         read_function_symbols(bytes, &self.sections, self.class == 2)
     }
 
+    /// 读取 `.eh_frame` 里的函数区间（裁剪 ELF 的精确边界来源）。
+    pub fn eh_frame_ranges(&self, bytes: &[u8]) -> Vec<FunctionSymbol> {
+        read_eh_frame(bytes, &self.sections, self.class == 2)
+    }
+
     /// 读取全部动态符号（供交叉引用解重定位用）。
     pub fn dynamic_symbols(&self, bytes: &[u8]) -> Option<Vec<DynamicSymbol>> {
         read_dynamic_symbols(bytes, &self.sections, self.class == 2)
@@ -640,12 +649,12 @@ fn u16_at(bytes: &[u8], off: usize) -> Option<u16> {
     Some(u16::from_le_bytes([slice[0], slice[1]]))
 }
 
-fn u32_at(bytes: &[u8], off: usize) -> Option<u32> {
+pub(super) fn u32_at(bytes: &[u8], off: usize) -> Option<u32> {
     let slice = bytes.get(off..off.checked_add(4)?)?;
     Some(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
-fn u64_at(bytes: &[u8], off: usize) -> Option<u64> {
+pub(super) fn u64_at(bytes: &[u8], off: usize) -> Option<u64> {
     let slice = bytes.get(off..off.checked_add(8)?)?;
     let mut word = [0u8; 8];
     word.copy_from_slice(slice);
@@ -687,10 +696,10 @@ mod tests {
     #[test]
     fn imports_exclude_object_symbols() {
         use super::{ElfSection, parse_imports};
-        // .dynstr: " socket environ "；.dynsym: 0 号空、1 号 FUNC、2 号 OBJECT。
+        // .dynstr: "\0socket\0environ\0"；.dynsym: 0 号空、1 号 FUNC、2 号 OBJECT。
         let mut bytes = vec![0u8; 0x80];
-        bytes[1..8].copy_from_slice(b"socket ");
-        bytes[8..16].copy_from_slice(b"environ ");
+        bytes[1..8].copy_from_slice(b"socket\0");
+        bytes[8..16].copy_from_slice(b"environ\0");
         let base = 0x40usize;
         let entry = |index: usize| base + index * 24;
         bytes[entry(1)..entry(1) + 4].copy_from_slice(&1u32.to_le_bytes());
@@ -728,10 +737,10 @@ mod tests {
     #[test]
     fn reads_sized_function_symbols() {
         use super::{ElfSection, read_function_symbols};
-        // .strtab: " foo "；.symtab: 1 个 STT_FUNC（0x400100 + 0x200）。
+        // .strtab: "\0foo\0"；.symtab: 1 个 STT_FUNC（0x400100 + 0x200）。
         let mut bytes = vec![0u8; 0x40];
         bytes[0] = 0;
-        bytes[1..5].copy_from_slice(b"foo ");
+        bytes[1..5].copy_from_slice(b"foo\0");
         let sym = 0x10usize;
         bytes[sym..sym + 4].copy_from_slice(&1u32.to_le_bytes());
         bytes[sym + 4] = 0x12; // STT_FUNC | STB_GLOBAL
