@@ -18,8 +18,8 @@ use std::time::Instant;
 use t3_core::{rules, Engine, Facts, Grade, Verdict};
 use t3_sig::{Hit, RuleSet};
 
-use crate::report;
 use crate::json;
+use crate::report;
 
 /// Options for a scan run.
 pub struct Options {
@@ -144,7 +144,13 @@ pub fn run(args: &[String]) -> Result<i32, String> {
     files.sort();
     files.dedup();
 
-    let records = scan_all(&files, &engine, ruleset.as_ref(), opts.threads, &mut problems);
+    let records = scan_all(
+        &files,
+        &engine,
+        ruleset.as_ref(),
+        opts.threads,
+        &mut problems,
+    );
 
     let elapsed = started.elapsed();
     let mut bytes = 0u64;
@@ -264,7 +270,9 @@ fn walk(
         let path = entry.path();
         // `file_type` does not follow symlinks, which prevents an infinite walk over a
         // link that points at an ancestor.
-        let Ok(kind) = entry.file_type() else { continue };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
         if kind.is_symlink() {
             continue;
         }
@@ -291,8 +299,9 @@ fn scan_all(
 ) -> Vec<Record> {
     let cursor = AtomicUsize::new(0);
     let threads = threads.max(1).min(files.len().max(1));
-    let slots: Vec<std::sync::Mutex<Option<Record>>> =
-        (0..files.len()).map(|_| std::sync::Mutex::new(None)).collect();
+    let slots: Vec<std::sync::Mutex<Option<Record>>> = (0..files.len())
+        .map(|_| std::sync::Mutex::new(None))
+        .collect();
     let issues: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
     std::thread::scope(|scope| {

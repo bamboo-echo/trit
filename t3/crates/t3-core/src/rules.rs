@@ -50,6 +50,10 @@ fn either(a: FactId, b: FactId) -> Expr {
 /// Identifiers are a wire contract: they appear in JSONL output and in
 /// counterfactual explanations, so renaming one is a breaking change.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "单张规则表：按严重度分组更便于逐条核对，拆成多个函数会把分组信息拆散"
+)]
 pub fn default_engine() -> Engine {
     Engine::new(vec![
         // ---------------------------------------------------------------
@@ -63,19 +67,19 @@ pub fn default_engine() -> Engine {
         Hypothesis::new(
             "injection_obfuscated",
             "注入能力 + 结构隐蔽（高熵或壳节名）",
-            both(FactId::ImportsInjectionTrio, FactId::SectionHighEntropy)
-                .or(both(FactId::ImportsInjectionTrio, FactId::SectionPackerName)),
+            both(FactId::ImportsInjectionTrio, FactId::SectionHighEntropy).or(both(
+                FactId::ImportsInjectionTrio,
+                FactId::SectionPackerName,
+            )),
             Grade::Malicious,
         )
         .only(Format::Binary),
         Hypothesis::new(
             "credential_obfuscated",
             "凭据与网络能力 + 结构隐蔽",
-            both(FactId::ImportsCredential, FactId::ImportsNetwork)
-                .and(
-                    Expr::fact(FactId::SectionHighEntropy)
-                        .or(Expr::fact(FactId::SectionPackerName)),
-                ),
+            both(FactId::ImportsCredential, FactId::ImportsNetwork).and(
+                Expr::fact(FactId::SectionHighEntropy).or(Expr::fact(FactId::SectionPackerName)),
+            ),
             Grade::Malicious,
         )
         .only(Format::Binary),
@@ -154,10 +158,7 @@ pub fn default_engine() -> Engine {
         Hypothesis::new(
             "writable_code",
             "存在可写可执行节区，或仅有虚拟大小的空壳节区",
-            either(
-                FactId::SectionWritableExecutable,
-                FactId::SectionZeroRaw,
-            ),
+            either(FactId::SectionWritableExecutable, FactId::SectionZeroRaw),
             Grade::Suspicious,
         )
         .only(Format::Binary),
@@ -249,7 +250,7 @@ mod tests {
                 "rule id {} is not snake_case",
                 h.id
             );
-            assert!(!h.title.is_empty());
+            assert_ne!(h.title, "");
         }
         assert!(engine.hypotheses().len() >= 12);
     }

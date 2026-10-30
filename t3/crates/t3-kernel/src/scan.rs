@@ -50,6 +50,10 @@ pub mod bytes {
 
     /// Counts occurrences of `needle`.
     #[must_use]
+    #[allow(
+        clippy::naive_bytecount,
+        reason = "零第三方依赖的承诺：不引入 bytecount crate，标量回退只用于对比口径"
+    )]
     pub fn count_byte(haystack: &[u8], needle: u8) -> usize {
         #[cfg(target_arch = "x86_64")]
         {
@@ -82,6 +86,13 @@ pub mod bytes {
     }
 
     #[cfg(target_arch = "x86_64")]
+    #[allow(
+        clippy::cast_ptr_alignment,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss,
+        clippy::naive_bytecount,
+        reason = "SIMD 内核：loadu 明确接受非对齐指针，u8→i8 / i32→u32 只做位掩码搬运；零依赖不引 bytecount"
+    )]
     mod avx2 {
         use core::arch::x86_64::{
             __m256i, _mm256_cmpeq_epi8, _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_set1_epi8,
@@ -91,6 +102,12 @@ pub mod bytes {
         /// # Safety
         /// Caller must ensure AVX2 is available.
         #[target_feature(enable = "avx2")]
+        #[allow(
+            clippy::cast_ptr_alignment,
+            clippy::cast_possible_wrap,
+            clippy::cast_sign_loss,
+            reason = "loadu 明确接受非对齐指针；u8→i8 与 i32→u32 只用于 SIMD 位掩码搬运，语义即按位"
+        )]
         pub unsafe fn find_byte(haystack: &[u8], needle: u8) -> Option<usize> {
             let len = haystack.len();
             let ptr = haystack.as_ptr();
@@ -108,12 +125,21 @@ pub mod bytes {
                 i += 32;
             }
             // Tail: at most 31 bytes, scalar.
-            haystack[i..].iter().position(|&b| b == needle).map(|p| i + p)
+            haystack[i..]
+                .iter()
+                .position(|&b| b == needle)
+                .map(|p| i + p)
         }
 
         /// # Safety
         /// Caller must ensure AVX2 is available.
         #[target_feature(enable = "avx2")]
+        #[allow(
+            clippy::cast_ptr_alignment,
+            clippy::cast_possible_wrap,
+            clippy::cast_sign_loss,
+            reason = "loadu 明确接受非对齐指针；u8→i8 与 i32→u32 只用于 SIMD 位掩码搬运，语义即按位"
+        )]
         pub unsafe fn count_byte(haystack: &[u8], needle: u8) -> usize {
             let len = haystack.len();
             let ptr = haystack.as_ptr();
@@ -156,6 +182,13 @@ pub mod bytes {
     }
 
     #[cfg(target_arch = "x86_64")]
+    #[allow(
+        clippy::cast_ptr_alignment,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss,
+        clippy::naive_bytecount,
+        reason = "SIMD 内核：loadu 明确接受非对齐指针，u8→i8 / i32→u32 只做位掩码搬运；零依赖不引 bytecount"
+    )]
     mod sse2 {
         use core::arch::x86_64::{
             __m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_movemask_epi8, _mm_set1_epi8,
@@ -179,7 +212,10 @@ pub mod bytes {
                 }
                 i += 16;
             }
-            haystack[i..].iter().position(|&b| b == needle).map(|p| i + p)
+            haystack[i..]
+                .iter()
+                .position(|&b| b == needle)
+                .map(|p| i + p)
         }
     }
 }
@@ -204,7 +240,7 @@ mod tests {
         }
 
         fn byte(&mut self) -> u8 {
-            (self.next() >> 33) as u8
+            u8::try_from(self.next() >> 56).expect("取最高字节，必然 < 256")
         }
     }
 
@@ -214,13 +250,17 @@ mod tests {
         for len in 0..260usize {
             for shift in 0..8usize {
                 let mut data = vec![0u8; len + shift];
-                for b in data.iter_mut() {
+                for b in &mut data {
                     *b = rng.byte();
                 }
                 // Plant a needle so the hit path is exercised, sometimes at the
                 // very last byte and sometimes not at all.
                 let needle = 0x5Au8;
-                let planted = if len > 0 { Some(rng.next() as usize % len) } else { None };
+                let planted = if len > 0 {
+                    Some(usize::try_from(rng.next() % (len as u64)).expect("模 len 后必 < len"))
+                } else {
+                    None
+                };
                 if let Some(p) = planted {
                     data[shift + p] = needle;
                 }
@@ -231,15 +271,18 @@ mod tests {
                     find_byte_scalar(hay, needle),
                     "len={len} shift={shift}"
                 );
-                assert_eq!(
-                    count_byte(hay, needle),
-                    hay.iter().filter(|&&b| b == needle).count(),
-                    "len={len} shift={shift}"
-                );
+                #[allow(
+                    clippy::naive_bytecount,
+                    reason = "测试里的参考实现，故意写成最直白的标量计数"
+                )]
+                let expected = hay.iter().filter(|&&b| b == needle).count();
+                assert_eq!(count_byte(hay, needle), expected, "len={len} shift={shift}");
                 for from in [0, hay.len() / 3, hay.len().saturating_sub(1)] {
                     assert_eq!(
                         find_byte_from(hay, needle, from),
-                        hay.get(from..).and_then(|s| s.iter().position(|&b| b == needle)).map(|p| p + from),
+                        hay.get(from..)
+                            .and_then(|s| s.iter().position(|&b| b == needle))
+                            .map(|p| p + from),
                         "len={len} shift={shift} from={from}"
                     );
                 }

@@ -349,9 +349,9 @@ pub fn parse(bytes: &[u8]) -> Result<ElfInfo<'_>, ElfError> {
     if phoff != 0 && phnum > 0 && phentsize > 0 {
         let stride = phentsize as usize;
         for i in 0..phnum.min(MAX_SEGMENTS) {
-            let at = match phoff.checked_add(i.checked_mul(stride).ok_or(ElfError::Truncated)?) {
-                Some(v) => v,
-                None => break,
+            let Some(at) = phoff.checked_add(i.checked_mul(stride).ok_or(ElfError::Truncated)?)
+            else {
+                break;
             };
             let (p_type, flags, offset, vaddr, filesz, memsz) = if is_64 {
                 let Some(p_type) = r.u32(at) else { break };
@@ -388,9 +388,9 @@ pub fn parse(bytes: &[u8]) -> Result<ElfInfo<'_>, ElfError> {
     if shoff != 0 && shnum > 0 && shentsize > 0 {
         let stride = shentsize as usize;
         for i in 0..declared_section_count.min(MAX_SECTIONS) {
-            let at = match shoff.checked_add(i.checked_mul(stride).ok_or(ElfError::Truncated)?) {
-                Some(v) => v,
-                None => break,
+            let Some(at) = shoff.checked_add(i.checked_mul(stride).ok_or(ElfError::Truncated)?)
+            else {
+                break;
             };
             let Some(name_offset) = r.u32(at) else { break };
             let Some(sh_type) = r.u32(at + 4) else { break };
@@ -477,7 +477,10 @@ fn find_build_id(info: &ElfInfo<'_>) -> Option<Vec<u8>> {
                 .section_name(i)
                 .is_some_and(|n| n == b".note.gnu.build-id");
         if is_note {
-            if let (Ok(off), Ok(size)) = (usize::try_from(section.offset), usize::try_from(section.size)) {
+            if let (Ok(off), Ok(size)) = (
+                usize::try_from(section.offset),
+                usize::try_from(section.size),
+            ) {
                 note_blobs.push((off, size));
             }
         }
@@ -485,9 +488,10 @@ fn find_build_id(info: &ElfInfo<'_>) -> Option<Vec<u8>> {
     if note_blobs.is_empty() {
         for segment in info.segments() {
             if segment.p_type == PT_NOTE {
-                if let (Ok(off), Ok(size)) =
-                    (usize::try_from(segment.offset), usize::try_from(segment.filesz))
-                {
+                if let (Ok(off), Ok(size)) = (
+                    usize::try_from(segment.offset),
+                    usize::try_from(segment.filesz),
+                ) {
                     note_blobs.push((off, size));
                 }
             }
@@ -495,15 +499,25 @@ fn find_build_id(info: &ElfInfo<'_>) -> Option<Vec<u8>> {
     }
 
     for (start, size) in note_blobs {
-        let Some(blob) = r.slice(start, size) else { continue };
+        let Some(blob) = r.slice(start, size) else {
+            continue;
+        };
         let mut at = 0usize;
         // Cap iterations: a malformed note header can otherwise claim zero padding
         // forever.
         for _ in 0..64 {
-            let Some(namesz) = r.u32(start + at) else { break };
-            let Some(descsz) = r.u32(start + at + 4) else { break };
-            let Some(kind) = r.u32(start + at + 8) else { break };
-            let Some(name_start) = at.checked_add(12) else { break };
+            let Some(namesz) = r.u32(start + at) else {
+                break;
+            };
+            let Some(descsz) = r.u32(start + at + 4) else {
+                break;
+            };
+            let Some(kind) = r.u32(start + at + 8) else {
+                break;
+            };
+            let Some(name_start) = at.checked_add(12) else {
+                break;
+            };
             let Some(name_end) = name_start.checked_add(namesz as usize) else {
                 break;
             };
@@ -512,7 +526,7 @@ fn find_build_id(info: &ElfInfo<'_>) -> Option<Vec<u8>> {
             }
             let name = &blob[name_start..name_end];
             let desc_start = align4(name_end);
-            let desc_end = desc_start.checked_add(descsz as usize).unwrap_or(usize::MAX);
+            let desc_end = desc_start.saturating_add(descsz as usize);
             if desc_start > blob.len() {
                 break;
             }
@@ -557,17 +571,15 @@ fn parse_dynamic_symbols(info: &ElfInfo<'_>) -> Imports {
         out.complete = false;
         return out;
     };
-    let (Ok(sym_off), Ok(sym_size)) = (
-        usize::try_from(dynsym.offset),
-        usize::try_from(dynsym.size),
-    ) else {
+    let (Ok(sym_off), Ok(sym_size)) =
+        (usize::try_from(dynsym.offset), usize::try_from(dynsym.size))
+    else {
         out.complete = false;
         return out;
     };
-    let (Ok(str_off), Ok(str_size)) = (
-        usize::try_from(strtab.offset),
-        usize::try_from(strtab.size),
-    ) else {
+    let (Ok(str_off), Ok(str_size)) =
+        (usize::try_from(strtab.offset), usize::try_from(strtab.size))
+    else {
         out.complete = false;
         return out;
     };

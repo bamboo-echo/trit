@@ -334,8 +334,7 @@ impl Engine {
                 .filter(|id| facts.get(*id).is_unknown())
                 .collect();
 
-            let (would_establish, would_refute) = if with_counterfactuals && !undecided.is_empty()
-            {
+            let (would_establish, would_refute) = if with_counterfactuals && !undecided.is_empty() {
                 counterfactuals(&h.expr, facts, &undecided)
             } else {
                 (Vec::new(), Vec::new())
@@ -385,11 +384,7 @@ impl Engine {
 /// condition established, and in `would_refute` when forcing it false refutes it.
 /// These are single-fact counterfactuals: they do not claim that the pair is
 /// jointly reachable, only that this one observation is load-bearing.
-fn counterfactuals(
-    expr: &Expr,
-    facts: &Facts,
-    undecided: &[FactId],
-) -> (Vec<FactId>, Vec<FactId>) {
+fn counterfactuals(expr: &Expr, facts: &Facts, undecided: &[FactId]) -> (Vec<FactId>, Vec<FactId>) {
     let mut establish = Vec::new();
     let mut refute = Vec::new();
     let mut probe = facts.clone();
@@ -419,7 +414,6 @@ mod tests {
     use crate::b4::B4;
     use crate::expr::Expr;
     use crate::fact::{FactId, Facts};
-    use crate::Tri;
 
     fn engine() -> Engine {
         Engine::new(vec![
@@ -487,7 +481,11 @@ mod tests {
         f.set_bool(FactId::SignedPresent, false, "");
         // ImportsNetwork is left unknown: it is exactly the missing evidence.
         let v = engine().explain(&f);
-        let j = v.judgments.iter().find(|j| j.id == "staged_loader").unwrap();
+        let j = v
+            .judgments
+            .iter()
+            .find(|j| j.id == "staged_loader")
+            .unwrap();
         assert_eq!(j.undecided, vec![FactId::ImportsNetwork]);
         assert_eq!(j.would_establish, vec![FactId::ImportsNetwork]);
         // It also refutes: with the loader established, a false network rail
@@ -505,23 +503,24 @@ mod tests {
         // Two unknowns in a disjunction: either could establish it, neither alone
         // refutes it.
         assert_eq!(j.would_establish.len(), 2);
-        assert!(j.would_refute.is_empty());
+        assert_eq!(j.would_refute.len(), 0);
     }
 
     #[test]
     fn a_hypothesis_for_another_container_contributes_nothing() {
-        let engine = Engine::new(vec![
-            Hypothesis::new(
-                "elf_only",
-                "仅 ELF",
-                Expr::fact(FactId::ElfWritableText),
-                Grade::Malicious,
-            )
-            .only(Format::Elf),
-        ]);
+        let engine = Engine::new(vec![Hypothesis::new(
+            "elf_only",
+            "仅 ELF",
+            Expr::fact(FactId::ElfWritableText),
+            Grade::Malicious,
+        )
+        .only(Format::Elf)]);
         // No format fact set: not applicable, so it must not widen the verdict.
         let v = engine.verdict(&Facts::new());
-        assert!(v.is_decided(), "an inapplicable rule must not leave the verdict open");
+        assert!(
+            v.is_decided(),
+            "an inapplicable rule must not leave the verdict open"
+        );
         assert_eq!(v.hi, Grade::Clean);
         assert!(!v.judgments[0].applicable);
 

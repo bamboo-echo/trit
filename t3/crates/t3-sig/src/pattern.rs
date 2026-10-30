@@ -6,7 +6,7 @@
 //! *anything*. That covers "I know" and "I don't care", but a reverse engineer
 //! routinely means a third thing: **not this value**. A negative constraint is what
 //! turns a fuzzy heuristic into a sharp one — "this is a .NET assembly header *and
-//! not* a NativeAOT one", "the stub begins with a call *and not* the MSVC
+//! not* a `NativeAOT` one", "the stub begins with a call *and not* the MSVC
 //! prologue". Encoding that with two states forces you to enumerate alternatives,
 //! which is error-prone and loses the intent.
 //!
@@ -287,49 +287,46 @@ impl Pattern {
             None => {
                 let seed = self.slots.iter().position(|s| *s != Slot::Any);
                 let Some(seed) = seed else { return False };
-                let want = match self.slots[seed] {
-                    Slot::Byte(b) => Some(b),
-                    _ => None,
+                let want = if let Slot::Byte(b) = self.slots[seed] {
+                    Some(b)
+                } else {
+                    None
                 };
-                match want {
-                    Some(b) => {
-                        let mut from = 0usize;
-                        while from <= last {
-                            let Some(hit) = t3_kernel::bytes::find_byte_from(region.data, b, from)
-                            else {
-                                return False;
-                            };
-                            if hit < seed {
-                                from = hit + 1;
-                                continue;
-                            }
-                            let start = hit - seed;
-                            if start > last {
-                                return False;
-                            }
-                            let value = self.eval_at(region, start);
-                            if value.is_true() {
-                                return Tri::True;
-                            }
-                            from = hit + 1;
+                let Some(b) = want else {
+                    for start in 0..=last {
+                        if self.eval_at(region, start).is_true() {
+                            return Tri::True;
                         }
-                        False
                     }
-                    None => {
-                        for start in 0..=last {
-                            if self.eval_at(region, start).is_true() {
-                                return Tri::True;
-                            }
-                        }
-                        False
+                    return False;
+                };
+                let mut from = 0usize;
+                while from <= last {
+                    let Some(hit) = t3_kernel::bytes::find_byte_from(region.data, b, from) else {
+                        return False;
+                    };
+                    if hit < seed {
+                        from = hit + 1;
+                        continue;
                     }
+                    let start = hit - seed;
+                    if start > last {
+                        return False;
+                    }
+                    let value = self.eval_at(region, start);
+                    if value.is_true() {
+                        return Tri::True;
+                    }
+                    from = hit + 1;
                 }
+                False
             }
             Some((offset, needle)) => {
                 let first = needle[0];
                 let mut from = 0usize;
                 while from <= last {
-                    let Some(hit) = t3_kernel::bytes::find_byte_from(region.data, first, from) else {
+                    let Some(hit) = t3_kernel::bytes::find_byte_from(region.data, first, from)
+                    else {
                         return False;
                     };
                     let anchor_start = hit;
@@ -342,9 +339,10 @@ impl Pattern {
                         return False;
                     }
                     // Cheap in-place anchor verification before the full check.
-                    let ok = needle.iter().enumerate().all(|(i, want)| {
-                        region.data.get(anchor_start + i) == Some(want)
-                    });
+                    let ok = needle
+                        .iter()
+                        .enumerate()
+                        .all(|(i, want)| region.data.get(anchor_start + i) == Some(want));
                     if ok && self.eval_at(region, start).is_true() {
                         return Tri::True;
                     }
@@ -410,10 +408,12 @@ fn parse_slot(token: &str) -> Result<Slot, PatternError> {
         if len == 0 {
             return Err(PatternError::BadToken(token.to_string()));
         }
-        return Ok(Slot::Set {
-            bytes,
-            len: len as u8,
-        });
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "len 受 bytes 数组长度约束（≤ 6），转 u8 不会截断"
+        )]
+        let len = len as u8;
+        return Ok(Slot::Set { bytes, len });
     }
     parse_hex_byte(token)
         .map(Slot::Byte)
@@ -434,7 +434,7 @@ mod tests {
     use t3_core::Tri;
     use t3_format::{Region, RegionKind};
 
-    fn region<'a>(data: &'a [u8], declared: usize) -> Region<'a> {
+    fn region(data: &[u8], declared: usize) -> Region<'_> {
         Region::new(RegionKind::Section(0), b".text", 0, data, declared)
     }
 
@@ -451,9 +451,18 @@ mod tests {
     #[test]
     fn rejects_nonsense() {
         assert!(matches!(Pattern::parse(""), Err(PatternError::Empty)));
-        assert!(matches!(Pattern::parse("ZZ"), Err(PatternError::BadToken(_))));
-        assert!(matches!(Pattern::parse("4"), Err(PatternError::BadToken(_))));
-        assert!(matches!(Pattern::parse("?? ??"), Err(PatternError::AllWildcard)));
+        assert!(matches!(
+            Pattern::parse("ZZ"),
+            Err(PatternError::BadToken(_))
+        ));
+        assert!(matches!(
+            Pattern::parse("4"),
+            Err(PatternError::BadToken(_))
+        ));
+        assert!(matches!(
+            Pattern::parse("?? ??"),
+            Err(PatternError::AllWildcard)
+        ));
         assert!(matches!(
             Pattern::parse("[58,59,5A,5B,5C,5D,5E]"),
             Err(PatternError::BadToken(_))
@@ -462,7 +471,11 @@ mod tests {
 
     #[test]
     fn slot_semantics() {
-        assert_eq!(Slot::Any.eval(None), Tri::True, "a wildcard is satisfiable unseen");
+        assert_eq!(
+            Slot::Any.eval(None),
+            Tri::True,
+            "a wildcard is satisfiable unseen"
+        );
         assert_eq!(Slot::Byte(0x41).eval(None), Tri::Unknown);
         assert_eq!(Slot::Byte(0x41).eval(Some(0x42)), Tri::False);
         assert_eq!(Slot::Not(0).eval(None), Tri::Unknown);

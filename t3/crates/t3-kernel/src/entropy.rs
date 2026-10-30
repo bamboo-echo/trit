@@ -55,7 +55,10 @@ pub type Histogram = [u32; 256];
 /// against.
 #[must_use]
 pub fn histogram_naive(data: &[u8]) -> Histogram {
-    debug_assert!(data.len() as u64 <= u64::from(u32::MAX), "region exceeds u32 counter width");
+    debug_assert!(
+        u32::try_from(data.len()).is_ok(),
+        "region exceeds u32 counter width"
+    );
     let mut counts: Histogram = [0; 256];
     for &b in data {
         counts[b as usize] += 1;
@@ -70,7 +73,10 @@ pub fn histogram_naive(data: &[u8]) -> Histogram {
 /// this size, and the tables stop being independent.
 #[must_use]
 pub fn histogram4(data: &[u8]) -> Histogram {
-    debug_assert!(data.len() as u64 <= u64::from(u32::MAX), "region exceeds u32 counter width");
+    debug_assert!(
+        u32::try_from(data.len()).is_ok(),
+        "region exceeds u32 counter width"
+    );
     let mut h0: Histogram = [0; 256];
     let mut h1: Histogram = [0; 256];
     let mut h2: Histogram = [0; 256];
@@ -102,7 +108,7 @@ pub fn histogram4(data: &[u8]) -> Histogram {
 #[must_use]
 pub fn histogram8(data: &[u8]) -> Histogram {
     debug_assert!(
-        data.len() as u64 <= u64::from(u32::MAX),
+        u32::try_from(data.len()).is_ok(),
         "region exceeds u32 counter width"
     );
     let mut h0: Histogram = [0; 256];
@@ -152,6 +158,10 @@ pub fn histogram(data: &[u8]) -> Histogram {
 /// bytes carries no information. Callers that need to distinguish "empty" from
 /// "uniform" must check the length themselves.
 #[must_use]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "total 是区域字节数，上限 u32::MAX，f64 尾数足以精确表示"
+)]
 pub fn entropy_of(counts: &Histogram, total: usize) -> f64 {
     if total == 0 {
         return 0.0;
@@ -178,6 +188,10 @@ pub fn entropy(data: &[u8]) -> f64 {
 
 /// Reference entropy used by tests: the textbook form.
 #[must_use]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "长度上限 u32::MAX，f64 尾数足以精确表示"
+)]
 pub fn entropy_reference(data: &[u8]) -> f64 {
     if data.is_empty() {
         return 0.0;
@@ -206,8 +220,8 @@ pub fn distinct_bytes(counts: &Histogram) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        distinct_bytes, entropy, entropy_of, entropy_reference, histogram, histogram4,
-        histogram8, histogram_naive,
+        distinct_bytes, entropy, entropy_of, entropy_reference, histogram, histogram4, histogram8,
+        histogram_naive,
     };
 
     struct Rng(u64);
@@ -226,7 +240,9 @@ mod tests {
     fn histograms_agree_at_every_tail_length() {
         let mut rng = Rng(12345);
         for len in 0..600usize {
-            let data: Vec<u8> = (0..len).map(|_| (rng.next() >> 40) as u8).collect();
+            let data: Vec<u8> = (0..len)
+                .map(|_| u8::try_from(rng.next() >> 56).expect("取最高字节，必然 < 256"))
+                .collect();
             let a = histogram_naive(&data);
             assert_eq!(histogram4(&data), a, "len={len} h4");
             assert_eq!(histogram8(&data), a, "len={len} h8");
@@ -272,8 +288,8 @@ mod tests {
         let mut rng = Rng(999);
         for len in [1usize, 7, 64, 255, 1000, 4096, 65_537] {
             let mut data = vec![0u8; len];
-            for b in data.iter_mut() {
-                *b = (rng.next() >> 33) as u8;
+            for b in &mut data {
+                *b = u8::try_from(rng.next() >> 56).expect("取最高字节，必然 < 256");
             }
             let fast = entropy(&data);
             let slow = entropy_reference(&data);
@@ -306,10 +322,13 @@ mod tests {
         // asserted here so the assumption is visible rather than folklore, and
         // `debug_assert!` in the histogram entry points catches a violation in
         // test builds.
-        assert_eq!(u32::MAX as u64, 4_294_967_295);
-        assert!((u32::MAX as u64) < 4 * 1024 * 1024 * 1024, "u32 tops out just below 4 GiB");
+        assert_eq!(u64::from(u32::MAX), 4_294_967_295);
+        assert!(
+            u64::from(u32::MAX) < 4 * 1024 * 1024 * 1024,
+            "u32 tops out just below 4 GiB"
+        );
         // The largest a PE section can declare is itself a u32, so a single
         // section can never overflow a counter.
-        assert_eq!(u32::MAX as u64, u64::from(u32::MAX));
+        assert_eq!(u64::from(u32::MAX), u64::from(u32::MAX));
     }
 }

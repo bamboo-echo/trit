@@ -37,6 +37,12 @@ pub use rule::{Hit, Rule, RuleError, RuleSet, Scope, Severity};
 /// Parsing is cheap but not free, and a scan evaluates thousands of files against
 /// the same set, so it is cached. A parse failure here would be a build-time bug,
 /// caught by the unit tests in [`builtin`].
+///
+/// # Panics
+///
+/// Panics if the built-in rule text fails to parse — that can only happen when the
+/// embedded rules are edited incorrectly, and failing loudly beats scanning with an
+/// empty rule set.
 #[must_use]
 pub fn builtin_rules() -> &'static RuleSet {
     static RULES: OnceLock<RuleSet> = OnceLock::new();
@@ -87,11 +93,7 @@ impl Scan {
 pub fn evaluate(rules: &RuleSet, regions: &[t3_format::Region<'_>]) -> Scan {
     let hits = rules.evaluate(regions);
     let (high, medium) = rules.fold(&hits);
-    Scan {
-        hits,
-        high,
-        medium,
-    }
+    Scan { hits, high, medium }
 }
 
 #[cfg(test)]

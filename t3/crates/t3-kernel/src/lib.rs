@@ -15,5 +15,8 @@
 pub mod entropy;
 pub mod scan;
 
-pub use entropy::{distinct_bytes, entropy, entropy_of, histogram, histogram4, histogram8, histogram_naive, Histogram};
+pub use entropy::{
+    distinct_bytes, entropy, entropy_of, histogram, histogram4, histogram8, histogram_naive,
+    Histogram,
+};
 pub use scan::bytes;

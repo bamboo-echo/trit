@@ -23,7 +23,7 @@
 ///
 /// `t3 sig list` prints this verbatim, and `t3 sig check` re-parses it at start-up as
 /// a self-test.
-pub const BUILTIN_RULES: &str = r#"
+pub const BUILTIN_RULES: &str = r"
 # ---------------------------------------------------------------------------
 # Tool fingerprints. No benign reading: these strings exist to drive an attack.
 # ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ rule run_key
   desc Run-key registry path, the most common autostart location
   match 43 75 72 72 65 6E 74 56 65 72 73 69 6F 6E 5C 52 75 6E
 end
-"#;
+";
 
 #[cfg(test)]
 mod tests {

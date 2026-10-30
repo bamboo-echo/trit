@@ -122,8 +122,7 @@ impl Scope {
             Scope::Overlay => matches!(region.kind, RegionKind::Overlay),
             Scope::Headers => matches!(region.kind, RegionKind::Headers),
             Scope::Section(prefix) => {
-                matches!(region.kind, RegionKind::Section(_))
-                    && region.name().starts_with(prefix)
+                matches!(region.kind, RegionKind::Section(_)) && region.name().starts_with(prefix)
             }
         }
     }
@@ -144,7 +143,7 @@ impl Scope {
 /// One compiled rule.
 #[derive(Clone, Debug)]
 pub struct Rule {
-    /// Unique identifier, snake_case.
+    /// Unique identifier, `snake_case`.
     pub name: String,
     /// Weight of a hit.
     pub severity: Severity,
@@ -440,8 +439,7 @@ fn find_matching_region(rule: &Rule, regions: &[Region<'_>]) -> Option<String> {
     regions
         .iter()
         .find(|region| {
-            rule.scope.matches(region)
-                && rule.matches.iter().all(|p| p.find(region).is_true())
+            rule.scope.matches(region) && rule.matches.iter().all(|p| p.find(region).is_true())
         })
         .map(|region| region.name_lossy().into_owned())
 }
@@ -502,7 +500,7 @@ mod tests {
     use t3_core::Tri;
     use t3_format::{Region, RegionKind};
 
-    const SAMPLE: &str = r#"
+    const SAMPLE: &str = r"
 # a comment
 rule upx_magic
   severity medium
@@ -517,7 +515,7 @@ rule msvc_prologue
   match 55 8B EC
   forbid 55 8B EC 83
 end
-"#;
+";
 
     fn regions<'a>(data: &'a [u8], name: &[u8], declared: usize) -> Vec<Region<'a>> {
         vec![Region::new(RegionKind::Section(0), name, 0, data, declared)]
@@ -549,7 +547,10 @@ end
     #[test]
     fn rejects_duplicate_names() {
         let text = "rule a\n match 41\nend\nrule a\n match 42\nend\n";
-        assert!(RuleSet::parse(text).unwrap_err().message.contains("duplicate"));
+        assert!(RuleSet::parse(text)
+            .unwrap_err()
+            .message
+            .contains("duplicate"));
     }
 
     #[test]
@@ -586,7 +587,11 @@ end
         let forbidden = [0x55u8, 0x8B, 0xEC, 0x83];
         let hits_plain = set.evaluate(&regions(&plain, b".text", plain.len()));
         assert_eq!(
-            hits_plain.iter().find(|h| h.name == "msvc_prologue").unwrap().value,
+            hits_plain
+                .iter()
+                .find(|h| h.name == "msvc_prologue")
+                .unwrap()
+                .value,
             Tri::True
         );
         let hits_forbidden = set.evaluate(&regions(&forbidden, b".text", forbidden.len()));
@@ -607,7 +612,11 @@ end
         let data = [0u8; 4];
         let hits = set.evaluate(&regions(&data, b"UPX0", 4096));
         let upx = hits.iter().find(|h| h.name == "upx_magic").unwrap();
-        assert_eq!(upx.value, Tri::Unknown, "present-but-truncated is undecided");
+        assert_eq!(
+            upx.value,
+            Tri::Unknown,
+            "present-but-truncated is undecided"
+        );
         assert!(upx.applicable);
     }
 

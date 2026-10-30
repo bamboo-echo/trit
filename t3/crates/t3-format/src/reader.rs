@@ -254,7 +254,7 @@ mod tests {
         let mut s = 0xDEAD_BEEFu64;
         for len in 0..200usize {
             let mut data = vec![0u8; len];
-            for b in data.iter_mut() {
+            for b in &mut data {
                 s ^= s << 13;
                 s ^= s >> 7;
                 s ^= s << 17;

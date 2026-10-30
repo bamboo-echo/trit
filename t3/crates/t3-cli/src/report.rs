@@ -94,11 +94,7 @@ pub fn line(record: &Record, color: bool) -> String {
             continue;
         }
         if judgment.is_established() || judgment.is_open() {
-            notes.push(format!(
-                "{}={}",
-                judgment.id,
-                judgment.interval.hi.glyph()
-            ));
+            notes.push(format!("{}={}", judgment.id, judgment.interval.hi.glyph()));
         }
     }
     let detail = if notes.is_empty() {
@@ -173,6 +169,10 @@ fn fact_brief(facts: &Facts, id: FactId) -> String {
 }
 
 /// The single-file view.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "单文件报告就是这 8 个输入；打包成结构体只是把参数搬运一遍，调用点会更难读"
+)]
 pub fn explain(
     path: &str,
     size: u64,
@@ -203,11 +203,7 @@ pub fn explain(
         grade_paint(verdict.hi, headline, true)
     };
     println!("判定      {colored} · {}", verdict.summary());
-    println!(
-        "区间      [{} , {}]",
-        verdict.lo.name(),
-        verdict.hi.name()
-    );
+    println!("区间      [{} , {}]", verdict.lo.name(), verdict.hi.name());
     println!(
         "冲突      {}{}",
         if verdict.conflict { "是" } else { "否" },
@@ -223,8 +219,8 @@ pub fn explain(
     if !sections.is_empty() {
         println!();
         println!(
-            "区段      {:<12}{:>10}{:>10}{:>10}{:>7}  {}",
-            "名称", "VA", "原始大小", "虚拟大小", "熵", "属性"
+            "区段      {:<12}{:>10}{:>10}{:>10}{:>7}  属性",
+            "名称", "VA", "原始大小", "虚拟大小", "熵"
         );
         for row in sections {
             let entropy = match row.entropy {
@@ -258,11 +254,7 @@ pub fn explain(
             // An undecided interval is shown with both ends so the width is visible.
             'U'
         };
-        let line = format!(
-            "  {mark}  {:<22} — {}",
-            judgment.id,
-            judgment.title
-        );
+        let line = format!("  {mark}  {:<22} — {}", judgment.id, judgment.title);
         println!("{line}");
 
         if judgment.is_established() {

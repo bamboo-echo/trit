@@ -41,9 +41,17 @@ pub fn run(args: &[String]) -> Result<i32, String> {
     println!("机器      {} · {} 线程", std::env::consts::ARCH, threads());
     println!(
         "指令集    AVX2 {}",
-        if avx2_available() { "可用" } else { "不可用" }
+        if avx2_available() {
+            "可用"
+        } else {
+            "不可用"
+        }
     );
-    println!("缓冲      {} 偏斜 + {} 均匀", human_bytes(BUFFER as u64), human_bytes(BUFFER as u64));
+    println!(
+        "缓冲      {} 偏斜 + {} 均匀",
+        human_bytes(BUFFER as u64),
+        human_bytes(BUFFER as u64)
+    );
     println!();
 
     let skewed = skewed_buffer(BUFFER, 3);
@@ -83,9 +91,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
         four_skewed / n_skewed,
         four_noise / n_noise
     );
-    println!(
-        "  加速来自打破存储依赖链；而加壳节区恰恰是均匀数据，收益最小。"
-    );
+    println!("  加速来自打破存储依赖链；而加壳节区恰恰是均匀数据，收益最小。");
     println!();
 
     // Byte search. Both sides must touch every byte, otherwise the comparison measures
@@ -152,10 +158,9 @@ fn corpus_report(root: &str) {
                 let _ = t3_sig::evaluate(rules, &analysis.regions);
             }
             let secs = started.elapsed().as_secs_f64().max(1e-9);
-            let gbs = (buffer.len() as f64 * f64::from(repeats)) / secs / (1024.0 * 1024.0 * 1024.0);
-            println!(
-                "纯内存分析（解析 + 特征 + 签名），单线程"
-            );
+            let gbs =
+                (buffer.len() as f64 * f64::from(repeats)) / secs / (1024.0 * 1024.0 * 1024.0);
+            println!("纯内存分析（解析 + 特征 + 签名），单线程");
             println!(
                 "  {:.2} GiB/s · 样本 {} 重复 {} 次 · {}",
                 gbs,
@@ -266,7 +271,7 @@ fn corpus_report(root: &str) {
 
     let n = records.iter().filter(|r| r.kind == "pe").count().max(1);
     println!("（以下比例的分母是 {} 个 PE 文件）", n);
-    fired.sort_by(|a, b| b.1.cmp(&a.1));
+    fired.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     println!("事实在干净语料上的命中率（越高越说明该事实没有区分度）");
     for (id, count) in fired.iter().take(12) {
         println!(
@@ -276,7 +281,7 @@ fn corpus_report(root: &str) {
             *count as f64 * 100.0 / n as f64
         );
     }
-    unknown.sort_by(|a, b| b.1.cmp(&a.1));
+    unknown.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     if !unknown.is_empty() {
         println!("未决率最高的若干事实");
         for (id, count) in unknown.iter().take(6) {
@@ -316,12 +321,12 @@ fn corpus_report(root: &str) {
     println!("  这组数字是误报率的直接测量：干净语料上「恶意」的比例就是当前规则的假阳率下界。");
 }
 
-fn show_quantiles(name: &str, values: &mut Vec<f32>) {
+fn show_quantiles(name: &str, values: &mut [f32]) {
     if values.is_empty() {
         println!("  {name:<12} 无样本");
         return;
     }
-    let mut sorted = values.clone();
+    let mut sorted = values.to_vec();
     println!(
         "  {name:<12} n={:<6} p50={:.3} p95={:.3} p99={:.3} p99.5={:.3} p99.9={:.3} max={:.3}",
         sorted.len(),

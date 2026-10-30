@@ -220,8 +220,8 @@ mod tests {
     #[test]
     fn unknown_never_becomes_decided() {
         for a in Tri::ALL {
-            assert!(a.and(Tri::Unknown).is_unknown() == !a.is_false());
-            assert!(a.or(Tri::Unknown).is_unknown() == !a.is_true());
+            assert_eq!(a.and(Tri::Unknown).is_unknown(), !a.is_false());
+            assert_eq!(a.or(Tri::Unknown).is_unknown(), !a.is_true());
         }
     }
 

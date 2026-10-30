@@ -142,9 +142,11 @@ crates/
     entropy.rs   4/8/1 交错直方图，全部带标量基线
   t3-format/   零拷贝、无 panic 的容器分诊
     reader.rs    全边界检查读取器（无 unsafe）
-    pe.rs        PE32/PE32+：节区、导入、叠加段、PDB、Rich、TLS
+    pe.rs        PE32/PE32+：节区、叠加段、PDB、Rich、TLS
+    pe/imports.rs  导入表解析与能力位分类
     elf.rs       ELF32/64、双字节序、动态符号、build-id、GNU_STACK
     detect.rs    解析结果 → 三值事实；标定带集中在此
+    detect/elf_fill.rs  ELF 侧的事实填充
     region.rs    带截断标记的具名区域
   t3-sig/      三值签名
     pattern.rs   四态逐字节谓词 + 存在性位图预筛
@@ -152,6 +154,9 @@ crates/
     builtin.rs   12 条内置规则（纯文本，走同一套解析器）
   t3-cli/      scan / explain / sig / bench / selftest
 ```
+
+t3 与主仓共用一套门：`scripts/module_budget.py` 会扫 `t3/crates`（单文件 800 行上限），
+`.github/workflows/t3.yml` 跑 fmt / clippy `-D warnings` / test。
 
 **测试**：102 个单元测试 + 1 个文档测试，全部通过。包括格律穷举、区间语义穷举、SIMD 与标量在每一种对齐与长度下的等价、截断区域传播、随机缓冲区不 panic、规则解析错误定位。
 

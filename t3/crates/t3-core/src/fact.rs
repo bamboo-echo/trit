@@ -152,7 +152,7 @@ pub enum FactId {
     LayoutNonMonotone,
     /// ELF: position-independent executable.
     ElfPie,
-    /// ELF: GNU_STACK is non-executable.
+    /// ELF: `GNU_STACK` is non-executable.
     ElfNxStack,
     /// ELF: build-id note present.
     ElfBuildId,
@@ -375,7 +375,10 @@ impl Facts {
 
     /// Iterates every cell with its identifier, in discriminant order.
     pub fn iter(&self) -> impl Iterator<Item = (FactId, &Cell)> + '_ {
-        FactId::ALL.iter().copied().map(|id| (id, &self.cells[id.index()]))
+        FactId::ALL
+            .iter()
+            .copied()
+            .map(|id| (id, &self.cells[id.index()]))
     }
 }
 
@@ -392,7 +395,7 @@ mod tests {
         for (i, id) in FactId::ALL.iter().enumerate() {
             assert_eq!(id.index(), i, "discriminant {id:?} is not dense");
             assert!(names.insert(id.name()), "duplicate name {}", id.name());
-            assert!(!id.name().is_empty());
+            assert_ne!(id.name(), "");
         }
     }
 
@@ -417,11 +420,26 @@ mod tests {
     fn band_puts_ambiguous_measurements_in_unknown() {
         let band = Band::new(7.10, 7.60);
         let mut facts = Facts::new();
-        facts.set_band(FactId::SectionHighEntropy, 7.20, band, "max section entropy");
+        facts.set_band(
+            FactId::SectionHighEntropy,
+            7.20,
+            band,
+            "max section entropy",
+        );
         assert_eq!(facts.get(FactId::SectionHighEntropy), Tri::Unknown);
-        facts.set_band(FactId::SectionHighEntropy, 7.05, band, "max section entropy");
+        facts.set_band(
+            FactId::SectionHighEntropy,
+            7.05,
+            band,
+            "max section entropy",
+        );
         assert_eq!(facts.get(FactId::SectionHighEntropy), Tri::False);
-        facts.set_band(FactId::SectionHighEntropy, 7.80, band, "max section entropy");
+        facts.set_band(
+            FactId::SectionHighEntropy,
+            7.80,
+            band,
+            "max section entropy",
+        );
         assert_eq!(facts.get(FactId::SectionHighEntropy), Tri::True);
         assert_eq!(facts.num(FactId::SectionHighEntropy), Some(7.8));
     }

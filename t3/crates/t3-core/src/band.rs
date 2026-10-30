@@ -131,6 +131,12 @@ impl Band {
 /// Hand-rolled to keep the crate dependency-free; `f32` totals are accumulated in
 /// `f64` so that large corpora do not lose precision in the index arithmetic.
 #[must_use]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "len 受 isize 限制且 q 已钳在 [0,1]，pos 落在 [0, len-1] 内，三类转换都不会越界"
+)]
 pub fn quantile_of(values: &mut [f32], q: f32) -> f32 {
     if values.is_empty() {
         return f32::NAN;
@@ -149,6 +155,8 @@ pub fn quantile_of(values: &mut [f32], q: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    // 测试数据构造使用 i as f32 直接铺点，精度不影响断言语义。
+    #![allow(clippy::cast_precision_loss)]
     use super::{quantile_of, Band};
     use crate::Tri;
 
@@ -223,7 +231,11 @@ mod tests {
         let band = Band::calibrate(&mut clean, 0.995, 0.35);
         assert!(band.lo >= 6.99, "lo={}", band.lo);
         assert!((band.width() - 0.35).abs() < 1e-6);
-        assert_eq!(band.classify(6.995), Tri::Unknown, "clean tail must be unknown");
+        assert_eq!(
+            band.classify(6.995),
+            Tri::Unknown,
+            "clean tail must be unknown"
+        );
         assert_eq!(band.classify(7.9), Tri::True);
         assert_eq!(band.classify(6.0), Tri::False);
     }

@@ -131,30 +131,22 @@ impl Expr {
 
     /// Conjunction of many formulas; `true` when empty.
     #[must_use]
-    pub fn all_of(mut items: Vec<Expr>) -> Self {
-        match items.len() {
-            0 => Expr::Const(true),
-            1 => items.pop().expect("length checked"),
-            _ => {
-                let mut iter = items.into_iter();
-                let first = iter.next().expect("length checked");
-                iter.fold(first, Expr::and)
-            }
-        }
+    pub fn all_of(items: Vec<Expr>) -> Self {
+        let mut iter = items.into_iter();
+        let Some(first) = iter.next() else {
+            return Expr::Const(true);
+        };
+        iter.fold(first, Expr::and)
     }
 
     /// Disjunction of many formulas; `false` when empty.
     #[must_use]
-    pub fn any_of(mut items: Vec<Expr>) -> Self {
-        match items.len() {
-            0 => Expr::Const(false),
-            1 => items.pop().expect("length checked"),
-            _ => {
-                let mut iter = items.into_iter();
-                let first = iter.next().expect("length checked");
-                iter.fold(first, Expr::or)
-            }
-        }
+    pub fn any_of(items: Vec<Expr>) -> Self {
+        let mut iter = items.into_iter();
+        let Some(first) = iter.next() else {
+            return Expr::Const(false);
+        };
+        iter.fold(first, Expr::or)
     }
 
     /// Evaluates against decided facts, reporting [`Tri::Unknown`] where a fact is

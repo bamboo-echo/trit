@@ -29,9 +29,13 @@
 use t3_core::{FactId, Facts, Tri};
 use t3_kernel::entropy;
 
-use crate::elf::{self, ElfInfo};
+use crate::elf::{self};
+
+mod elf_fill;
+
 use crate::pe::{self, cap, dirs_index, PeInfo};
 use crate::region::Region;
+use elf_fill::fill_elf;
 
 /// Decision bands and thresholds, all in one place so they can be audited.
 pub mod calibration {
@@ -57,20 +61,14 @@ pub mod calibration {
     /// `lo` is the 99.5th percentile and `hi` the 99.9th, so half a percent of clean
     /// files land in the undecided band and a tenth of a percent above it. Those
     /// numbers are the honest cost of the rule, not a claim that the rule is exact.
-    pub const SECTION_ENTROPY: Band = Band {
-        lo: 6.68,
-        hi: 7.37,
-    };
+    pub const SECTION_ENTROPY: Band = Band { lo: 6.68, hi: 7.37 };
 
     /// Whole-file entropy, same corpus: p99.5 7.162, p99.9 7.541.
     ///
     /// Reported but not used by any hypothesis on PE/ELF inputs: per-section entropy
     /// strictly dominates it there. It exists for inputs whose container was not
     /// recognised, where nothing finer is available.
-    pub const FILE_ENTROPY: Band = Band {
-        lo: 7.16,
-        hi: 7.54,
-    };
+    pub const FILE_ENTROPY: Band = Band { lo: 7.16, hi: 7.54 };
 
     /// Overlay entropy.
     ///
@@ -78,10 +76,7 @@ pub mod calibration {
     /// high-entropy. The sample is far too small to place a percentile, so this band is
     /// a stated prior rather than a measurement — and it is the one threshold here that
     /// a reader should not treat as calibrated.
-    pub const OVERLAY_ENTROPY: Band = Band {
-        lo: 6.95,
-        hi: 7.40,
-    };
+    pub const OVERLAY_ENTROPY: Band = Band { lo: 6.95, hi: 7.40 };
 
     /// Fraction of the file the overlay must occupy to count as dominant,
     /// in percent.
@@ -97,7 +92,6 @@ pub mod calibration {
     /// Dynamic resolution with at most this many static imports means the binary
     /// resolves essentially everything at run time.
     pub const DYNRESOLVE_IMPORT_MAX: u32 = 12;
-
 }
 
 use calibration::{
@@ -307,9 +301,17 @@ fn fill_pe(facts: &mut Facts, info: &PeInfo<'_>) {
         malformed = true;
     }
     facts.set_bool(FactId::SectionPackerName, packer_hit, "壳/保护器节名");
-    facts.set_bool(FactId::SectionWritableExecutable, writable_exec, "可写可执行节区");
+    facts.set_bool(
+        FactId::SectionWritableExecutable,
+        writable_exec,
+        "可写可执行节区",
+    );
     facts.set_bool(FactId::SectionZeroRaw, zero_raw, "仅虚拟大小的可执行节区");
-    facts.set_bool(FactId::LayoutNonMonotone, non_monotone, "节区原始偏移非单调");
+    facts.set_bool(
+        FactId::LayoutNonMonotone,
+        non_monotone,
+        "节区原始偏移非单调",
+    );
     if malformed {
         facts.set_bool(FactId::SectionMalformed, true, "节区声明越界或表被截断");
     } else {
@@ -357,7 +359,11 @@ fn fill_pe(facts: &mut Facts, info: &PeInfo<'_>) {
     } else {
         facts.set_bool(FactId::EntryOutsideCode, true, "入口点不在可执行节区");
     }
-    facts.set_bool(FactId::EntryInLastSection, entry_in_last, "入口点位于最后一个节区");
+    facts.set_bool(
+        FactId::EntryInLastSection,
+        entry_in_last,
+        "入口点位于最后一个节区",
+    );
 
     // ---- overlay --------------------------------------------------------
     if info.overlay.len == 0 {
@@ -392,7 +398,9 @@ fn fill_pe(facts: &mut Facts, info: &PeInfo<'_>) {
             }
             None => facts.set_unknown(FactId::OverlayHighEntropy, "叠加段未测量"),
         }
-        let percent = (info.overlay.len * 100).checked_div(info.bytes.len()).unwrap_or(100);
+        let percent = (info.overlay.len * 100)
+            .checked_div(info.bytes.len())
+            .unwrap_or(100);
         facts.set_bool_at(
             FactId::OverlayDominant,
             percent >= OVERLAY_DOMINANT_PERCENT,
@@ -402,7 +410,7 @@ fn fill_pe(facts: &mut Facts, info: &PeInfo<'_>) {
     }
 
     // ---- imports --------------------------------------------------------
-    fill_imports(facts, &info.imports, &info, has_code, code_bytes);
+    fill_imports(facts, &info.imports, info, has_code, code_bytes);
 
     // ---- provenance -----------------------------------------------------
     facts.set_bool(FactId::SignedPresent, info.signed, "安全目录");
@@ -436,11 +444,7 @@ fn fill_pe(facts: &mut Facts, info: &PeInfo<'_>) {
         pe::directory(info, dirs_index::DIR_RESOURCE).size > 0,
         "资源目录",
     );
-    facts.set_bool(
-        FactId::TlsCallbacks,
-        has_tls_callbacks(info),
-        "TLS 回调",
-    );
+    facts.set_bool(FactId::TlsCallbacks, has_tls_callbacks(info), "TLS 回调");
 
     // ---- timestamp ------------------------------------------------------
     //
@@ -451,12 +455,7 @@ fn fill_pe(facts: &mut Facts, info: &PeInfo<'_>) {
     // means what it always meant — the field was never filled in, which is what a
     // hand-crafted or packed binary looks like.
     let ts = info.timestamp;
-    facts.set_bool_at(
-        FactId::TimestampAnomalous,
-        ts == 0,
-        ts as f32,
-        "PE 时间戳",
-    );
+    facts.set_bool_at(FactId::TimestampAnomalous, ts == 0, ts as f32, "PE 时间戳");
 }
 
 /// Records the two entropy facts, applying the sound partial-information rule.
@@ -511,7 +510,12 @@ fn fill_imports(
     if imports.present {
         facts.set_bool(FactId::ImportsAbsent, false, "存在导入目录");
     } else if has_code {
-        facts.set_bool_at(FactId::ImportsAbsent, true, code_len as f32, "有代码但无导入目录");
+        facts.set_bool_at(
+            FactId::ImportsAbsent,
+            true,
+            code_len as f32,
+            "有代码但无导入目录",
+        );
     } else {
         facts.set_bool_at(
             FactId::ImportsAbsent,
@@ -622,154 +626,6 @@ fn fill_imports(
     );
 }
 
-fn fill_elf(facts: &mut Facts, info: &ElfInfo<'_>) {
-    facts.set_bool(FactId::FormatElf, true, "ELF 魔数");
-    facts.set_bool(FactId::FormatPe, false, "非 PE");
-
-    let stats = info.entropy_stats(MIN_ENTROPY_BYTES);
-    set_entropy_facts(facts, stats.max_exec, stats.max_data, stats.unreadable);
-
-    let mut packer_hit = false;
-    for (i, _) in info.sections().iter().enumerate() {
-        if let Some(name) = info.section_name(i) {
-            if pe::is_packer_section(name) {
-                packer_hit = true;
-            }
-        }
-    }
-    facts.set_bool(FactId::SectionPackerName, packer_hit, "壳/保护器节名");
-    facts.set_bool(FactId::ElfWritableText, info.writable_text, "可写可执行段");
-    facts.set_bool(
-        FactId::SectionWritableExecutable,
-        info.writable_text,
-        "可写可执行段",
-    );
-    facts.set_bool(FactId::ElfPie, info.is_pie(), "ET_DYN");
-    if let Some(nx) = info.nx_stack {
-        facts.set_bool(FactId::ElfNxStack, nx, "PT_GNU_STACK 不可执行");
-    } else {
-        facts.set_unknown(FactId::ElfNxStack, "无 PT_GNU_STACK");
-    }
-    facts.set_bool(
-        FactId::ElfBuildId,
-        info.build_id.is_some(),
-        "GNU build-id",
-    );
-    facts.set_bool(FactId::ElfStripped, !info.has_symtab, "无 SHT_SYMTAB");
-    facts.set_bool(
-        FactId::SectionMalformed,
-        info.declared_section_count > info.section_count,
-        "节头表被截断",
-    );
-    facts.set_bool_at(
-        FactId::SectionCountAnomalous,
-        info.declared_section_count == 0 || info.declared_section_count > 64,
-        info.declared_section_count as f32,
-        "节区数量",
-    );
-
-    // Imports: dynamic symbols.
-    let imports = &info.imports;
-    facts.set_bool(FactId::ImportsReadable, imports.complete, "动态符号表完整读取");
-    let has_code = info
-        .segments()
-        .iter()
-        .any(|s| s.flags & 1 != 0 && s.filesz >= calibration::MIN_CODE_BYTES as u64);
-    facts.set_bool(
-        FactId::ImportsAbsent,
-        !imports.present && has_code,
-        "有代码但无动态符号表",
-    );
-    facts.set_unknown(FactId::ImportsSparse, "ELF 导入稀疏度未标定");
-    for (id, bit) in [
-        (FactId::ImportsLoader, cap::LOADER),
-        (FactId::ImportsNetwork, cap::NETWORK),
-        (FactId::ImportsCredential, cap::CREDENTIAL),
-        (FactId::ImportsAntiDebug, cap::ANTI_DEBUG),
-        (FactId::ImportsProcessEnum, cap::PROCESS_ENUM),
-        (FactId::ImportsCrypto, cap::CRYPTO),
-        (FactId::ImportsPersistence, cap::PERSISTENCE),
-    ] {
-        facts.set(
-            id,
-            presence(imports.has(bit), imports.complete),
-            f32::NAN,
-            "动态符号能力面",
-        );
-    }
-    let trio = imports.caps & (cap::ALLOC_REMOTE | cap::WRITE_REMOTE | cap::EXEC_REMOTE)
-        == (cap::ALLOC_REMOTE | cap::WRITE_REMOTE | cap::EXEC_REMOTE);
-    facts.set(
-        FactId::ImportsInjectionTrio,
-        presence(trio, imports.complete),
-        f32::NAN,
-        "远程注入三件套",
-    );
-    facts.set(
-        FactId::ImportsDynamicResolveOnly,
-        presence(
-            imports.has(cap::DYNAMIC_RESOLVE) && imports.function_count <= DYNRESOLVE_IMPORT_MAX,
-            imports.complete,
-        ),
-        f32::NAN,
-        "动态解析且静态导入稀疏",
-    );
-
-    // Overlay: an ELF file with bytes past the last section is unusual.
-    match info.overlay() {
-        Some(region) if region.data.len() >= MIN_ENTROPY_BYTES => {
-            facts.set_bool_at(
-                FactId::OverlayPresent,
-                true,
-                region.data.len() as f32,
-                "叠加段字节数",
-            );
-            facts.set_band(
-                FactId::OverlayHighEntropy,
-                entropy(region.data) as f32,
-                OVERLAY_ENTROPY,
-                "叠加段熵",
-            );
-            let percent = (region.data.len() * 100) / info.bytes.len().max(1);
-            facts.set_bool_at(
-                FactId::OverlayDominant,
-                percent >= OVERLAY_DOMINANT_PERCENT,
-                percent as f32,
-                "叠加段占文件百分比",
-            );
-        }
-        Some(_) => {
-            facts.set_bool(FactId::OverlayPresent, true, "叠加段过小");
-            facts.set_unknown(FactId::OverlayHighEntropy, "叠加段过小");
-            facts.set_bool(FactId::OverlayDominant, false, "叠加段过小");
-        }
-        None => {
-            facts.set_bool(FactId::OverlayPresent, false, "无叠加段");
-            facts.set_bool(FactId::OverlayHighEntropy, false, "无叠加段");
-            facts.set_bool(FactId::OverlayDominant, false, "无叠加段");
-        }
-    }
-
-    // Facts that only make sense for PE stay Unknown for ELF, which keeps the
-    // verdict interval wide instead of inventing a "clean" reading.
-    for id in [
-        FactId::SignedPresent,
-        FactId::PdbPresent,
-        FactId::PdbDeveloperPath,
-        FactId::RichHeaderValid,
-        FactId::DotnetPresent,
-        FactId::TlsCallbacks,
-        FactId::EntryOutsideCode,
-        FactId::EntryInLastSection,
-        FactId::TimestampAnomalous,
-        FactId::LayoutNonMonotone,
-    ] {
-        facts.set_unknown(id, "ELF 不适用");
-    }
-    facts.set_bool(FactId::RelocationsPresent, true, "ELF 使用重定位");
-    facts.set_bool(FactId::ResourcesPresent, false, "ELF 无资源目录");
-}
-
 /// True when the DOS stub carries a key-consistent Rich header.
 ///
 /// The check is not "does the string `Rich` appear" — that is trivially forgeable.
@@ -791,12 +647,8 @@ fn rich_header_valid(bytes: &[u8], e_lfanew: usize) -> bool {
     let Some(dans_bytes) = bytes.get(0x80..0x84) else {
         return false;
     };
-    let dans = u32::from_le_bytes([
-        dans_bytes[0],
-        dans_bytes[1],
-        dans_bytes[2],
-        dans_bytes[3],
-    ]) ^ key;
+    let dans =
+        u32::from_le_bytes([dans_bytes[0], dans_bytes[1], dans_bytes[2], dans_bytes[3]]) ^ key;
     dans == DANS
 }
 
@@ -858,7 +710,7 @@ mod tests {
         let mut s = 0x1234_5678u32;
         for len in [0usize, 1, 63, 64, 4096] {
             let mut data = vec![0u8; len];
-            for b in data.iter_mut() {
+            for b in &mut data {
                 s ^= s << 13;
                 s ^= s >> 17;
                 s ^= s << 5;

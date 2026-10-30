@@ -65,7 +65,11 @@ pub fn record(rec: &Record) -> String {
     out.push_str(",\"hi\":");
     out.push_str(&escape(rec.verdict.hi.name()));
     out.push_str(",\"conflict\":");
-    out.push_str(if rec.verdict.conflict { "true" } else { "false" });
+    out.push_str(if rec.verdict.conflict {
+        "true"
+    } else {
+        "false"
+    });
     out.push_str(",\"decided\":");
     out.push_str(if rec.verdict.is_decided() {
         "true"
