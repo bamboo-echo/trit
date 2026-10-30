@@ -25,6 +25,9 @@ pub const CHECKSUM_BYTES: usize = 1;
 pub const KIND_TEX: u8 = 0;
 /// kind：三值模型（双轨权重）。
 pub const KIND_MOD: u8 = 1;
+/// `flags` 的布局位：置位表示 8×8 块（17 字节）。旧文件该位为 0（4×10 / 12 字节），
+/// 读到时显式报 [`TextureError::UnsupportedLayout`]，而不是走到块数/校验和才炸。
+pub const FLAG_LAYOUT_8X8: u8 = 0x01;
 
 /// 一份 TTX2 文档。
 #[derive(Debug, Clone, PartialEq)]
@@ -140,7 +143,7 @@ pub fn to_ttx2(document: &TtxDocument) -> Result<Vec<u8>, TextureError> {
     let mut out = Vec::with_capacity(HEADER_BYTES + section.len() + CHECKSUM_BYTES);
     out.extend_from_slice(&MAGIC);
     out.push(kind);
-    out.push(0);
+    out.push(FLAG_LAYOUT_8X8);
     out.extend_from_slice(&0u16.to_le_bytes());
     out.extend_from_slice(&(section.len() as u32).to_le_bytes());
     out.extend_from_slice(&section);
@@ -305,7 +308,11 @@ pub fn from_ttx2(bytes: &[u8]) -> Result<TtxDocument, TextureError> {
     if kind != KIND_TEX && kind != KIND_MOD {
         return Err(TextureError::TtxKind(kind));
     }
-    if flags != 0 || reserved != 0 {
+    if flags == 0 {
+        // 旧 4×10 布局：头部本身能区分，不必等到块数/校验和才报错。
+        return Err(TextureError::UnsupportedLayout { rev: 0 });
+    }
+    if flags & !FLAG_LAYOUT_8X8 != 0 || reserved != 0 {
         return Err(TextureError::TtxFlags { flags, reserved });
     }
     let section_len = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
@@ -466,12 +473,19 @@ mod tests {
             from_ttx2(&bad_kind),
             Err(TextureError::TtxKind(7))
         ));
-        // 非零 flags / reserved。
+        // flags=0 是旧 4×10 布局：必须在头部就报布局错误。
+        let mut old_layout = bytes.clone();
+        old_layout[5] = 0;
+        assert!(matches!(
+            from_ttx2(&old_layout),
+            Err(TextureError::UnsupportedLayout { rev: 0 })
+        ));
+        // 未知 flags 位 / reserved 非零仍按前向兼容显式拒绝。
         let mut bad_flags = bytes.clone();
-        bad_flags[5] = 1;
+        bad_flags[5] = FLAG_LAYOUT_8X8 | 0x02;
         assert!(matches!(
             from_ttx2(&bad_flags),
-            Err(TextureError::TtxFlags { flags: 1, .. })
+            Err(TextureError::TtxFlags { flags, .. }) if flags == (FLAG_LAYOUT_8X8 | 0x02)
         ));
         let mut bad_reserved = bytes.clone();
         bad_reserved[6] = 1;
@@ -496,13 +510,42 @@ mod tests {
         let layer = TritModelLayer::new(&[vec![1, -1, 0, -1]], &[1]).unwrap();
         let bytes = to_ttx2(&TtxDocument::Model(TritModel::new(vec![layer]).unwrap())).unwrap();
         let expected = vec![
-            b'T', b'T', b'X', b'2', KIND_MOD, 0, 0, 0, 25, 0, 0, 0, // 头
-            1, 0, 0, 0, // layer_count
-            4, 0, 0, 0, // inputs
-            1, 0, 0, 0, // outputs
-            1, 0, 0, 0, // words_per_row
-            0b0001, 0, 0, 0, // pos
-            0b1010, 0, 0, 0,  // neg
+            b'T',
+            b'T',
+            b'X',
+            b'2',
+            KIND_MOD,
+            FLAG_LAYOUT_8X8,
+            0,
+            0,
+            25,
+            0,
+            0,
+            0, // 头
+            1,
+            0,
+            0,
+            0, // layer_count
+            4,
+            0,
+            0,
+            0, // inputs
+            1,
+            0,
+            0,
+            0, // outputs
+            1,
+            0,
+            0,
+            0, // words_per_row
+            0b0001,
+            0,
+            0,
+            0, // pos
+            0b1010,
+            0,
+            0,
+            0,  // neg
             2,  // bias digit
             10, // GF(3) CRC-3（独立 Python 实现交叉验算过）
         ];

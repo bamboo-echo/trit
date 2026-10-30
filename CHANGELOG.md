@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed（`trit-texture`：TTX 布局版本位 + TTX1 读写器停用，**breaking**）
+
+- **TTX2 头部新增布局位**：`flags` 的 bit0 = `FLAG_LAYOUT_8X8`。写入端置位；读到 `flags == 0`
+  （旧 4×10 文件）时在**头部**返回 `TextureError::UnsupportedLayout { rev: 0 }`，
+  不再拖到块数/校验和才报一个看不出是版本问题的错。未知 flags 位仍按 `TtxFlags` 拒绝。
+- **TTX1 读写器停用**：`to_ttx` / `from_ttx` 删除不可达实现，恒返回
+  `TextureError::UnsupportedLegacyFormat`；`TtxV1LayoutMismatch` 变体随之移除。
+  4×10 与 8×8 之间没有无损转换，旧文件只能从源图重新编码为 TTX2。`docs/TTX.md` §3/§4 同步。
+- 测试：`trit-texture` 25 条全过（含「旧布局在头部被识别」「未知位仍拒绝」「v1 常量冻结」）。
+
 ### Fixed（TT3 块形状 4×10 → 8×8：mip 链 25% 补边税 + 端点优化 +2 dB）
 
 > 起因：4×10 块的卖点是「40 纹素恰被 5 整除 ⇒ 载荷零浪费」，但这是**局部最优**。

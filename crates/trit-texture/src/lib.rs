@@ -137,6 +137,17 @@ pub enum TextureError {
         /// 当前块字节数。
         bytes: usize,
     },
+    /// TTX2 容器是旧布局（4×10 块），当前解码器只认 8×8。
+    #[error(
+        "TTX2 旧布局（rev={rev}）：4×10 块需要 v0.12 之前的解码器；TT3 无跨布局无损转换，请从源重编码"
+    )]
+    UnsupportedLayout {
+        /// 文件声明的布局版本（旧文件为 0）。
+        rev: u8,
+    },
+    /// TTX1 容器已不再支持（块布局已从 4×10 改为 8×8）。
+    #[error("TTX1 已不再支持：块布局从 4×10 改为 8×8，无跨布局无损转换，请从源图重新编码为 TTX2")]
+    UnsupportedLegacyFormat,
     /// TTX2 的 kind 不是 0（TEX）/ 1（MOD）。
     #[error("TTX2 未知 kind：{0}")]
     TtxKind(u8),
